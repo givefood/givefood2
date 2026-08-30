@@ -7916,7 +7916,7 @@ flowchart LR
   A["capture<br/>from production"] -->|"tests/golden/api/<br/>~650 files, committed"| B["git"]
   B --> C["PR: verify<br/>touched routes only"]
   B --> D["nightly: verify<br/>full corpus vs preview"]
-  B --> E["pre-cutover:<br/>48h green required"]
+  B --> E["pre-cutover:<br/>one comprehensive<br/>green run (§10.1.1a)"]
   B --> F["post-cutover:<br/>hourly for 7 days<br/>vs frozen golden"]
   G["weekly: re-capture<br/>from production"] -->|"fails if Django moved"| B
 ```
@@ -7925,7 +7925,7 @@ flowchart LR
 |---|---|---|
 | Per PR | routes the PR touches | **Blocking** |
 | Nightly | full 650, production vs latest preview | **Blocking** |
-| Before widening any `/api/*` route | full 650, **48 hours green** | **Blocking** |
+| Before the single domain cutover (§10.1.1a — not per-route anymore) | full 650, green in one comprehensive run against the proving-ground host | **Blocking** |
 | Hourly for 7 days after cutover | full 650, candidate vs frozen golden | Alerts to the same WhatsApp channel as the pipeline health check |
 | Weekly | re-capture from production, fail on drift | Warning — catches Django changes made mid-migration |
 
@@ -7994,7 +7994,7 @@ Phase 2 of the delivery plan. Estimates are person-days.
 | **2.4** | The 20 handlers, dual-mounted, reproducing every frozen bug in §7.3. | 2.2b, 2.3 | Byte parity green across all 650 golden files. | 6 |
 | **2.5** | In-memory haversine (§7.5) — **two radii**, `Math.trunc` for `distance_m`, `pyRound2` for `distance_mi`, the exact `is_uk()` box. | 2.2b | `distance_m` matches to the integer and `distance_mi` to the byte, across all corpus coordinates including the exact-food-bank ones. | 3 |
 | **2.6** | The three documentation pages + `api2.js` + 9 method tables. | 2.1 | `#hash` deep links resolve; live XHR preview works; structural parity green. | 3 |
-| **2.7** | Route cutover, widening: `/api/2/*` → 48h → `/api/*` → 48h → `/api/1/*` and `/api/3/*`. | 2.4–2.6 | 48 hours of green nightly parity at each step before widening. | 1 |
+| **2.7** | *(This row is superseded — see §10.2.2's WP 2.6 and §10.1.1a: no per-phase production widening anymore, one single domain-wide cutover later. This table predates that decision as well as the WP-numbering correction; treat §10.2.2 as authoritative.)* ~~Route cutover, widening: `/api/2/*` → 48h → `/api/*` → 48h → `/api/1/*` and `/api/3/*`.~~ | 2.4–2.6 | ~~48 hours of green nightly parity at each step before widening.~~ | 1 |
 | | **Total** | | | **31** |
 
 That is within the 30–41 pd range in the delivery plan (§10.2.2, revised for the same reason): WP 2.3 was already at the top of its original range from float formatting, and dropping Hyperdrive for a real D1 copy-and-query layer (2.2a + 2.2b, 7 pd combined) added roughly 3 pd net over the old single Hyperdrive-binding WP 2.2 (4 pd) — real work a live connection previously let this table skip past.
@@ -10398,24 +10398,39 @@ Three rules govern everything below.
 
 ### 10.1 The delivery sequence
 
-#### 10.1.1 The mechanism: widening routes, never proxying
+#### 10.1.1 The mechanism: build and prove on a non-production host, cut the whole domain over once
 
-Cloudflare resolves the **most specific Worker route pattern first**, and anything that matches no route falls through to the Django origin exactly as it does today. That is the whole strangler-fig mechanism. You widen routes; you never proxy.
+> **Revised 2026-08-30 — maintainer decision, overriding the incremental-widening design below wherever it describes touching the production zone.** Earlier drafts of this plan (and the section below, kept for its still-correct build-order reasoning) treated `www.givefood.org.uk` itself as the thing being widened, phase by phase, each widening its own production event with a 48-hour parity-monitoring gate before the next. **That is no longer the plan. Every phase is built and fully proven on a non-production host — `<worker>.workers.dev` and a real custom domain used as the proving ground (`beta.givefood.org.uk` in this build) — and `www.givefood.org.uk` is not touched until one single cutover moves the whole domain from Django to the Worker at once.** No per-phase production route additions, no per-phase 48-hour soak periods, no staged widening of the live zone. See §10.1.1a for what changes and why, and the "Open re-plan" callout after §10.2.3 for what this means for the phases already scoped assuming the old model.
+
+Cloudflare resolves the **most specific Worker route pattern first**, and anything that matches no route falls through to the origin exactly as it does today. That is still the mechanism *for the Worker's own internal routing* — each phase's Hono routes widen from 501 stubs to real handlers exactly as before, and a route with no handler yet correctly falls through rather than needing a proxy. What changed is *where that widening is proven*: against the proving-ground host, not against the live zone.
 
 ```
-Phase 1:  www.givefood.org.uk/needs/at/*/photo.jpg     → givefood
-          www.givefood.org.uk/needs/at/*/map*.png      → givefood
-          www.givefood.org.uk/needs/at/*/favicon.png   → givefood
-          www.givefood.org.uk/needs/at/*/screenshots/* → givefood
-Phase 2:  www.givefood.org.uk/api/*                    → givefood
-Phase 2.5 www.givefood.org.uk/aac/                     → givefood
-Phase 3:  www.givefood.org.uk/needs/*                  → givefood
-Phase 4:  www.givefood.org.uk/*                        → givefood   ← catch-all, last
+Phase 1:  <proving-ground>/needs/at/*/photo.jpg     → givefood
+          <proving-ground>/needs/at/*/map*.png      → givefood
+          <proving-ground>/needs/at/*/favicon.png   → givefood
+          <proving-ground>/needs/at/*/screenshots/* → givefood
+Phase 2:  <proving-ground>/api/*                    → givefood
+Phase 2.5 <proving-ground>/aac/                     → givefood
+Phase 3:  <proving-ground>/needs/*                  → givefood
+Phase 4:  <proving-ground>/*                        → givefood   ← catch-all, last
+                              ⋮
+Cutover:  www.givefood.org.uk/*                     → givefood   ← the ONE production event, once everything built is proven
 ```
 
-This matters because **a Route cannot be the target of a same-zone `fetch()`**. If the Worker took `/*` on day one and proxied unported paths back to Django, you would need a separate unproxied `origin.givefood.org.uk` hostname (or `cf.resolveOverride`), plus `CDN-Loop` handling, plus an analytics/billing exclusion for `cf.worker.upstream_zone`. Widening routes avoids all of it.
+This still matters because **a Route cannot be the target of a same-zone `fetch()`**. If the Worker took `/*` on the proving-ground host on day one and proxied unported paths back to Django, you would need a separate unproxied `origin.givefood.org.uk` hostname (or `cf.resolveOverride`), plus `CDN-Loop` handling, plus an analytics/billing exclusion for `cf.worker.upstream_zone`. Widening routes on the proving ground avoids all of it, same as it always did — the only thing that changed is that this narrow-to-wide widening happens entirely off the production zone.
 
-**Rollback for any of Phases 1–6 is deleting a route.** Seconds, no data involved.
+**Rollback before the cutover is "don't cut over yet" — nothing on `www.givefood.org.uk` has changed, at any point, for any phase.** The one rollback that matters is the cutover itself: see §10.1.1a.
+
+#### 10.1.1a The single cutover, and what it changes from the model above
+
+**Why:** the maintainer's call, made explicit — "we're going to big bang the release by moving the whole domain," not stage it route by route on the live zone over the course of the migration. This trades the incremental model's per-step safety net (a bad phase only breaks the one route just widened, caught in 48 hours, rolled back by deleting that route) for a simpler operational story: one cutover, thoroughly proven beforehand on the proving-ground host, one rollback mechanism if it needs undoing.
+
+**What this means concretely:**
+- Every "Route cutover, widening: ... 48h at each step" work package scoped per-phase in the tables below (WP 2.6, WP 3.8, and any later-phase equivalent) is **no longer a real production event**. What each phase still needs is a confirmation that its build is *cutover-ready* — strict/tolerant parity green against the proving-ground host, per that phase's own acceptance criteria — not a staged widening of `www.givefood.org.uk`. These rows should be read as "prove Phase N is ready," with the actual domain move deferred to the single cutover.
+- The single cutover is a new, explicit event — not yet its own numbered work package in the tables below, since **how much gets built before it happens is still an open scoping question** (see "the cheap exit," §10.1.4, for the tension this creates: stopping after Phase 4 was framed as *already being live* at that point, which no longer happens under this model — stopping after Phase 4 now means "Phases 1–4 are proven and ready to cut over, whenever that single event happens," not "Phases 1–4 are already in production"). Add it as its own work package (with its own pre-cutover verification acceptance criteria, pulling together what's currently scattered across the per-phase cutover rows and §7.8.6/§10.4.5's gate tables) before Phase 4 is complete, not as an afterthought.
+- **Pre-cutover verification becomes one comprehensive gate, not N staged ones.** §7.8.6 and §10.4.5's "before widening any `/api/*` route: full corpus, 48h green" gates were written per-phase; under this model they collapse into one gate, run against everything that's going to move, immediately before the single cutover. The corpus that gate runs against is now "everything built," not "the one route about to widen."
+- **The rollback story is now genuinely one mechanism, not a per-route one.** Pre-cutover, rollback doesn't exist as a concept — nothing on the live zone has changed. Post-cutover, rollback means moving the domain back to Django, which is a much higher-stakes single action than deleting one route was under the old model (every user, every path, at once) — this needs its own rehearsed procedure in the runbook (§11), not the struck-through Hyperdrive-era one currently there. Do not treat "delete a route" as the rollback mechanism anywhere past this point; it no longer describes what a rollback actually does.
+- **This does not change §10.1.3** (D1 is still populated incrementally, phase by phase, as each phase is built) **or the build order in §10.1.2** (Phase 0 through Phase 8 are still built in the sequence below, for the same reasons). What changes is purely where and when the *production domain* itself moves, not how or in what order the Worker is built.
 
 ```mermaid
 graph LR
@@ -10459,11 +10474,13 @@ A ported route needs a data source. The mechanism now is: **each phase copies wh
 
 #### 10.1.4 The cheap exit
 
-**Stopping after Phase 4 is a good outcome, not a failure.** You would have the entire public site and all three APIs on Cloudflare; images, dumps and static assets on R2; edge-cached HTML with working tag invalidation; ~3.9 GB out of a 5 GB database; and one small Django box serving `/admin/`, `/dashboard/`, `/write/` and the crons.
+> **Revised 2026-08-30, following the single-cutover decision (§10.1.1a).** Under the old incremental-widening model, "stopping after Phase 4" meant the public site and all three APIs were *already live* on `www.givefood.org.uk` by that point, each widened and proven separately. Under the single-cutover model, nothing is live on the production domain until the one cutover happens. "Stopping after Phase 4" now means: **Phases 1–4 are built and fully proven against the proving-ground host, the single cutover moves that much of the domain over, and Phases 5–8 are never built at all.** The exit is still cheap, and the description of what you'd have below still holds — read it as "proven and ready to cut over," not "already in production," everywhere it says "on Cloudflare."
 
-Against the four goals at Phase 4: **faster — fully delivered. Resilient — better than the Hyperdrive design would have had it at this point:** every ported route (the whole public site and all three APIs) reads D1, not a live connection to the box, so it survives a box outage outright, not just from cache — only `/admin/`, `/dashboard/`, `/write/` and the crons still depend on the box being up. **Quicker deploys — yes for everything ported. Simple — one Django app on one box with a Workers front end.**
+**Stopping after Phase 4 is a good outcome, not a failure.** You would have the entire public site and all three APIs proven and ready to cut over to Cloudflare; images, dumps and static assets on R2; edge-cached HTML with working tag invalidation; ~3.9 GB out of a 5 GB database ready to move; and one small Django box that, after the cutover, serves only `/admin/`, `/dashboard/`, `/write/` and the crons.
 
-Phases 5–8 are ~60% of the remaining effort and buy the Postgres decommission and the last of goal 2. For a two-person charity that may not be worth it. **Build the plan so that stopping at Phase 4 is a decision, not a defeat.**
+Against the four goals, once that cutover happens: **faster — fully delivered. Resilient — better than the Hyperdrive design would have had it at this point:** every ported route (the whole public site and all three APIs) reads D1, not a live connection to the box, so it survives a box outage outright, not just from cache — only `/admin/`, `/dashboard/`, `/write/` and the crons still depend on the box being up. **Quicker deploys — yes for everything ported. Simple — one Django app on one box with a Workers front end.**
+
+Phases 5–8 are ~60% of the remaining effort and buy the Postgres decommission and the last of goal 2. For a two-person charity that may not be worth it. **Build the plan so that stopping at Phase 4 — and cutting over what's built at that point — is a decision, not a defeat.**
 
 ---
 
@@ -10528,7 +10545,7 @@ The image surface is larger than the three photo routes. From `gfwfbn/urls/gener
 | **2.3** | **The serialisation package.** See the detail below — this is the highest-risk WP in the plan and it is bigger than earlier drafts allowed. | 2.1 | Byte-identical against golden files for all 20 endpoints × every allowed format. | **10** |
 | 2.4 | The 20 endpoint handlers, **dual-mounted at `/api/*` and `/api/2/*`** (every gfapi2 route is live at both; only the `/api/2/` forms are in the current purge list, so the `/api/` aliases have been going stale to TTL). Preserve the frozen bugs: location `politics.mp_parl_id` carrying the *food bank's* value (`gfapi2/views.py:178`); constituency location entries producing 404ing `/api/2/foodbank/<location-slug>/` URLs; the 500-not-400 responses on malformed `lat_lng`. | 2.2b, 2.3 | Strict parity green across the whole API corpus. | 6 |
 | 2.5 | In-memory haversine replacing earthdistance for the search endpoints. **`R = 6378168`** to match `earth_distance()` on `/api/2/*`; **`R = 6367000`** on `/api/1/foodbanks/search/` to match the Python haversine at `givefood/utils/geo.py:493`. The two APIs have differed by 0.175% for years and consumers may diff them. | 2.2b | `distance_m` matches production **to the integer**, and result ordering matches, across 200 sampled coordinates. | 4 |
-| 2.6 | Route cutover: `/api/2/*` → `/api/*` → `/api/1/` → `/api/3/`. | 2.4 | 48h at each step with zero strict-parity failures before widening. | 1 |
+| 2.6 | *(Revised 2026-08-30 — see §10.1.1a: no per-phase production cutover anymore, one single domain-wide cutover later.)* **Cutover-readiness check**, not a route cutover: prove `/api/2/*`, `/api/*`, `/api/1/`, `/api/3/` strict-parity green against the proving-ground host. Nothing moves on `www.givefood.org.uk` yet. | 2.4 | Full corpus green against the proving-ground host, in one run — not staged, not widened. | 1 |
 | 2.7 | The three documentation pages (`/api/1/`, `/api/2/`, `/api/2/docs/` + `api2.js` + 8 method tables). | 2.1 | `#hash` deep links resolve; live XHR preview works. | 3 |
 
 **WP 2.2a is a live-data copy, one-off per run, not the final migration.** It uses the same read-only discipline as §5's full data migration (parse `.env` in Python rather than sourcing it in zsh — a value contains an unbalanced quote; `PGOPTIONS='-c default_transaction_read_only=on'`) and the same extraction mechanism, just scoped to the tables this phase's endpoints read. **Re-run it before Phase 2.6's route cutover** to pick up anything written to Postgres since the initial copy — Django is still the origin for every unported route, including the admin, so writes to these tables continue throughout Phase 2. This copy is disposable and idempotent: if it's wrong, delete the rows and re-run it, because Postgres is still the source of truth.
@@ -10579,15 +10596,15 @@ The image surface is larger than the three photo routes. From `gfwfbn/urls/gener
 
 ---
 
-> ### ⚠️ Open re-plan: Phases 3–8 still assume the dropped Hyperdrive interim
+> ### ⚠️ Open re-plan: Phases 3–8 still assume the old incremental-widening, Hyperdrive-first design
 >
-> Phase 2.5 needed no change above — it already copied its tables (postcode, place, boundaries) straight to D1 and never touched Hyperdrive. Phase 2 has been rebuilt against the no-Hyperdrive decision (§10.2.2). **Phases 3 through 8 below have not been.** They were written assuming Workers read Postgres live through Hyperdrive all the way to a single Phase 7 cutover, and that assumption no longer holds anywhere. Flagging what changes directionally, not re-deriving every number:
+> Two maintainer decisions have landed since Phases 3–8 below were drafted, and neither has been threaded through them yet: **no Hyperdrive, ever** (§4, §6 D3 — settled, not an open question by this point in the plan; raised again here only because Phases 3–8's own text still leans on the old design it ruled out) and **one single domain-wide cutover, not staged per-phase widening** (§10.1.1a). Phase 2.5 needed no change for either — it already copied its tables (postcode, place, boundaries) straight to D1 and was never a production-widening event on its own. Phase 2 has been rebuilt against both decisions (§10.2.2, §10.2.2's WP 2.6). **Phases 3 through 8 below have not been.** Flagging what changes directionally, not re-deriving every number:
 >
-> - **Phases 3 and 4** (`/needs/`, rest of the public site) mostly read the same core tables Phase 2.2a already copied (`foodbank`, `foodbankchange`, `foodbanklocation`, `foodbankdonationpoint`). Their data dependency is likely *smaller* than currently scoped, not larger — re-derive each phase's WP 1 ("data access") against what's already in D1 before assuming a fresh copy is needed. A handful of additional tables (e.g. `foodbankarticle` for `/news/`) still need their own WP 2.2a-shaped copy.
-> - **Phase 5** (crons and the need pipeline) is where this gets genuinely harder than the Hyperdrive-first design made it look. Once `needcheck` writes new needs, D1 and Postgres start **diverging** — Django's admin keeps writing to Postgres for everything not yet ported, while the ported jobs Worker writes new needs to D1. This phase needs an explicit per-table write-ownership boundary (which system owns writes to `foodbankchange` once needcheck is ported?) that the Hyperdrive design deferred to Phase 7 by construction. Scope this properly before starting Phase 5, not as a footnote.
+> - **Phases 3 and 4** (`/needs/`, rest of the public site) mostly read the same core tables Phase 2.2a already copied (`foodbank`, `foodbankchange`, `foodbanklocation`, `foodbankdonationpoint`). Their data dependency is likely *smaller* than currently scoped, not larger — re-derive each phase's WP 1 ("data access") against what's already in D1 before assuming a fresh copy is needed. A handful of additional tables (e.g. `foodbankarticle` for `/news/`) still need their own WP 2.2a-shaped copy. Their own "route cutover" work packages (e.g. WP 3.8) need the same rewrite WP 2.6 got: a cutover-readiness check against the proving-ground host, not a staged production widening — see §10.1.1a.
+> - **Phase 5** (crons and the need pipeline) is where this gets genuinely harder than the old design made it look, independent of either decision above. Once `needcheck` writes new needs, D1 and Postgres start **diverging** — Django's admin keeps writing to Postgres for everything not yet ported, while the ported jobs Worker writes new needs to D1. This phase needs an explicit per-table write-ownership boundary (which system owns writes to `foodbankchange` once needcheck is ported?) that the old Hyperdrive-first design deferred to Phase 7 by construction, and that the single-cutover decision doesn't resolve either — it's a data-ownership question, not a traffic-routing one. **This is the real remaining open question**, not Hyperdrive. Scope this properly before starting Phase 5, not as a footnote.
 > - **Phase 6** (the admin) has the same write-ownership question, sharper: it is the highest-volume write surface in the whole application.
-> - **Phase 7** ("D1 cutover", 14–20 pd) shrinks substantially, because there is no big-bang swap left to do — most tables will already be D1-resident by the time Phase 6 lands. It becomes: a final delta sync of anything still Postgres-only, a parity check, and the point where write ownership fully moves to D1. Re-title and re-scope it once Phases 5–6 are re-planned; do not carry its old 14–20 pd forward uncorrected.
-> - **The rollback story changes for every phase from 5 onward.** The old runbook's rollback was "redeploy the Hyperdrive-bound Worker version" — a code change with no data risk, because Postgres was still being read live. That mechanism no longer exists once a phase has writes landing only in D1. §11 risk B5 already flagged this as unresolved even under the old design; it is more load-bearing now, not less. Each phase from 5 onward needs its own answer to "what happens to a write that landed only in D1" before it ships, not a shared assumption inherited from Phase 7.
+> - **Phase 7** ("D1 cutover", 14–20 pd) shrinks substantially on the data side, because there is no big-bang *data* swap left to do — most tables will already be D1-resident by the time Phase 6 lands (this is unrelated to, and predates, the single-cutover *traffic* decision in §10.1.1a — don't conflate the two "big bang"s). What Phase 7 becomes: a final delta sync of anything still Postgres-only, a parity check, and the point where write ownership fully moves to D1 — plus, now, quite possibly the point where the single domain cutover (§10.1.1a) actually happens, if the build runs all the way to Phase 8 rather than exiting after Phase 4. Re-title and re-scope it once Phases 5–6 are re-planned; do not carry its old 14–20 pd forward uncorrected.
+> - **The rollback story changes for every phase from 5 onward, for two independent reasons now.** The old runbook's rollback was "redeploy the Hyperdrive-bound Worker version" — a code change with no data risk, because Postgres was still being read live. That mechanism no longer exists once a phase has writes landing only in D1, Hyperdrive aside. Separately, §10.1.1a means there's no longer a per-route rollback to fall back on even pre-cutover — the rollback that matters is undoing the single cutover itself. §11 risk B5 already flagged the write-side version of this as unresolved even under the old design; it is more load-bearing now, not less. Each phase from 5 onward needs its own answer to "what happens to a write that landed only in D1" before it ships, and the runbook (§11) needs a rewrite for the single-cutover rollback mechanism — neither is a shared assumption inherited from the old Phase 7 design anymore.
 >
 > **Do this re-plan before starting Phase 5.** Phases 2–4 are safe to build on the revision above; they are read-only and the existing rollback ("delete the route") still holds.
 
@@ -10602,7 +10619,7 @@ The image surface is larger than the three photo routes. From `gfwfbn/urls/gener
 | 3.5 | Nearest-search: in-memory haversine over the ~8,721-point index (285 KB CSV / ~113 KB packed) in module scope, rebuilt on write. | 2.5 | Ordering and `distance_m` match across 200 postcodes — **with the documented divergence below**. | 4 |
 | 3.6 | `/needs/geo.json` + three scoped variants precomputed to R2 on write. Preserve `f`/`l`/`lb`/`d`/`b` type codes and the 4dp/6dp precision split — **and the float formatting** (see WP 2.3). | 3.5 | Byte-comparable GeoJSON; `wfbn.js` layer filters unchanged. | 3 |
 | 3.7 | Hit beacon → Analytics Engine (§10.7.3). Subscribe/confirm/unsubscribe **including the bare-200 POST for RFC 8058 one-click**. Webpush + mobsub (shipped app contract, keyed on `Foodbank.uuid`). | 3.4 | One-click unsubscribe returns 200 with an empty body. `/needs/mobsub/` returns `{"success": true}`. | 4 |
-| 3.8 | Route cutover, widening: `/needs/at/place/*` → `/needs/at/*` → `/needs/*`. | 3.4–3.7 | 48h green parity at each step. | 1 |
+| 3.8 | *(Revised 2026-08-30 — see §10.1.1a: no per-phase production cutover, one single domain-wide cutover later.)* **Cutover-readiness check**, not a route cutover: prove `/needs/at/place/*`, `/needs/at/*`, `/needs/*` tolerant-parity green against the proving-ground host. Nothing moves on `www.givefood.org.uk` yet. | 3.4–3.7 | Full corpus green against the proving-ground host, in one run — not staged, not widened. | 1 |
 
 **Documented divergence on `/nearby/`.** `find_locations()` (`givefood/utils/geo.py:246-301`) issues two independent queries, each `ORDER BY NearestFirst` (chord) `LIMIT quantity`, then chains, re-sorts by great-circle and slices. `quantity = quantity + 1` for `skip_first` happens *after* the querysets are sliced, so both legs are always `LIMIT 20`. For `skip_first=True` the return is `[1:21]` — global ranks 1..20 — and rank 20 is only guaranteed present if neither leg alone fills 0..19. A food bank with 20+ clustered locations (routine for Trussell) makes the location leg fill 0..19, so the true rank-20 item is that leg's rank 20, never fetched. A global in-memory top-21 scan returns the correct item and therefore **differs**. Decide explicitly: emulate two-leg-limit-then-merge to reproduce production, or do a global scan and add `/needs/at/<slug>/nearby/` and `/md/needs/at/<slug>/nearby/` to a documented known-divergence list. Do not let the team burn days treating a fix as a regression.
 
@@ -10913,7 +10930,7 @@ const JSON_INVARIANTS = [
 |---|---|---|
 | Per PR | routes the PR touches | **Blocking** |
 | Nightly | full corpus, production vs latest preview | **Blocking on strict**, warn on tolerant cosmetic |
-| Pre-route-cutover | full corpus, **48h green required** | **Blocking** |
+| Pre-cutover (§10.1.1a — one single domain-wide event, not per-route) | full corpus, green in one comprehensive run against the proving-ground host | **Blocking** |
 | Post-cutover, hourly for 7 days | strict corpus vs the recorded baseline | Alerts |
 | Weekly | re-record golden files from production, fail if they moved | Catches Django changes made mid-migration |
 
@@ -11130,7 +11147,9 @@ const checks: [string, boolean][] = [
 
 ### 10.8 Before the cutover: three things the earlier drafts got wrong
 
-Phases 1–6 are route *additions* and need no runbook beyond "watch parity for 48 hours". **Phase 7 is the one irreversible moment**, and three of its load-bearing assumptions are contradicted by the code. Fix these before booking a Saturday night.
+*(Revised 2026-08-30 — the first sentence below described the old per-phase widening model; see §10.1.1a. Phases 1–8 are now build-and-prove work against the proving-ground host, none of it touching `www.givefood.org.uk`, so none of it needs a production runbook at all. **The single domain cutover is the one irreversible moment**, whenever it happens — and three of its load-bearing assumptions, below, are contradicted by the code regardless of which phase it lands after. Fix these before booking a Saturday night.)*
+
+~~Phases 1–6 are route *additions* and need no runbook beyond "watch parity for 48 hours". Phase 7 is the one irreversible moment, and three of its load-bearing assumptions are contradicted by the code.~~
 
 #### 10.8.1 Delta sync is blind to deletes
 
@@ -11370,7 +11389,7 @@ Add a banner to admin **GET** pages too, so nobody starts editing a form they ca
 
 #### 10.10.2 Hour 2 — before the freeze lifts, or minutes after
 
-> ⚠️ **This whole runbook still assumes the dropped Hyperdrive-first design** (a single Phase 7 cutover from a live Postgres read-path to D1). That assumption no longer holds — see the re-plan callout after §10.2.3 and §10.1.3. Step 1 below specifically named "roll back to the Hyperdrive-bound Worker version" as the hour-2 recovery mechanism, and **that version will not exist**: nothing in this design ever binds to Hyperdrive, so there is no prior version that reads Postgres live to fall back to. Do not follow this runbook as written until Phase 7 is re-scoped and this section is rewritten against whatever write-ownership design comes out of that (see the Phase 5/6 note in the same callout). Left in place, struck through where it's now wrong, so the shape of a real runbook is visible.
+> ⚠️ **This whole runbook still assumes two designs that are no longer the plan.** First, the dropped Hyperdrive-first design (a single Phase 7 cutover from a live Postgres read-path to D1) — see the re-plan callout after §10.2.3 and §10.1.3. Step 1 below specifically named "roll back to the Hyperdrive-bound Worker version" as the hour-2 recovery mechanism, and **that version will not exist**: nothing in this design ever binds to Hyperdrive, so there is no prior version that reads Postgres live to fall back to. Second, and layered on top of the first — **the incremental per-phase route-widening cutover model this whole runbook is structured around (§10.1.1's old text) is also no longer the plan.** §10.1.1a's single-cutover decision means there is no "widen `/api/*`, watch 48 hours, widen the next route" sequence to write a runbook for; there is one cutover, of everything built, at once, with one rollback mechanism (moving the domain back) if it needs undoing. This runbook needs a rewrite against *that* shape, not a patch to the widening-based one below. Do not follow this runbook as written until Phase 7 is re-scoped, the write-ownership design from the Phase 5/6 re-plan note lands, and this section is rewritten as a single-cutover runbook. Left in place, struck through where it's now wrong, so the shape of a real runbook is visible.
 
 No writes have landed in D1 yet, or one reverse-sync cycle has already replayed them. Recovery: **seconds. Data loss: none.**
 
