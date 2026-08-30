@@ -65,7 +65,8 @@
 
   "browser": { "binding": "BROWSER" },
   "d1_databases": [
-    // Same database as workers/site -- see the comment there.
+    // Same database as workers/site -- see the comment there, including the
+    // read-replication / Sessions API requirement (confirmed 2026-08-30).
     { "binding": "DB", "database_name": "givefood", "database_id": "1cae445f-9719-453d-9cf6-1060f8b3ea7e" }
   ],
   "r2_buckets": [

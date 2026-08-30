@@ -46,6 +46,13 @@
     // Pre-existing, empty (0 tables) -- created 2023-08-04, reused rather
     // than creating a duplicate. Real data migration (PLAN.md §5) still has
     // to populate it.
+    //
+    // READ REPLICATION IS ENABLED on this database (confirmed 2026-08-30).
+    // Once packages/db exists, every query MUST go through the D1 Sessions
+    // API (env.DB.withSession(), propagating the bookmark) rather than
+    // calling env.DB.prepare() on this binding directly, or reads can land
+    // on a replica that hasn't caught up with a just-completed write.
+    // https://developers.cloudflare.com/d1/best-practices/read-replication/#use-sessions-api
     { "binding": "DB", "database_name": "givefood", "database_id": "1cae445f-9719-453d-9cf6-1060f8b3ea7e" }
   ],
 

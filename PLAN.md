@@ -1963,11 +1963,13 @@ The `.po` files stay in the repo as the source of record and stay byte-compatibl
 
 ### 3.3 Binding map
 
+> **Confirmed 2026-08-30: the provisioned `givefood` D1 database (`1cae445f-9719-453d-9cf6-1060f8b3ea7e`) has read replication enabled.** This plan's D1 platform research never actually covered the Sessions API despite being scoped to (see the unresolved "D1 Sessions API and read replication" item that should have landed here and didn't) -- a real gap, not a stated decision. Read replicas mean a read can land on a replica that hasn't caught up with a just-completed write, so the data-access layer (`packages/db`, WP 2.2) MUST use the [D1 Sessions API](https://developers.cloudflare.com/d1/best-practices/read-replication/#use-sessions-api) (`env.DB.withSession()`), propagating the returned bookmark across a request (and, for the admin's read-after-write flows, across requests -- e.g. in the session/response) rather than calling `env.DB.prepare()` on the binding directly. Bare `prepare()` calls will work in every local/dev test and intermittently return stale data in production, which is exactly the failure mode this note exists to prevent. Add this to the WP 2.2 acceptance criteria when that phase is scoped.
+
 #### Worker `givefood`
 
 | Binding | Type | Name | Purpose |
 |---|---|---|---|
-| `DB` | D1 | `givefood` | The relational core, ~427 MB measured |
+| `DB` | D1 | `givefood` | The relational core, ~427 MB measured. **Read replication is enabled -- use the Sessions API, not bare `prepare()`. See the note above.** |
 | `MEDIA` | R2 | `givefood-media` | PlacePhoto derivatives, static map PNGs, favicons, screenshots |
 | `GEO` | R2 | `givefood-geo` | `geo/index.bin` point set; constituency and location boundaries; precomputed `geo.json` |
 | `ASSETS` | Assets | `./dist/static` | ~5 MB hot static set (css/js/fonts/small img) |
