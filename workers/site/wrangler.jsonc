@@ -115,9 +115,10 @@
   // count toward CPU. Raise only if a gfdash aggregation says otherwise.
   "limits": { "cpu_ms": 30000 },
 
-  // Measure before keeping. Only worth it while the database is Postgres
-  // behind Hyperdrive (pins compute near London); near-pointless on D1.
-  "placement": { "mode": "smart" },
+  // Smart Placement pins compute near a latency-bound origin. There isn't
+  // one here -- every binding is D1/R2/KV, not a single-region Postgres --
+  // so this is skipped. (No Hyperdrive-behind-Postgres interim at any
+  // point; see PLAN.md §4, §6 D3.)
 
   "preview_urls": true,
 

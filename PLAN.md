@@ -148,7 +148,9 @@ Put plainly, because it deserves to be heard before the plan seduces anyone:
 
 ### 4. Headline architecture
 
-**Two Workers on one Cloudflare zone.** A `givefood` Worker holds a single catch-all route `www.givefood.org.uk/*` and serves the public site, all three API versions, the dashboards, the write tool, the admin and the same-origin binary routes, using Hono for routing and build-time-precompiled Nunjucks for templates. A `givefood-jobs` Worker has **no routes at all** and owns the crons, queue consumers and the need-extraction pipeline — separated for exactly three reasons: it holds every dangerous secret (OpenRouter, Browser Rendering, Postmark, WhatsApp, Firebase, VAPID) and the public Worker holds none; queue consumers are declared per-Worker and need different CPU and concurrency limits; and a needcheck run takes hours and must not be restarted by a CSS deploy. Data lives in **one D1 database** (the ~422 MB relational core), **R2** (photos, maps, favicons, screenshots, dumps, boundary GeoJSON, ops CSVs), **KV** (admin sessions, the slug-redirect map, cached aggregates) and **Analytics Engine** (the hit beacon and crawl aggregates, both rolled nightly into D1 so the history survives AE's 3-month retention). During the migration — and only during it — the Workers read the existing Postgres through **Hyperdrive**, which is what allows the application rewrite and the query rewrite to be two sequential changes instead of one simultaneous one.
+**Two Workers on one Cloudflare zone.** A `givefood` Worker holds a single catch-all route `www.givefood.org.uk/*` and serves the public site, all three API versions, the dashboards, the write tool, the admin and the same-origin binary routes, using Hono for routing and build-time-precompiled Nunjucks for templates. A `givefood-jobs` Worker has **no routes at all** and owns the crons, queue consumers and the need-extraction pipeline — separated for exactly three reasons: it holds every dangerous secret (OpenRouter, Browser Rendering, Postmark, WhatsApp, Firebase, VAPID) and the public Worker holds none; queue consumers are declared per-Worker and need different CPU and concurrency limits; and a needcheck run takes hours and must not be restarted by a CSS deploy. Data lives in **one D1 database** (the ~422 MB relational core), **R2** (photos, maps, favicons, screenshots, dumps, boundary GeoJSON, ops CSVs), **KV** (admin sessions, the slug-redirect map, cached aggregates) and **Analytics Engine** (the hit beacon and crawl aggregates, both rolled nightly into D1 so the history survives AE's 3-month retention).
+
+**No Hyperdrive-behind-Postgres interim.** An earlier draft of this plan had the Workers read the existing Postgres live through Hyperdrive for the whole migration, so the application rewrite and the query rewrite (Postgres SQL → D1/SQLite) would land as two sequential single-variable changes rather than one simultaneous one — real risk reduction, at the cost of a second product, a dual-binding cache-invalidation scheme, and a whole extra phase later to swap Hyperdrive for D1 and retire it. **The maintainer decided against that trade: copy the data to D1 up front, and build every route directly against D1 from the start.** This is simpler — one datastore, one query dialect, nothing to swap out later — and it is honestly riskier in one specific way: there is no code-level fallback that reads live Postgres if a D1-backed route turns out wrong after shipping. The mitigation is that Postgres is only ever **copied from, never migrated off of** until Phase 8 — it stays the untouched, authoritative source throughout, so a bad D1 copy is fixed by re-running the copy, and a bad route is fixed by rolling the Worker back to a version that doesn't serve it yet (a 501, not wrong data). See §10.1.3 for the mechanics and §11 (risk B5) for what this costs the rollback story at the admin/write phases, where it matters more than it does here.
 
 ```mermaid
 flowchart TB
@@ -176,7 +178,7 @@ flowchart TB
         BR["Browser Rendering"]
     end
 
-    PG[("Postgres @ Mythic Beasts<br/>via Hyperdrive<br/>TRANSITION ONLY")]
+    PG[("Postgres @ Mythic Beasts<br/>copy source only --<br/>no live Worker binding")]
 
     U(("Visitors<br/>bots<br/>API consumers")) --> CR
     CR -->|"cache miss"| SITE
@@ -185,7 +187,6 @@ flowchart TB
     SITE --> R2
     SITE --> KV
     SITE --> AE
-    SITE -.->|"Phases 2-6 only,<br/>removed at Phase 7"| PG
     JOBS --> D1
     JOBS --> R2
     JOBS --> AE
@@ -193,8 +194,8 @@ flowchart TB
     JOBS --> OR
     JOBS --> GM
     JOBS --> BR
-    JOBS -.-> PG
     AE -->|"nightly rollup"| D1
+    PG -.->|"one-off copy per phase,<br/>see §5 -- Postgres stays<br/>authoritative until Phase 8"| D1
 
     style PG stroke-dasharray: 5 5
     style JOBS fill:#f5f5f5
@@ -254,7 +255,7 @@ The existing `/dumps/` URLs are **public contracts and must redirect, never 404*
 |---|---|---|---|---|
 | **D1** | Worker topology | **Two Workers**: `givefood` (one catch-all route) and `givefood-jobs` (no routes) | Goal 4. One route pattern, no precedence puzzles, one deploy, one `wrangler tail`. Bundle size is not the constraint (~1 MB gzipped against a 10 MB cap); **startup time** is, and lazy `import()` of locale catalogues handles it. The second Worker earns its place on secret blast radius, per-Worker consumer limits, and deploy isolation from multi-hour crawls. | **High** — splitting the admin out later is a config change plus a route. Merging back is harder, because secrets would then coexist. |
 | **D2** | Framework + templating | **Hono + Nunjucks precompiled at build time** (`nunjucks/browser/nunjucks-slim`, no compiler in the bundle) | Nunjucks is a Jinja2 port; Django's template language is Jinja2's sibling. Measured: 115 `{% extends %}`, 304 `{% block %}`, 133 `{% include %}`, 594 `{% if %}`, 163 `{% for %}` all transfer verbatim. ~90% of the port is a regex transpiler. `eval`/`new Function` are **banned on Workers**, so precompilation is mandatory, not an optimisation — and importing plain `nunjucks` throws at *runtime*, not build time. | **Low** — propagates into 181 files. The transpiler is kept in-repo as the audit trail and can be re-run. |
-| **D3** | Transition data source | **Hyperdrive + existing Postgres**, two bindings (cached and `--caching-disabled`) | Turns one two-variable change into two sequential single-variable changes. `cube`/`earthdistance`/`pg_trgm`/`DISTINCT ON` and the five raw-SQL sites keep working while the application moves. Costs £0. Two bindings because Hyperdrive **does not invalidate its cache on write**, and stale need text is unacceptable on a site whose purpose is current need text. | **High** — configs are deleted at Phase 8. |
+| **D3** | Transition data source *(revised)* | **Copy the relational core to D1 up front; build every route against D1 from the start.** No Hyperdrive-behind-Postgres interim. | Maintainer decision, overriding an earlier draft's Hyperdrive-first design. One datastore and one query dialect throughout, instead of a Postgres-reading phase followed by a later "swap to D1" phase — simpler, at the cost of the application rewrite and the query rewrite (`cube`/`earthdistance`/`pg_trgm`/`DISTINCT ON`, the five raw-SQL sites) landing together rather than sequentially. Postgres is copied from, never written to, and stays authoritative until Phase 8, so a bad copy is fixed by re-running it. | **Medium** — reversible up to the point real writes exist only in D1; see §11 risk B5 for what a rollback actually costs once the admin phase lands. |
 | **D4** | Primary datastore | **One D1 database** for the whole relational core | Goal 4: one datastore, not four. Measured 421.8 MB VACUUMed against a 10 GB ceiling. `FoodbankHit` stays here in full (19 MB, 942 days of history) rather than being sharded into a second product for a rounding error of space. | **Medium** — the Phase 7 cutover is the one irreducible big bang. |
 | **D5** | PlacePhoto *(fixed)* | **R2 storage, same-origin Worker route, image bytes** — never a redirect | Maintainer decision; three load-bearing reasons in [§5.1](#51-placephoto-r2-storage-same-origin-serving-real-image-bytes). Removes 1,776 MB from a 5 GB database. Cloudflare Images rejected: 21,342 unique transformations rebill every calendar month. | **High** — Django can fall back to the DB blob until the column is dropped. |
 | **D6** | Dumps *(fixed)* | **R2 on `dumps.givefood.org.uk`**, permanent 301/302 layer on www | Maintainer decision. Payloads average ~5.4 MB/row, which **exceeds D1's 2 MB row limit** — they physically cannot live in D1. Removes 1,474 MB. | **Medium** — the redirects are permanent and cheap; the R2 key layout is what would be expensive to change. |
@@ -308,7 +309,7 @@ The reason it fits is that **4,076 MB — 79% of the current database — never 
 |---|---|
 | 0 · Edge caching + groundwork + spikes | 8–12 |
 | 1 · R2 (photos, **maps, favicons, screenshots**, dumps, static) | 14–20 |
-| 2 · APIs on Workers + Hyperdrive | 24–32 |
+| 2 · APIs on Workers + D1 | 30–41 |
 | 2.5 · Reference data → D1 + `/aac/` | 10–14 |
 | 3 · `/needs/` | 30–40 |
 | 4 · Rest of public site | 25–35 |
@@ -361,7 +362,7 @@ The reason it fits is that **4,076 MB — 79% of the current database — never 
 | Workers Logs | sampled | $0.00 |
 | **Browser Rendering** — needcheck | 1,024 renders/day × ~15 s = 128 h/mo − 10 included | $10.62 |
 | **Browser Rendering** — screenshots | ~4,600/mo × ~30 s | $3.45 |
-| Hyperdrive / AI Gateway / Turnstile | included | $0.00 |
+| AI Gateway / Turnstile | included | $0.00 |
 | Containers (daily dump generation) | inside **all three** inclusions | $0.00 |
 | Cloudflare zone | **stay on Free**: 10 Cache Rules, design needs ~8 | $0.00 |
 | **Total** | | **≈ $49/mo (~£39)** |
@@ -2095,9 +2096,12 @@ The admin's `GET /admin/credential/<name>/`, which today returns any secret as `
   // count toward CPU. Raise only if a gfdash aggregation says otherwise.
   "limits": { "cpu_ms": 30000 },
 
-  // Measure before keeping. Only worth it while the database is Postgres
-  // behind Hyperdrive (pins compute near London); near-pointless on D1.
-  "placement": { "mode": "smart" },
+  // Smart Placement pins compute near a origin database it's latency-bound
+  // on. There is no such origin here -- every binding is D1/R2/KV, not a
+  // single-region Postgres -- so this is skipped, not "measured before
+  // keeping" as an earlier draft (written when Hyperdrive-behind-Postgres
+  // was still the design) had it.
+  // "placement": { "mode": "smart" },
 
   "preview_urls": true,
 
@@ -2836,7 +2840,7 @@ Ordered. Run all of these in Phase 0, before committing to anything downstream.
 | 4 | **Cold-start parse time** of ~181 precompiled templates plus lazy catalogues against the 1 s startup budget. | ½ day | Split the admin templates into a lazily-imported chunk; if still tight, split the admin into its own Worker — the one split I would accept. |
 | 5 | **Workers Cache GA status** and whether a cache *hit* is billed as a request. | 1 hour | Falls back to `caches.default` + `waitUntil(put)` — ten lines' difference, per-colo instead of tiered. The billing answer moves ~half the cost estimate. |
 | 6 | **`{{ obj.method }}` auto-call enumeration** across all 149 HTML templates vs the 33 model classes. | 1 day | **No fallback.** This is a silent-failure class and must be enumerated, not spiked. |
-| 7 | **In-memory haversine parity** — 200 sampled coordinates, `distance_m` to the integer and identical ordering, across all four search endpoints. | 1 day | Nearest-search stays on Postgres behind Hyperdrive permanently ⇒ no Postgres decommission ⇒ goal 2 unmet ⇒ reconsider the migration. This is the highest-stakes spike. |
+| 7 | **In-memory haversine parity** — 200 sampled coordinates, `distance_m` to the integer and identical ordering, across all four search endpoints. | 1 day | *(revised — no Hyperdrive fallback exists; see §4, §6 D3)* Falls back to a bounding-box + haversine **D1 SQL** query (D7) — slower and a real rewrite, but still on D1, not a reason to keep Postgres. If even that can't match production ordering, nearest-food-bank search cannot move off Postgres at all, goal 2 is unmet, and the migration's justification is gone. This is the highest-stakes spike. |
 | 8 | **PyYAML scalar-style reproduction** — try `js-yaml` against a real `/api/2/foodbank/<slug>/?format=yaml` response. | ½ day | Take the "YAML is structural, not byte" decision to the maintainer explicitly. |
 
 ---
@@ -7982,15 +7986,16 @@ Phase 2 of the delivery plan. Estimates are person-days.
 | **2.0** | **Capture 650 golden responses from production** (§7.8.7). Nothing else starts first. | — | `tests/golden/api/` committed; `gfcontract verify` against production is green (a self-comparison sanity check). | 1 |
 | **2.0b** | **Decide `Accept-Language`** (§7.7.3) and, if pinning to English, ship the Django `override("en")` change and re-capture. | 2.0 | `/api/2/foodbanks/` returns identical bytes for `Accept-Language: en` and `cy`. `/api/*` may now be added to the Phase 0 Cache Rules. | 1 |
 | **2.1** | Monorepo skeleton, Hono router with **both** `/api/*` and `/api/2/*` mounts, `wrangler types`, Workers Builds root directory + watch paths. | — | `wrangler deploy --dry-run` clean. A `packages/templates` change does not rebuild the API Worker. | 3 |
-| **2.2** | Data-access layer over Hyperdrive (`pg` ≥ 8.13.0), two bindings (cached / `--caching-disabled`), the ~15 queries the APIs need. Includes the `DISTINCT ON` → window-function rewrite. | 2.1 | Query results match Django ORM output for a fixed fixture set. | 4 |
+| **2.2a** | *(revised 2026-08-30 — no Hyperdrive; see §4, §6 D3, §10.1.3)* Extract the ~15-query core from Postgres, read-only, transform to the D1 DDL, load into `givefood`. Re-run before WP 2.7's cutover to pick up writes made since. | 2.1 | Row counts match source exactly. Spot-checksum (10 rows/table, full-column MD5) matches. | 4 |
+| **2.2b** | D1 query layer (`packages/db`), the same ~15 queries in D1 SQL, through the Sessions API (`env.DB.withSession()` — this database has read replication enabled). Includes the `DISTINCT ON` → window-function rewrite. | 2.2a | Query results match Django ORM output for a fixed fixture set. | 3 |
 | **2.3** | **`packages/serialise`** — `pyfloat`, `pyjson`, `pyxml`, `pyyaml`, `pycsv` (both dialects). Highest-risk WP in the phase. | 2.1 | All format invariants (§7.8.5) pass. Unit tests cover: `0.0`, `-0.0`, `1e16`, `1e-5`, `\u00f4`, astral chars, a multi-line `needs`, `null` vs `""`, `<None>`, a CRLF address. | **8** |
-| **2.4** | The 20 handlers, dual-mounted, reproducing every frozen bug in §7.3. | 2.2, 2.3 | Byte parity green across all 650 golden files. | 6 |
-| **2.5** | In-memory haversine (§7.5) — **two radii**, `Math.trunc` for `distance_m`, `pyRound2` for `distance_mi`, the exact `is_uk()` box. | 2.2 | `distance_m` matches to the integer and `distance_mi` to the byte, across all corpus coordinates including the exact-food-bank ones. | 3 |
+| **2.4** | The 20 handlers, dual-mounted, reproducing every frozen bug in §7.3. | 2.2b, 2.3 | Byte parity green across all 650 golden files. | 6 |
+| **2.5** | In-memory haversine (§7.5) — **two radii**, `Math.trunc` for `distance_m`, `pyRound2` for `distance_mi`, the exact `is_uk()` box. | 2.2b | `distance_m` matches to the integer and `distance_mi` to the byte, across all corpus coordinates including the exact-food-bank ones. | 3 |
 | **2.6** | The three documentation pages + `api2.js` + 9 method tables. | 2.1 | `#hash` deep links resolve; live XHR preview works; structural parity green. | 3 |
 | **2.7** | Route cutover, widening: `/api/2/*` → 48h → `/api/*` → 48h → `/api/1/*` and `/api/3/*`. | 2.4–2.6 | 48 hours of green nightly parity at each step before widening. | 1 |
-| | **Total** | | | **30** |
+| | **Total** | | | **31** |
 
-That is at the top of the 24–32 pd range in the delivery plan, because WP 2.3 has grown from 7 to 8 days to cover float formatting, which was missing.
+That is within the 30–41 pd range in the delivery plan (§10.2.2, revised for the same reason): WP 2.3 was already at the top of its original range from float formatting, and dropping Hyperdrive for a real D1 copy-and-query layer (2.2a + 2.2b, 7 pd combined) added roughly 3 pd net over the old single Hyperdrive-binding WP 2.2 (4 pd) — real work a live connection previously let this table skip past.
 
 #### 7.10.1 Spikes and open questions
 
@@ -10413,14 +10418,14 @@ This matters because **a Route cannot be the target of a same-zone `fetch()`**. 
 ```mermaid
 graph LR
   P0["Phase 0<br/>Edge caching<br/>on Django"] --> P1["Phase 1<br/>R2: images,<br/>dumps, static"]
-  P1 --> P2["Phase 2<br/>APIs<br/>+ Hyperdrive"]
+  P1 --> P2["Phase 2<br/>APIs<br/>+ D1"]
   P2 --> P25["Phase 2.5<br/>Reference data<br/>→ D1"]
   P25 --> P3["Phase 3<br/>/needs/*"]
   P3 --> P4["Phase 4<br/>Rest of<br/>public site"]
   P4 -.->|"CHEAP EXIT<br/>legitimate stop"| STOP(["Django serves<br/>only /admin/,<br/>/dashboard/, /write/,<br/>crons"])
   P4 --> P5["Phase 5<br/>Crons +<br/>need pipeline"]
   P5 --> P6["Phase 6<br/>The admin"]
-  P6 --> P7["Phase 7<br/>D1 cutover<br/>⚠ irreversible"]
+  P6 --> P7["Phase 7<br/>Final sync +<br/>write cutover<br/>⚠ needs re-scoping"]
   P7 --> P8["Phase 8<br/>Decommission"]
 ```
 
@@ -10429,42 +10434,32 @@ graph LR
 | Phase first because | |
 |---|---|
 | **Phase 0** | It is the only phase that delivers goal 1 (*faster*) with **no migration risk at all**, and it is worth doing even if the migration is then abandoned. Cloudflare does not cache HTML by default, so the 9–11M/month food bank page views are origin-served today. It also forces the 22-language cache-invalidation problem to be solved *while Django is still there to debug it*, so every later phase inherits a working design instead of inventing one mid-flight. |
-| **Phase 1** | The only substantial work with **zero database dependency**. Key R2 objects by the URL path itself (`photos/needs/at/<slug>/photo.jpg`) and the image routes are `env.PHOTOS.get(url.pathname.slice(1))` — no lookup, no Hyperdrive, no D1. That makes it a pure proof of the route mechanism, the deploy pipeline and the parity harness on a surface where the worst failure is a missing image. |
-| **Phase 2 (APIs before HTML)** | Smallest surface (1,816 LOC across gfapi1/2/3) with the *sharpest* test: byte-equality is pass/fail, no judgement. If reproducing `dicttoxml` + `minidom.toprettyxml` and PyYAML proves intractable, you learn it on 1,816 lines rather than 37,700. It also exercises Hyperdrive end to end under real load. |
-| **Phase 2.5** | Splits the D1 problem in half. `Postcode` (1.79M rows, exactly one reader at `givefood/views.py:1569`) and `Place` (253,584 rows) are immutable reference data refreshed by management commands — they move with **no sync, no write path, no consistency question**. Moving them forces an early answer to the FTS5-trigram autocomplete question, the hardest single query in the codebase, and takes ~618 MB out of Postgres so the Phase 7 cutover is only the ~190 MB relational core. |
+| **Phase 1** | The only substantial work with **zero database dependency**. Key R2 objects by the URL path itself (`photos/needs/at/<slug>/photo.jpg`) and the image routes are `env.PHOTOS.get(url.pathname.slice(1))` — no lookup, no D1. That makes it a pure proof of the route mechanism, the deploy pipeline and the parity harness on a surface where the worst failure is a missing image. |
+| **Phase 2 (APIs before HTML)** | Smallest surface (1,816 LOC across gfapi1/2/3) with the *sharpest* test: byte-equality is pass/fail, no judgement. If reproducing `dicttoxml` + `minidom.toprettyxml` and PyYAML proves intractable, you learn it on 1,816 lines rather than 37,700. It also exercises the real D1 copy-and-query mechanism end to end under real load, on the smallest possible surface — see §10.2.2. |
+| **Phase 2.5** | `Postcode` (1.79M rows, exactly one reader at `givefood/views.py:1569`) and `Place` (253,584 rows) are immutable reference data refreshed by management commands — they move with **no sync, no write path, no consistency question**, independent of whatever Phase 2 copied. Moving them forces an early answer to the FTS5-trigram autocomplete question, the hardest single query in the codebase, and takes ~618 MB out of Postgres. |
 | **Phase 3** | That is where the traffic is. Everything else public is rounding error beside `/needs/`. |
 | **Phase 4** | Content pages and dashboards: low risk, moderate volume, and it is the last thing needed before the *cheap exit*. |
-| **Phase 5** | Crons deliver none of the four goals directly. **But see the swap option below.** |
-| **Phase 6** | The admin, as instructed — last, but genuinely planned, with real work packages and real acceptance criteria (§10.2.7). It is a precondition of the Postgres decommission. |
-| **Phase 7** | The one irreducible big bang. Everything above exists to make it as small and as late as possible: by then the application, routing and caching are all proven, 3.9 GB has already left the database, and the only variable changing is the data binding. |
+| **Phase 5** | Crons deliver none of the four goals directly. **But see the swap option below** — and see the re-plan note after §10.2.3: this is also where D1 and Postgres start diverging on writes, which needs its own design before this phase starts. |
+| **Phase 6** | The admin, as instructed — last, but genuinely planned, with real work packages and real acceptance criteria (§10.2.7). It is a precondition of the Postgres decommission, and the highest-volume write surface in the app — the write-ownership question from Phase 5 is sharpest here. |
+| **Phase 7** | Shrinks under the no-Hyperdrive decision (§4, §6 D3): most tables are already D1-resident by the time Phase 6 lands, since every phase from 2 onward copies what it needs as it goes rather than deferring the whole relational core to one cutover. What's left is a final delta sync of anything still Postgres-only, a parity check, and the point where write ownership fully moves to D1 — **not yet fully re-scoped; see the callout after §10.2.3.** |
 
 **Swap option worth considering with the maintainer.** If the *immediate* worry is the box rather than site speed, swap Phases 4 and 5. `db_worker` runs every minute and needcheck drains ~1,024 django-tasks rows over roughly 3.4 hours; moving those off the box is the single largest load reduction available, and Phase 4 (25–35 pd of content pages) delivers less per day of effort.
 
-#### 10.1.3 Hyperdrive is the mechanism, not a contingency
+#### 10.1.3 D1 is populated incrementally, as each phase needs it
 
-A ported route needs a data source, and the only source Django and Workers can *both* see is the existing Postgres. **Hyperdrive is a Workers binding** — it does nothing for Django on Mythic Beasts — and it costs £0 on Workers Paid. Its job here is to let the application move to Workers **without simultaneously moving the query layer**, so `cube`/`earthdistance`, `pg_trgm`, `DISTINCT ON` and the five raw-SQL sites all keep working. That turns one two-variable change into two sequential single-variable changes, and it is the only reason this can be a strangler fig at all.
+*(Revised 2026-08-30 — an earlier draft of this section justified reading live Postgres through Hyperdrive as "the mechanism, not a contingency". The maintainer rejected that design; see §4 and §6 D3.)*
 
-Configure **two bindings**, because Hyperdrive's query cache does not invalidate on write:
+A ported route needs a data source. The mechanism now is: **each phase copies whatever tables its own routes read, once, from Postgres to D1, read-only against the source** (the same discipline as §5's full migration, scoped down — see WP 2.2a for the concrete first instance). There is no live Worker binding to Postgres at any point, in any phase. Postgres remains the authoritative source until Phase 8, so a bad copy is fixed by re-running it, not by falling back to a live read.
 
-```jsonc
-// workers/site/wrangler.jsonc  (Phases 2–6 only; removed at Phase 8)
-"hyperdrive": [
-  { "binding": "DB",        "id": "<cached-config-id>"   },   // max_age 60s
-  { "binding": "DB_STRICT", "id": "<uncached-config-id>" }    // --caching-disabled
-]
-```
+**What this buys:** one datastore and one query dialect from Phase 2 onward, no second product to configure or later retire, and no dual-binding cache-invalidation scheme to reason about. `cube`/`earthdistance`/`pg_trgm`/`DISTINCT ON` and the five raw-SQL sites are rewritten against D1/SQLite as each phase touches them, rather than kept alive behind Hyperdrive and rewritten once at the end.
 
-`DB` serves read paths. `DB_STRICT` serves anything that must reflect a just-committed write: `/admin/`, the needcheck write-then-render path, and the subscribe/confirm/unsubscribe flows. Note that only `IMMUTABLE` functions are cacheable, so any query touching `NOW()` bypasses the cache regardless.
-
-**Honest cost of this choice:** the Mythic Beasts box stays load-bearing until Phase 7, so **goal 2 (resilience) is the last goal delivered, not the first.** Partially mitigated — static assets, images and dumps are on Cloudflare from Phase 1, and with a high edge hit ratio plus `stale-if-error` a box outage becomes invisible to most visitors mid-migration — but it is a real trade and the maintainer should hear it named.
-
-**Phase 0 prerequisite (half a day, blocking):** Hyperdrive requires TLS. Confirm the production Postgres is reachable on a public endpoint with a valid certificate, or plan a Cloudflare Tunnel. Also check the heaviest `gfdash` raw SQL against Hyperdrive's **60-second maximum query duration**.
+**What it costs:** the application rewrite and the query rewrite now land together, phase by phase, instead of as two sequential single-variable changes — real risk that the old design was specifically bought to avoid. It also means **goal 2 (resilience) lands earlier and more completely than the Hyperdrive design would have delivered it**: once a route is copied and ported, it no longer depends on the Mythic Beasts box being up at all, not even indirectly through a live database connection — see the corrected Phase 4 assessment below. The remaining open question is what happens to tables that need to stay in sync with ongoing Postgres writes for longer than one phase (needcheck, the admin) — flagged in the re-plan callout after §10.2.3, not yet resolved for Phases 5–8.
 
 #### 10.1.4 The cheap exit
 
 **Stopping after Phase 4 is a good outcome, not a failure.** You would have the entire public site and all three APIs on Cloudflare; images, dumps and static assets on R2; edge-cached HTML with working tag invalidation; ~3.9 GB out of a 5 GB database; and one small Django box serving `/admin/`, `/dashboard/`, `/write/` and the crons.
 
-Against the four goals at Phase 4: **faster — fully delivered. Resilient — mostly** (the public site survives a box outage from cache; the admin does not). **Quicker deploys — yes for everything ported. Simple — one Django app on one box with a Workers front end.**
+Against the four goals at Phase 4: **faster — fully delivered. Resilient — better than the Hyperdrive design would have had it at this point:** every ported route (the whole public site and all three APIs) reads D1, not a live connection to the box, so it survives a box outage outright, not just from cache — only `/admin/`, `/dashboard/`, `/write/` and the crons still depend on the box being up. **Quicker deploys — yes for everything ported. Simple — one Django app on one box with a Workers front end.**
 
 Phases 5–8 are ~60% of the remaining effort and buy the Postgres decommission and the last of goal 2. For a two-person charity that may not be worth it. **Build the plan so that stopping at Phase 4 is a decision, not a defeat.**
 
@@ -10487,7 +10482,7 @@ Estimates are person-days, bottom-up. They deliberately do **not** sum the nine 
 | **0.6** | Verify the two pending `django_tasks_database` migrations. *(The data-migration work found nothing pending as of 2026-08-29 — `givefood` 0001–0012 and `django_tasks_database` 0001–0019 all applied. Confirm again before Phase 7.)* | — | `manage.py showmigrations` clean; `manage.py checkschema --preflight` clean. | 0.5 |
 | **0.7** | AI Gateway in front of OpenRouter — two lines in `givefood/utils/ai.py:142`. | — | Need-check calls appear in the AI Gateway dashboard with token and cost data. **A cost and failure-rate baseline exists to migrate against.** | 0.5 |
 | **0.8** | **D1 feasibility spike** (§10.2.9, Q1–Q3). | — | Three written yes/no answers. | 3 |
-| **0.9** | Hyperdrive prerequisite check (§10.1.3). | — | `SELECT 1` from a throwaway Worker; heaviest gfdash query <60s. | 0.5 |
+| **0.9** | ~~Hyperdrive prerequisite check~~ — dropped, no Hyperdrive at any point (§4, §6 D3, §10.1.3). Phase 0 itself is not being executed; kept here only so this table doesn't silently disagree with the rest of the plan. | — | — | 0 |
 | **0.10** | Cloudflare Notifications: 5xx rate, origin availability. | — | A deliberate origin 500 alerts within 5 minutes. | 0.5 |
 | **0.11** | **Confirm the real needcheck schedule** against the Coolify scheduled-task config. `docs/crons.md` says `45 7,11,15,19 * * *` (4×/day); production `givefood_crawlset` shows one `need` set per day at ~15:00 UTC. Fix `docs/crons.md`. | — | The Coolify config is recorded in the plan and the doc matches it. | 0.25 |
 | **0.12** | Delete confirmed dead code: `givefood/const/{topplaces,parlcon_mp,parlcon_party,item_classes}.py` (~70 KB, zero importers). Route `/favicon.ico` to the existing `givefood/static/img/favicon.ico` — currently unrouted, so under a catch-all Worker route every browser request for it becomes a billed 404. | — | `grep -rn "topplaces\|parlcon_mp\|parlcon_party\|item_classes" --include="*.py" .` returns only the README. `/favicon.ico` returns 200. | 0.5 |
@@ -10519,17 +10514,22 @@ The image surface is larger than the three photo routes. From `gfwfbn/urls/gener
 
 **Sequencing hazard, explicitly:** `place_has_photo` is a denormalised boolean written inside `save()` (`givefood/models/foodbank.py:663`, `:964`, `:1284`) by querying the `PlacePhoto` table, and read as the cheap 404 gate. Do **not** drop the blob column in the same deploy as the code that stops reading it. Three deploys: (1) backfill R2; (2) deploy Django reading R2 with a DB fallback and no longer deriving `place_has_photo` from the blob table; (3) verify for a week; (4) drop the column.
 
-#### 10.2.2 Phase 2 — APIs on Workers + Hyperdrive · **28–38 pd**
+#### 10.2.2 Phase 2 — APIs on Workers + D1 · **30–41 pd** *(revised: Hyperdrive dropped, data copy folded in)*
+
+> **Revised 2026-08-30.** The maintainer rejected the Hyperdrive-behind-Postgres interim this phase was originally built around (§4, §6 D3): no live Worker read path to Postgres, ever. Instead the ~15 queries these APIs need are copied to D1 as the first work package below, and the data-access layer is written against D1 from day one. This removes WP 2.2's two-binding Hyperdrive layer and the `DISTINCT ON` → window-function rewrite it deferred, and adds a real extraction/load work package in its place — net **+2 to +3 pd**, not a wash, because the copy has to be built and verified now rather than assumed away by a live connection. It also removes the later "swap Hyperdrive for D1" work (old WP 7.3) entirely, which is where the pd this phase gained get paid back across the whole project. See the callout after §10.2.3 for what this means for Phases 3–8, which is **not yet fully re-derived** — only Phase 2 and 2.5 have been rebuilt against the no-Hyperdrive decision so far.
 
 | WP | Task | Depends | Acceptance criteria | pd |
 |---|---|---|---|---|
-| 2.1 | Monorepo skeleton, Hono router, `wrangler types` committed, Workers Builds root-directory + watch-path wiring. | 0.9 | `pnpm dev` runs. A change under `packages/templates` does not rebuild the API routes. | 3 |
-| 2.2 | Data-access layer over Hyperdrive (`pg` ≥8.13.0), two bindings, the ~15 queries the APIs need. | 2.1 | Results match Django ORM output for a fixed fixture set. | 4 |
+| 2.1 | Monorepo skeleton, Hono router, `wrangler types` committed, Workers Builds root-directory + watch-path wiring. | — | `pnpm dev` runs. A change under `packages/templates` does not rebuild the API routes. | 3 |
+| **2.2a** | **Extract the ~15-query core** (`foodbank`, `foodbanklocation`, `foodbankdonationpoint`, `foodbankchange` + line/translation, `parliamentaryconstituency`, `charityyear`) from Postgres, transform to the D1 DDL (§4.6), load into the `givefood` D1 database. Read-only against Postgres throughout; Postgres is untouched and stays authoritative. | 2.1 | Row counts match source exactly, table by table. A spot-checksum (10 sampled rows/table, full-column MD5) matches. | 4 |
+| 2.2b | D1 query layer (`packages/db`) implementing the same ~15 queries directly in D1 SQL, **through the Sessions API** (`env.DB.withSession()`, bookmark propagated) — this database has read replication enabled; see §3.3's note. Includes the `DISTINCT ON` → window-function rewrite Postgres's dialect no longer forces. | 2.2a | Results match Django ORM output for a fixed fixture set. | 3 |
 | **2.3** | **The serialisation package.** See the detail below — this is the highest-risk WP in the plan and it is bigger than earlier drafts allowed. | 2.1 | Byte-identical against golden files for all 20 endpoints × every allowed format. | **10** |
-| 2.4 | The 20 endpoint handlers, **dual-mounted at `/api/*` and `/api/2/*`** (every gfapi2 route is live at both; only the `/api/2/` forms are in the current purge list, so the `/api/` aliases have been going stale to TTL). Preserve the frozen bugs: location `politics.mp_parl_id` carrying the *food bank's* value (`gfapi2/views.py:178`); constituency location entries producing 404ing `/api/2/foodbank/<location-slug>/` URLs; the 500-not-400 responses on malformed `lat_lng`. | 2.2, 2.3 | Strict parity green across the whole API corpus. | 6 |
-| 2.5 | In-memory haversine replacing earthdistance for the search endpoints. **`R = 6378168`** to match `earth_distance()` on `/api/2/*`; **`R = 6367000`** on `/api/1/foodbanks/search/` to match the Python haversine at `givefood/utils/geo.py:493`. The two APIs have differed by 0.175% for years and consumers may diff them. | 2.2 | `distance_m` matches production **to the integer**, and result ordering matches, across 200 sampled coordinates. | 4 |
+| 2.4 | The 20 endpoint handlers, **dual-mounted at `/api/*` and `/api/2/*`** (every gfapi2 route is live at both; only the `/api/2/` forms are in the current purge list, so the `/api/` aliases have been going stale to TTL). Preserve the frozen bugs: location `politics.mp_parl_id` carrying the *food bank's* value (`gfapi2/views.py:178`); constituency location entries producing 404ing `/api/2/foodbank/<location-slug>/` URLs; the 500-not-400 responses on malformed `lat_lng`. | 2.2b, 2.3 | Strict parity green across the whole API corpus. | 6 |
+| 2.5 | In-memory haversine replacing earthdistance for the search endpoints. **`R = 6378168`** to match `earth_distance()` on `/api/2/*`; **`R = 6367000`** on `/api/1/foodbanks/search/` to match the Python haversine at `givefood/utils/geo.py:493`. The two APIs have differed by 0.175% for years and consumers may diff them. | 2.2b | `distance_m` matches production **to the integer**, and result ordering matches, across 200 sampled coordinates. | 4 |
 | 2.6 | Route cutover: `/api/2/*` → `/api/*` → `/api/1/` → `/api/3/`. | 2.4 | 48h at each step with zero strict-parity failures before widening. | 1 |
 | 2.7 | The three documentation pages (`/api/1/`, `/api/2/`, `/api/2/docs/` + `api2.js` + 8 method tables). | 2.1 | `#hash` deep links resolve; live XHR preview works. | 3 |
+
+**WP 2.2a is a live-data copy, one-off per run, not the final migration.** It uses the same read-only discipline as §5's full data migration (parse `.env` in Python rather than sourcing it in zsh — a value contains an unbalanced quote; `PGOPTIONS='-c default_transaction_read_only=on'`) and the same extraction mechanism, just scoped to the tables this phase's endpoints read. **Re-run it before Phase 2.6's route cutover** to pick up anything written to Postgres since the initial copy — Django is still the origin for every unported route, including the admin, so writes to these tables continue throughout Phase 2. This copy is disposable and idempotent: if it's wrong, delete the rows and re-run it, because Postgres is still the source of truth.
 
 **WP 2.3 in detail — five serialisers, not three.** Earlier drafts named JSON, XML, YAML. The measured reality:
 
@@ -10572,6 +10572,20 @@ The image surface is larger than the three photo routes. From `gfwfbn/urls/gener
 **Correction to the acceptance criterion.** "Rows read per keystroke <500" is not achievable and would be quietly waived. Measured on the real dataset with the intended query shape: `q=ton` yields 14,123 candidate rows, `ing` 9,278, `and` 5,961, `mon` 3,876. That is 20× better than the 253,584-row scan a naive `LIKE` port would do, and latency is fine (6.92 ms worst case locally), but it is 28× the stated number. **Restate as:** *no `EXPLAIN QUERY PLAN` shows `SCAN` over `place`; p95 under 30 ms; worst-case candidate set under 20,000 rows*, benchmarked on `ton`, `ing`, `and` — not on `st`, which is two characters and never reaches the substring pass.
 
 **The folding contradiction must be resolved before the harness is configured.** SQLite's `upper()` is ASCII-only (`upper('môn')` → `'MôN'`) while Postgres `UPPER()` is Unicode-aware, and 8,442 of 253,584 place names are non-ASCII. Adding a folded `name_fold` column makes `mon` find `Ynys-Môn` — a real improvement for Welsh and Gaelic on a site that serves Welsh as a first-class language, but a **behaviour change**, and measurably so: folded vs unfolded substring counts are `mon` 3876 vs 3872, `dwr` 54 vs 39, `ia` 2399 vs 2371. **Pick one before Phase 2.5 starts:** either keep `/aac/` in STRICT parity and do not fold (accepting the regression), or fold and move `/aac/` to structural comparison with an allowlist of queries expected to differ. What you cannot do is both, which is what the earlier drafts specified.
+
+---
+
+> ### ⚠️ Open re-plan: Phases 3–8 still assume the dropped Hyperdrive interim
+>
+> Phase 2.5 needed no change above — it already copied its tables (postcode, place, boundaries) straight to D1 and never touched Hyperdrive. Phase 2 has been rebuilt against the no-Hyperdrive decision (§10.2.2). **Phases 3 through 8 below have not been.** They were written assuming Workers read Postgres live through Hyperdrive all the way to a single Phase 7 cutover, and that assumption no longer holds anywhere. Flagging what changes directionally, not re-deriving every number:
+>
+> - **Phases 3 and 4** (`/needs/`, rest of the public site) mostly read the same core tables Phase 2.2a already copied (`foodbank`, `foodbankchange`, `foodbanklocation`, `foodbankdonationpoint`). Their data dependency is likely *smaller* than currently scoped, not larger — re-derive each phase's WP 1 ("data access") against what's already in D1 before assuming a fresh copy is needed. A handful of additional tables (e.g. `foodbankarticle` for `/news/`) still need their own WP 2.2a-shaped copy.
+> - **Phase 5** (crons and the need pipeline) is where this gets genuinely harder than the Hyperdrive-first design made it look. Once `needcheck` writes new needs, D1 and Postgres start **diverging** — Django's admin keeps writing to Postgres for everything not yet ported, while the ported jobs Worker writes new needs to D1. This phase needs an explicit per-table write-ownership boundary (which system owns writes to `foodbankchange` once needcheck is ported?) that the Hyperdrive design deferred to Phase 7 by construction. Scope this properly before starting Phase 5, not as a footnote.
+> - **Phase 6** (the admin) has the same write-ownership question, sharper: it is the highest-volume write surface in the whole application.
+> - **Phase 7** ("D1 cutover", 14–20 pd) shrinks substantially, because there is no big-bang swap left to do — most tables will already be D1-resident by the time Phase 6 lands. It becomes: a final delta sync of anything still Postgres-only, a parity check, and the point where write ownership fully moves to D1. Re-title and re-scope it once Phases 5–6 are re-planned; do not carry its old 14–20 pd forward uncorrected.
+> - **The rollback story changes for every phase from 5 onward.** The old runbook's rollback was "redeploy the Hyperdrive-bound Worker version" — a code change with no data risk, because Postgres was still being read live. That mechanism no longer exists once a phase has writes landing only in D1. §11 risk B5 already flagged this as unresolved even under the old design; it is more load-bearing now, not less. Each phase from 5 onward needs its own answer to "what happens to a write that landed only in D1" before it ships, not a shared assumption inherited from Phase 7.
+>
+> **Do this re-plan before starting Phase 5.** Phases 2–4 are safe to build on the revision above; they are read-only and the existing rollback ("delete the route") still holds.
 
 #### 10.2.4 Phase 3 — `/needs/` · **32–44 pd**
 
@@ -10665,12 +10679,12 @@ Also port `resaver` as an **admin-triggered Queue job**, so a single-object re-s
 |---|---|---|
 | 7.1 | D1 schema DDL, **generated from `information_schema` plus a live NULL audit, never from `models.py`** (§10.2.8 note). Translate migration `0004`'s 19 hand-built indexes entry by entry — partial and expression indexes port verbatim; the three GiST entries and the `INCLUDE` do not. | 3 |
 | 7.2 | ETL with the three silent-corruption fixes (§10.8.3). Chunk INSERTs to ≤400 rows / <100 KB. | 4 |
-| 7.3 | Swap Hyperdrive → D1 in the data layer, query by query, behind a per-Worker flag. | 4 |
+| 7.3 | ~~Swap Hyperdrive → D1~~ — nothing to swap; every phase from 2 onward already reads D1. Phase 7 is not yet re-scoped (see the callout after §10.2.3); this row is struck, not replaced, until that re-plan happens. | 0 |
 | **7.4** | **Delta sync built around reconciliation, not watermarks** (§10.8.2). This is bigger than earlier drafts allowed and it is the single most likely source of a bad cutover. | **4** |
 | 7.5 | Full-corpus parity: D1-backed preview vs production Django. **This is the gate.** | 3 |
 | 7.6 | **Runbook rehearsal**, including the rollback path, timed. | 2 |
 | 8.1 | Final `pg_dump` → R2 + an offline copy; Coolify app stopped; box retained per §10.11 | 2 |
-| 8.2 | Delete Hyperdrive configs, `origin.givefood.org.uk`, the Docker image, unused DNS | 1 |
+| 8.2 | Delete `origin.givefood.org.uk`, the Docker image, unused DNS | 1 |
 
 **Why the DDL is generated.** Three columns are `NOT NULL` in Django and nullable-with-NULLs in production, found by having a load *fail*: `foodbankchangetranslation.change_text` (5 NULLs), `placephoto.photo_ref` (26), and — worst — **`foodbankchange.nonpertinent` (18,943 NULLs)**, which the model declares `default=False`. The admin review queue filters `nonpertinent=False`, and in SQL that **excludes NULL**. Coerce those 18,943 NULLs to `0` and 18,943 needs appear in the maintainer's review queue overnight. Preserve NULL as NULL on every tri-state boolean: `nonpertinent` (18,943), `is_categorised` (382), `wheelchair_accessible` (832 NULL / 4,907 true / 6 false, feeding schema.org `isAccessibleForFree`).
 
@@ -10680,7 +10694,7 @@ Run before any commitment. `wrangler d1 execute --local` runs the same workerd b
 
 | Q | Question | Method | If NO |
 |---|---|---|---|
-| **Q1** | Does in-memory haversine reproduce production nearest-search ordering **and** `distance_m` to the integer? | Load the 8,721-point set, run 200 postcodes, diff against live `/api/2/foodbanks/search/` | **Abandon or descope.** Nearest-food-bank is the site's core function. Without it on D1, Postgres never leaves, goal 2 is unmet, and the migration's justification is gone. Hyperdrive-forever means paying the whole rewrite cost for none of the resilience. |
+| **Q1** | Does in-memory haversine reproduce production nearest-search ordering **and** `distance_m` to the integer? | Load the 8,721-point set, run 200 postcodes, diff against live `/api/2/foodbanks/search/` | Falls back to a bounding-box + haversine **D1 SQL** query (D7) first. If that *also* can't match production ordering: **abandon or descope.** Nearest-food-bank is the site's core function, and there is no Hyperdrive fallback to fall back to — without it on D1 in some form, Postgres never leaves, goal 2 is unmet, and the migration's justification is gone. |
 | **Q2** | Does FTS5 `tokenize='trigram'` work on **remote** D1? Local is confirmed; production is not. | `wrangler d1 execute <db> --remote --command "CREATE VIRTUAL TABLE t USING fts5(a, tokenize='trigram');"` — one command | Prefix-only autocomplete (the code already gates substring at 3+ chars), or KV-shard by first letter. |
 | **Q3** | Does a ~430 MB D1 import complete, and what does `EXPLAIN QUERY PLAN` say about the ten hottest queries? | REST import flow: init → presigned R2 upload → ingest → poll | Trim harder, or shard reference data into a second database. |
 | **Q4** | **Does `/cdn-cgi/image/` still work in front of a path served by a Worker route?** | On a staging zone, put a Worker route on one photo path, then request `https://<zone>/cdn-cgi/image/width=300,format=avif/<that path>`. Test **both** the `/*` catch-all topology and a narrow `/needs/at/*/photo.jpg` route. | **Material design change.** Cloudflare documents error **9524** — "The /cdn-cgi/image/ resizing service could not perform resizing. This may happen when an image URL is intercepted by a Worker" — with the recommended workaround being to resize *within* the Worker; and error **9403** cautions specifically against "Workers scoped to the entire domain /*". Fallback: the Worker does the transform via `fetch(..., {cf: {image: {...}}})` (which reinstates the Cloudflare Images cost the plan avoided), or precompute all four widths used in the templates (150/300/540/1080) and remove the `/cdn-cgi/image/` prefix — a template change, i.e. an HTML change on pages the fidelity rule covers. |
@@ -10911,7 +10925,7 @@ Local D1 (real SQLite via workerd), local R2 on the filesystem under `.wrangler/
 curl "http://localhost:8787/__scheduled?cron=45+7,11,15,19+*+*+*"   # spaces MUST be +
 ```
 
-**Not available locally:** Browser Rendering and AI Gateway (both remote-only, need real credentials — develop needcheck against remote services or a stub). **Hyperdrive works locally** via `WRANGLER_HYPERDRIVE_LOCAL_CONNECTION_STRING_DB=postgres://...` pointed at a local Postgres — which is exactly the PG17-on-5433 the existing pytest suite already needs.
+**Not available locally:** Browser Rendering and AI Gateway (both remote-only, need real credentials — develop needcheck against remote services or a stub). D1 itself works locally out of the box (`wrangler dev` runs a local SQLite-backed copy) with no equivalent of the old Hyperdrive-to-local-Postgres story, since there is no Hyperdrive.
 
 **Local D1 is the closest thing this project has ever had to a staging database.** Given there is no staging Postgres, that alone justifies the Phase 0 spikes.
 
@@ -10942,7 +10956,9 @@ Two runtimes coexist for ~12 months. This is a genuine developer-experience regr
 
 ```bash
 make dev     # docker compose: postgres:17 on 5433 + django runserver:8000
-             # + wrangler dev:8787 with Hyperdrive pointed at :5433
+             # + wrangler dev:8787 against local D1, seeded from the fixture
+             #   set above -- no live connection between the two runtimes;
+             #   see §4/§6 D3, there is no Hyperdrive to point at anything
 make test    # uv run pytest && pnpm vitest
 make parity  # local Worker vs local Django
 ```
@@ -11350,12 +11366,18 @@ Add a banner to admin **GET** pages too, so nobody starts editing a form they ca
 
 #### 10.10.2 Hour 2 — before the freeze lifts, or minutes after
 
+> ⚠️ **This whole runbook still assumes the dropped Hyperdrive-first design** (a single Phase 7 cutover from a live Postgres read-path to D1). That assumption no longer holds — see the re-plan callout after §10.2.3 and §10.1.3. Step 1 below specifically named "roll back to the Hyperdrive-bound Worker version" as the hour-2 recovery mechanism, and **that version will not exist**: nothing in this design ever binds to Hyperdrive, so there is no prior version that reads Postgres live to fall back to. Do not follow this runbook as written until Phase 7 is re-scoped and this section is rewritten against whatever write-ownership design comes out of that (see the Phase 5/6 note in the same callout). Left in place, struck through where it's now wrong, so the shape of a real runbook is visible.
+
 No writes have landed in D1 yet, or one reverse-sync cycle has already replayed them. Recovery: **seconds. Data loss: none.**
 
 ```bash
 export CF_API_TOKEN=...  ZONE=...  PG_URL=...
 
-# 1. Roll the Worker back to its Hyperdrive-bound version (~30 seconds)
+# 1. ~~Roll the Worker back to its Hyperdrive-bound version~~ -- NO SUCH
+#    VERSION EXISTS. Real hour-2 recovery is "redeploy the pre-Phase-7
+#    Worker version, which doesn't yet write anything Postgres doesn't
+#    also have" -- correct only once Phase 7 is re-scoped to know what
+#    that version actually is.
 PREV=$(wrangler versions list --name givefood --json | jq -r '.[1].id')
 wrangler versions deploy "${PREV}@100%" --name givefood --yes
 
@@ -11462,7 +11484,7 @@ Run the **full tolerant parity corpus daily for the first week**, then weekly fo
 | **D+0** | Django read-only, still running. Postgres read-only, still running. Reverse sync running. | Rollback is a route flip. |
 | **D+7** | Intensive watch ends. **Django app stopped** (Coolify container down, **not deleted**). Postgres **still running and reachable**. Reverse sync **continues**. | Postgres is the only rollback path for a data problem discovered late. |
 | **D+30** | Matches D1's Time Travel retention. **Stop the reverse sync** and take a final `pg_dump -Fc` to **two** destinations: R2 (`archive/postgres-final-YYYYMMDD.dump`) and an offline copy **off Cloudflare entirely**. **Verify by restoring into a scratch Postgres and running row counts.** Only then stop Postgres. | Four weeks of reverse sync is the stated minimum. |
-| **D+90** | Delete the givefood database from the shared Postgres. Delete the Hyperdrive configs, the `origin.givefood.org.uk` DNS record, the Docker image, the Coolify project. | A charity's data problems surface on a **reporting cadence, not a daily one.** A quarterly figure that looks wrong is the classic late discovery. |
+| **D+90** | Delete the givefood database from the shared Postgres. Delete the `origin.givefood.org.uk` DNS record, the Docker image, the Coolify project. | A charity's data problems surface on a **reporting cadence, not a daily one.** A quarterly figure that looks wrong is the classic late discovery. |
 
 **Archive alongside the final dump** — things deliberately dropped that would otherwise be gone forever:
 
@@ -11491,7 +11513,7 @@ That is 2,562,501 `crawlitem` rows (only 171,415 of which move to D1), 41,625 ta
 
 | # | Criterion | Check at | Action |
 |---|---|---|---|
-| **K1** | The nearest-search spike (Q1) fails | End Phase 0 | **Abandon or descope.** Nearest-food-bank is the site's core function. Without it on D1, Postgres never leaves and goal 2 is unmet. Hyperdrive-forever means paying the whole rewrite cost for none of the resilience. |
+| **K1** | The nearest-search spike (Q1) fails, including its D1-SQL bounding-box fallback | End Phase 0 | **Abandon or descope.** Nearest-food-bank is the site's core function, and there is no Hyperdrive fallback under the current design (§4, §6 D3) — without it on D1 in some form, Postgres never leaves and goal 2 is unmet. |
 | **K2** | API byte-parity unachievable: after **8 dedicated days** on the serialisation layer, strict mode still fails on >1% of the API corpus | Mid Phase 2 | **Abandon**, or escalate the YAML carve-out (§10.2.2) to the maintainer as a scoped exception. Governments, councils, universities and supermarkets parse these with no version negotiation and no way to notify them. |
 | **K3** | Burn rate: cumulative actual >1.5× cumulative estimate | **End Phase 3, as a diarised review with a date** | **Descope to Phase 4 and stop.** |
 | **K4** | Admin overrun: Phase 6 tracking >2× estimate at its 50% mark | Mid Phase 6 | **Stop; keep Django for `/admin/` indefinitely** on a smaller footprint, and accept that Postgres survives. Reopens the Cloudflare Access question the maintainer declined. |
@@ -11542,7 +11564,7 @@ Owner is a role, not a name: **Maintainer** = Jason (decisions, go/no-go, rollba
 | **B2** | **Delta sync cannot detect deletes.** There are no soft deletes anywhere in 39 tables. `givefood/utils/crawlers.py:147` and `:206` run `CharityYear.objects.filter(foodbank=foodbank).delete()` then reinsert — **daily, at 05:30, across ~807 food banks**. `CharityYear` is a `CreatedModel` with no `modified`, so the plan syncs it by `id > max_id`: new rows arrive, old rows never leave. Also affects public unsubscribe (`gfwfbn/views.py:1185`), `needs_deleteall` (`gfadmin/views.py:427`), `Foodbank.delete()`'s ten-table cascade (`givefood/models/foodbank.py:609-618`), `cleanup_subs`, and dead-webpush pruning. | **Certain** — the daily cron guarantees it | **Data corruption + legal.** ~4,198 duplicate CharityYear rows per day, so every `/needs/at/<slug>/charity/` page renders each financial year three or four times after a 3-day dual-run. Worse: a subscriber who unsubscribes during dual-run is still subscribed in D1 and gets emailed after cutover — a PECR failure on a request the charity is obliged to honour. | **Redesign the delta.** (a) **Full truncate-and-reload** every table without a reliable `modified`: all five subscriber tables, `charityyear`, `foodbankchangeline`, `crawlset`, `orderline`, `orderitem`, `gfcredential`. Combined they are under 20 MB and reload in seconds. (b) For the eight tables that *do* have `modified`, add **PK-set reconciliation** to go/no-go: `SELECT id FROM pg EXCEPT SELECT id FROM d1` and its inverse, both must be empty. Add as an explicit checklist line — a per-side checksum will not catch a row present in D1 that was deleted from Postgres. | Dev | Before Phase 7 T-7 rehearsal. |
 | **B3** | **`FoodbankChangeTranslation` delta races the async translate task and trips the new UNIQUE constraint — which on D1 rolls back the entire database.** `FoodbankChangeTranslation` has no `created` and no `modified` (`givefood/models/needs.py:345`). `translate_need_async` is *enqueued* by `FoodbankChange.save()` (`needs.py:317`) and executed later by `db_worker`, which drains ~5 tasks/min against a 19-task-per-publish fan-out. So the parent's `modified` is bumped at T, the watermark advances past T, and the rows land at T+90s — picked up by `id > max_id` with **no matching DELETE**. | **High** during any dual-run in which a need is published | **Catastrophic.** A D1 constraint violation returns *"Durable Object was reset and rolled back to its last known good state"* — the whole database, not the statement, and mid-migration. | **Two changes.** (a) Full-reload `foodbankchangetranslation` on every delta cycle — 88,880 rows / 36 MB, and the runbook already does exactly this at T-0. (b) Use `INSERT ... ON CONFLICT DO UPDATE` throughout the delta sync, never plain `INSERT`, so no re-run can trip a unique index. | Dev | Before Phase 7 T-7 rehearsal. |
 | **B4** | **The runbook disables `db_worker` before draining the queue, and only checks `RUNNING`.** `db_worker` *is* the drain. Once disabled, `READY` tasks are stranded — and Phase 8 then drops `django_tasks_database_dbtaskresult` entirely. Production has been observed with **694 READY rows**. | **High** — a publish in the 20 minutes before the freeze is enough | **Silent, permanent.** A need published at 22:40 enqueues 19 translate tasks + 3 notification tasks + up to 98 `send_email_async` tasks (`gfadmin/views.py:1995-1997`). None run. Subscribers are never told; the need renders in English on all 21 non-English pages **forever**, because nothing will re-enqueue the translations. | **Reorder the runbook.** 22:30 stop only the *producing* crons (needcheck, getarticles, charityinfo, dump, days_between_needs) and **leave `db_worker` running**. Poll `SELECT status, count(*) FROM django_tasks_database_dbtaskresult GROUP BY status` until `READY = 0 AND RUNNING = 0`. Only then disable `db_worker`. Add "READY = 0 and RUNNING = 0" as a go/no-go line. Budget 30 minutes at the observed ~5/min drain rate; hard-abort if not empty by 23:00. | Maintainer | Rewrite the runbook before T-7. |
-| **B5** | **Three documents specify three different rollback mechanisms and the runbook implements none.** §2 of the data plan specifies a `reverse_sync.py` every 60s for four weeks; §9.2 of the delivery plan specifies an R2 change log for 7 days; the architecture document mentions neither. The runbook's rollback is "roll every Worker back to its Hyperdrive version" — which silently discards everything written to D1 since 00:45, including the needs from the 01:15 needcheck run the runbook itself instructs you to trigger. | **Certain** — the mechanism does not exist | **"Reversible at every stage" is an assertion, not a procedure.** Hour-2 rollback is clean. Day-2 rollback loses two days of admin edits, published needs and subscriber confirmations, discovered at 3am. | **Pick one, build it, rehearse it, put it in the runbook as numbered steps.** Recommend the reverse sync over the change log because it keeps Postgres continuously queryable, which is what makes a week-2 rollback a route flip. Add three steps: 00:40 start reverse sync; 00:50 verify by comparing one known row; nightly reverse checksum with a WhatsApp alarm. **Fix its own delete-blindness (same as B2) and `setval` the Postgres sequences past any D1-assigned id** — a food bank created in D1 gets `6,755,286,043,852,801` and the first post-rollback Django insert will collide. | Both | Before Phase 7 T-7. Rehearse the *rollback*, not just the cutover. |
+| **B5** | **Three documents specify three different rollback mechanisms and the runbook implements none — and it is worse than that now.** §2 of the data plan specifies a `reverse_sync.py` every 60s for four weeks; §9.2 of the delivery plan specifies an R2 change log for 7 days; the architecture document mentions neither. The runbook's rollback is "roll every Worker back to its Hyperdrive version" — but the no-Hyperdrive decision (§4, §6 D3) means **that version does not exist and never will**, at any phase, not just an unbuilt one. This is not "the mechanism wasn't built yet"; it's "the mechanism this plan named cannot be built under the current architecture." It also would have silently discarded everything written to D1 since 00:45, including the needs from the 01:15 needcheck run the runbook itself instructs you to trigger, even if it did exist. | **Certain** — the named mechanism is architecturally impossible, not just unbuilt | **"Reversible at every stage" is an assertion, not a procedure — and the one procedure named in this runbook cannot exist.** Hour-2 rollback is clean under a redeploy-based recovery (see the note at §10.10.2). Day-2 rollback loses two days of admin edits, published needs and subscriber confirmations, discovered at 3am, with no mechanism proposed to prevent it. | **Pick a real mechanism, build it, rehearse it, put it in the runbook as numbered steps — as part of the Phase 5–8 re-plan this whole area now needs (see the callout after §10.2.3), not as a patch to the old runbook.** The reverse-sync idea is still worth keeping over the change log because it keeps Postgres continuously queryable, which is what makes a week-2 rollback a route flip — but it has to be redesigned as "sync D1 back to Postgres" (D1 is where new writes land now), not the reverse. Whatever is built must fix its own delete-blindness (same as B2) and `setval` the Postgres sequences past any D1-assigned id — a food bank created in D1 gets `6,755,286,043,852,801` and the first post-rollback Django insert will collide. | Both | **Before Phase 5 starts, not before Phase 7** — the re-plan callout after §10.2.3 makes Phase 5 the first phase where this is load-bearing. |
 | **B6** | **API byte-equality will fail on Python float serialisation, and no design document mentions floats.** Verified on this machine: `json.dumps(0.0)` → `0.0` but `JSON.stringify(0.0)` → `0`; `json.dumps(1e16)` → `1e+16` but JS → `10000000000000000`. `distance_mi` is `round(miles(...), 2)` — a Python float — at `gfapi2/views.py:415`, `:570`, `:725`. `/needs/at/<slug>/nearby/` searches from a food bank's own coordinates, so `distance_mi` is `0.0` on the first result of every one of 1,071 pages. The same defect hits **geo.json**, where `gfwfbn/views.py:263,277,302,318` round to 4 or 6 dp and the UK straddles the 0.0 meridian. | **Certain** | **Kills the plan's headline guarantee.** "Exactly the same API responses" is declared absolute, and every search response carries 10–20 of these values. | **Specify float handling in WP 2.3 and budget for it.** `JSON.stringify` cannot distinguish `1.0` from `1`, so the serialiser needs a `Float` wrapper (or a field allowlist) plus a stringifier reproducing Python's `repr()` thresholds — exponential at ≥1e16 and <1e-4, with Python's `e+16`/`e-05` spelling. Add golden files pinning `distance_mi = 0.0` (search a food bank's own coordinates) and a non-integral value, for all three search endpoints × three formats, plus a geo.json case at a rounded-to-integer coordinate. | Dev | Phase 2, WP 2.3. Add 1.5 pd. |
 | **B7** | **PyYAML's multiline scalar style is not reproducible by configuring js-yaml.** Verified with the repo's own PyYAML: `yaml.dump(...)` on `'Beans\nPasta'` emits a **single-quoted scalar with each newline becoming a blank line plus continuation indent**. js-yaml emits either a literal block (`\|-`) or a double-quoted scalar; there is no option that produces PyYAML's form. `change_text` and `excess_change_text` are newline-separated shopping lists and appear as `needs`/`excess` in **every** YAML response from `/api/2/foodbanks/`, `/foodbank/<slug>/`, `/locations/`, `/needs/`, `/need/<id>/` and all three search endpoints. | **Certain** | YAML is one of three declared byte-exact formats. This is a plausible trigger for kill criterion K2. | **Two options, decide in Phase 0 not mid-Phase-2.** (a) Reimplement PyYAML's emitter analysis for the scalar styles reachable in this data (plain, single-quoted-folded, null/bool/number) — genuinely several days on top of WP 2.3's seven. (b) **Measure YAML traffic** through Cloudflare Analytics; if negligible, take the decision to the maintainer explicitly as "YAML moves to structural rather than byte parity". YAML — not XML — is the hardest of the three formats. | Both | Measure in Phase 0. Decide before Phase 2 starts. |
 | **B8** | **`/needs/at/<slug>/map.png` and `/maps/<size>.png` have no work package, no storage layer, and are a billed Google Static Maps call on every cache miss.** `gfwfbn/views.py:485` is a live `requests.get()` to `maps.googleapis.com/maps/api/staticmap` returning `HttpResponse(response.content)`. No model, no R2, only `@cache_page(WEEK)`. These are the **`og:image` on seven page types**, so every social and chat unfurler hotlinks them. 1,071 × 3 + 1,974 × 3 = **9,135 distinct URLs**. | **Certain** — the routes exist and the plan omits them | **Broken social previews at best; a runaway Google bill at worst.** And the Workers Cache key includes the **Worker version**, so goal 3 (quicker deploys) directly multiplies a billed third-party API call. | **Add to Phase 1 alongside photos:** precompute all 9,135 PNGs into R2 keyed by path, rebuild on `Foodbank`/`Location` save (the same hook that fires `decache_async`), serve as a pure R2 read with no Google call on the request path. Until that lands, price the interim exposure: 20 deploys/month × ~2,000 popular map URLs ≈ 40k Static Maps calls at $2/1,000 = **$80/month**, absorbed by the $200 Google credit that must *also* cover Geocoding and Places. | Dev | Add WP to Phase 1 now. +3 pd. |
@@ -11907,7 +11929,6 @@ The earlier model counted **page views**. Cloudflare bills **Worker invocations*
 | **Workers Logs** | `head_sampling_rate: 0.05` on the beacon Worker, `1` elsewhere ≈ 10M vs 20M included | **$0.00** |
 | **Browser Rendering** — needcheck | 1,024 renders/day × ~15 s = 4.27 h/day = **128 h/mo** − 10 included = 118 × $0.09 | **$10.62** |
 | **Browser Rendering** — screenshots (**M1**, omitted from the earlier model) | 5,355 URLs, ~20% touched weekly = 4,280/mo × 30 s = 35.7 h × $0.09 | **$3.21** |
-| **Hyperdrive** | included in Workers Paid; retired at Phase 7 | **$0.00** |
 | **Containers** (daily 5-min `standard-2` dump) | 150 vCPU-min / 15 GiB-h / 30 GB-h — **inside all three inclusions** | **$0.00** |
 | **AI Gateway / Turnstile / Zero Trust** | free; OAuth ported so no Access seats | **$0.00** |
 | **Cloudflare zone** | **Free plan**: 10 Cache Rules (design needs ~8), 5 tag-purges/min (a full rebuild is 30 calls = 6 min) | **$0.00** |
@@ -12031,9 +12052,9 @@ curl -sI https://www.givefood.org.uk/needs/at/county-durham/ | grep -i "set-cook
 # 6. RUN SPIKE S1 -- the cdn-cgi/image x Worker-route question (§11.2).
 #    Half a day. It gates Phase 1 entirely and there is currently no fallback design.
 
-# 7. Verify the Hyperdrive precondition: is the Postgres endpoint reachable
-#    over TLS? Create a config; run SELECT 1 from a throwaway Worker.
-npx wrangler hyperdrive create givefood-spike --connection-string="$PG_URL"
+# 7. ~~Verify the Hyperdrive precondition~~ -- dropped, no Hyperdrive at any
+#    point (§4, §6 D3). Nothing replaces this step; D1 has no live-connection
+#    precondition to verify the way a Hyperdrive-to-Postgres binding would.
 
 # ── Day 4-5 ──────────────────────────────────────────────────────────────
 # 8. RUN SPIKE S3 -- FTS5 trigram on REMOTE D1, with the M2 phrase-quoting fix.
