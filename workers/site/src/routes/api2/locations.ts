@@ -1,12 +1,13 @@
 import { Hono } from "hono";
 import {
-  getAllOpenFoodbanks,
   getAllOpenLocations,
   getFoodbanksByIds,
+  getLocationsByIds,
+  getOpenFoodbankCoordinates,
+  getOpenLocationCoordinates,
   toDashedUuid,
+  type CoordinateRow,
   type FoodbankChangeRow,
-  type FoodbankLocationRow,
-  type FoodbankRow,
 } from "@givefood/db";
 import { R_EARTHDISTANCE, isUk, miles, nearest, type Ranked } from "@givefood/geo";
 import { round2, type SerialisableValue } from "@givefood/serialise";
@@ -146,9 +147,12 @@ api2LocationsApp.get("/locations/", async (c) => {
 // array is contract-exact for every skip_first=False search (every one of
 // these), so the two sources are concatenated before ranking once, not
 // independently capped at 20 first.
-type LocationSearchCandidate =
-  | { kind: "organisation"; row: FoodbankRow }
-  | { kind: "location"; row: FoodbankLocationRow };
+//
+// WP 2.5 perf: ranking runs against the cheap id+coordinate candidate set
+// (a covering-index scan over ~3000 rows combined), not the full
+// open-foodbank/open-location row sets -- full rows for only the 20
+// survivors are fetched afterward, by id.
+type LocationSearchCandidate = { kind: "organisation" | "location"; coord: CoordinateRow };
 
 // --- location_search (GET /locations/search/) ------------------------------
 // geocoding judgment call, matching the sibling foodbanks.ts's
@@ -182,38 +186,43 @@ api2LocationsApp.get("/locations/search/", async (c) => {
   }
 
   const session = dbSession(c);
-  const [foodbanks, locationRows] = await Promise.all([getAllOpenFoodbanks(session), getAllOpenLocations(session)]);
+  const [foodbankCoords, locationCoords] = await Promise.all([
+    getOpenFoodbankCoordinates(session),
+    getOpenLocationCoordinates(session),
+  ]);
 
   const candidates: LocationSearchCandidate[] = [
-    ...foodbanks.map((row): LocationSearchCandidate => ({ kind: "organisation", row })),
-    ...locationRows.map((row): LocationSearchCandidate => ({ kind: "location", row })),
+    ...foodbankCoords.map((coord): LocationSearchCandidate => ({ kind: "organisation", coord })),
+    ...locationCoords.map((coord): LocationSearchCandidate => ({ kind: "location", coord })),
   ];
 
   const ranked: Ranked<LocationSearchCandidate>[] = nearest(
     candidates,
     lat,
     lng,
-    (candidate) => parseLatLng(candidate.row.lat_lng),
+    (candidate) => [candidate.coord.latitude, candidate.coord.longitude],
     20,
     R_EARTHDISTANCE,
     false,
   );
 
-  // Enrich only the top-20 survivors with `latest_need` -- mirrors the
-  // per-row `.latest_need` access the Django view does only after
-  // slicing (see the sibling foodbank_search's identical comment / PLAN.md
-  // §7.2's N+1 note), not a join over the full open set. One call covers
-  // both organisation ids (the row's own id) and the parent food bank ids
-  // of the location-type results.
-  const foodbankIds = Array.from(
-    new Set(ranked.map((r) => (r.item.kind === "organisation" ? r.item.row.id : r.item.row.foodbank_id))),
-  );
-  const foodbanksWithNeed = await getFoodbanksByIds(session, foodbankIds);
-  const foodbankById = new Map(foodbanksWithNeed.map((fb) => [fb.id, fb]));
+  // Full rows for only the 20 survivors -- organisation ids fetch their
+  // own food bank row (with latest_need attached); location ids fetch
+  // their own location row, plus their PARENT food bank's row (for
+  // facebook_page/url/latest_need) in the same batched call.
+  const organisationIds = ranked.filter((r) => r.item.kind === "organisation").map((r) => r.item.coord.id);
+  const locationIds = ranked.filter((r) => r.item.kind === "location").map((r) => r.item.coord.id);
+  const [organisationFoodbanks, winningLocations] = await Promise.all([
+    getFoodbanksByIds(session, organisationIds),
+    getLocationsByIds(session, locationIds),
+  ]);
+  const locationById = new Map(winningLocations.map((loc) => [loc.id, loc]));
+  const parentFoodbankIds = Array.from(new Set(winningLocations.map((loc) => loc.foodbank_id)));
+  const parentFoodbanks =
+    parentFoodbankIds.length === 0 ? [] : await getFoodbanksByIds(session, parentFoodbankIds);
+  const foodbankById = new Map([...organisationFoodbanks, ...parentFoodbanks].map((fb) => [fb.id, fb]));
 
   const responseList = ranked.map(({ item, distanceM }) => {
-    const commonRow = item.row; // fields shared by both branches below
-
     let address: string;
     let phone: string | null;
     let email: string;
@@ -224,10 +233,21 @@ api2LocationsApp.get("/locations/search/", async (c) => {
     let htmlUrl: string;
     let homepage: string;
     let latestNeed: FoodbankChangeRow;
+    let commonUuid: string;
+    let commonSlug: string;
+    let commonName: string;
+    let commonLatLng: string;
+    let commonPostcode: string | null;
+    let commonParlConName: string | null;
+    let commonMp: string | null;
+    let commonMpParty: string | null;
+    let commonMpParlId: number | null;
+    let commonWard: string | null;
+    let commonDistrict: string | null;
+    let commonParlConSlug: string | null;
 
     if (item.kind === "organisation") {
-      const row = item.row;
-      const enriched = foodbankById.get(row.id)!;
+      const row = foodbankById.get(item.coord.id)!;
       address = fullAddressUnconditional(row.address, row.postcode);
       phone = row.phone_number;
       email = row.contact_email;
@@ -242,9 +262,21 @@ api2LocationsApp.get("/locations/search/", async (c) => {
       homepage = urlWithRefFoodbank(row.url);
       // Frozen bug B12: latest_need dereferenced unguarded in the source
       // -- if it's null this throws here exactly as it 500s in Django.
-      latestNeed = enriched.latestNeed!;
+      latestNeed = row.latestNeed!;
+      commonUuid = row.uuid;
+      commonSlug = row.slug;
+      commonName = row.name;
+      commonLatLng = row.lat_lng;
+      commonPostcode = row.postcode;
+      commonParlConName = row.parliamentary_constituency_name;
+      commonMp = row.mp;
+      commonMpParty = row.mp_party;
+      commonMpParlId = row.mp_parl_id;
+      commonWard = row.ward;
+      commonDistrict = row.district;
+      commonParlConSlug = row.parliamentary_constituency_slug;
     } else {
-      const row = item.row;
+      const row = locationById.get(item.coord.id)!;
       const parentFoodbank = foodbankById.get(row.foodbank_id)!;
       address = fullAddressNullable(row.address, row.postcode);
       phone = phoneOrFoodbankPhone(row.phone_number, row.foodbank_phone_number);
@@ -262,28 +294,40 @@ api2LocationsApp.get("/locations/search/", async (c) => {
       htmlUrl = `${SITE_DOMAIN}/needs/at/${row.foodbank_slug}/${row.slug}/`;
       homepage = urlWithRefFoodbank(parentFoodbank.url);
       latestNeed = parentFoodbank.latestNeed!;
+      commonUuid = row.uuid;
+      commonSlug = row.slug;
+      commonName = row.name;
+      commonLatLng = row.lat_lng;
+      commonPostcode = row.postcode;
+      commonParlConName = row.parliamentary_constituency_name;
+      commonMp = row.mp;
+      commonMpParty = row.mp_party;
+      commonMpParlId = row.mp_parl_id;
+      commonWard = row.ward;
+      commonDistrict = row.district;
+      commonParlConSlug = row.parliamentary_constituency_slug;
     }
 
     return {
-      id: toDashedUuid(commonRow.uuid),
+      id: toDashedUuid(commonUuid),
       type: item.kind,
-      slug: commonRow.slug,
-      name: commonRow.name,
-      lat_lng: commonRow.lat_lng,
+      slug: commonSlug,
+      name: commonName,
+      lat_lng: commonLatLng,
       distance_m: Math.trunc(distanceM),
       distance_mi: round2(miles(distanceM)),
       address,
-      postcode: commonRow.postcode,
+      postcode: commonPostcode,
       politics: {
-        parliamentary_constituency: commonRow.parliamentary_constituency_name,
-        mp: commonRow.mp,
-        mp_party: commonRow.mp_party,
-        mp_parl_id: commonRow.mp_parl_id,
-        ward: commonRow.ward,
-        district: commonRow.district,
+        parliamentary_constituency: commonParlConName,
+        mp: commonMp,
+        mp_party: commonMpParty,
+        mp_parl_id: commonMpParlId,
+        ward: commonWard,
+        district: commonDistrict,
         urls: {
-          self: `${SITE_DOMAIN}/api/2/constituency/${commonRow.parliamentary_constituency_slug}/`,
-          html: `${SITE_DOMAIN}/needs/in/constituency/${commonRow.parliamentary_constituency_slug}/`,
+          self: `${SITE_DOMAIN}/api/2/constituency/${commonParlConSlug}/`,
+          html: `${SITE_DOMAIN}/needs/in/constituency/${commonParlConSlug}/`,
         },
       },
       phone,

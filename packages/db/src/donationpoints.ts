@@ -1,4 +1,4 @@
-import { coerceBooleans, sortByName, type Session } from "./types";
+import { coerceBooleans, queryCoordinates, sortByName, type CoordinateRow, type Session } from "./types";
 
 const BOOLEAN_COLUMNS = ["place_has_photo", "is_closed", "in_store_only", "wheelchair_accessible"] as const;
 
@@ -63,11 +63,34 @@ export async function getDonationPointsByFoodbankId(session: Session, foodbankId
   return sortByName(result.results.map(mapDonationPointRow));
 }
 
-// gfapi2 `donationpoints` geojson, and the candidate set for
-// `donationpoint_search`'s donation-point branch.
+// gfapi2 `donationpoints` geojson, and the full-detail source for
+// `donationpoint_search`'s surviving donation-point winners (see
+// getOpenDonationPointCoordinates for the cheap candidate-set version
+// ranking actually runs against).
 export async function getAllOpenDonationPoints(session: Session): Promise<DonationPointRow[]> {
   const result = await session.prepare("SELECT * FROM foodbankdonationpoint WHERE is_closed = 0").all();
   return result.results.map(mapDonationPointRow);
+}
+
+// WP 2.5 perf: the id+coordinate candidate set for ranking
+// `donationpoint_search`'s donation-point branch -- see queryCoordinates's
+// own comment in types.ts. Covered entirely by `dp_open_latlng_idx`.
+export async function getOpenDonationPointCoordinates(session: Session): Promise<CoordinateRow[]> {
+  return queryCoordinates(session, "SELECT id, latitude, longitude FROM foodbankdonationpoint WHERE is_closed = 0");
+}
+
+// Full rows for a small, already-ranked set of donation-point ids -- same
+// order-preservation reasoning as `getFoodbanksByIds`/`getLocationsByIds`.
+export async function getDonationPointsByIds(session: Session, ids: readonly number[]): Promise<DonationPointRow[]> {
+  if (ids.length === 0) return [];
+  const placeholders = ids.map(() => "?").join(", ");
+  const result = await session
+    .prepare(`SELECT * FROM foodbankdonationpoint WHERE id IN (${placeholders})`)
+    .bind(...ids)
+    .all();
+  const rows = result.results.map((r) => mapDonationPointRow(r as Record<string, unknown>));
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  return ids.map((id) => byId.get(id)).filter((row): row is DonationPointRow => row !== undefined);
 }
 
 // gfapi3 `company` -- the exact projected shape of Django's `.only(...)`

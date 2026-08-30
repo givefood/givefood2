@@ -1,14 +1,13 @@
 import { Hono } from "hono";
 import {
   getAllFoodbanks,
-  getAllOpenFoodbanks,
   getFoodbankBySlug,
   getFoodbanksByIds,
   getLocationsByFoodbankId,
   getNeedByUuid,
+  getOpenFoodbankCoordinates,
   getPublishedNeeds,
   toDashedUuid,
-  type FoodbankRow,
 } from "@givefood/db";
 import { miles, nearest, R_PYTHON } from "@givefood/geo";
 import { formatCsvRow, round2 } from "@givefood/serialise";
@@ -65,9 +64,8 @@ function pythonInt(s: string): number {
   return Number(trimmed);
 }
 
-function foodbankLatLng(fb: FoodbankRow): [number, number] {
-  const [lat, lng] = fb.lat_lng.split(",");
-  return [Number(lat), Number(lng)];
+function coordinateLatLng(row: { latitude: number; longitude: number }): [number, number] {
+  return [row.latitude, row.longitude];
 }
 
 // --- api_foodbanks (GET /foodbanks/) ---------------------------------
@@ -189,8 +187,11 @@ api1App.get("/foodbanks/search/", async (c) => {
   const lng = Number(lngStr);
 
   const session = dbSession(c);
-  const openFoodbanks = await getAllOpenFoodbanks(session);
-  const ranked = nearest(openFoodbanks, lat, lng, foodbankLatLng, 10, R_PYTHON, false);
+  // WP 2.5 perf: rank against the cheap id+coordinate candidate set (a
+  // covering-index scan), not the full ~1000-row, 79-column open-foodbank
+  // set -- full rows for only the 10 survivors come from getFoodbanksByIds.
+  const candidates = await getOpenFoodbankCoordinates(session);
+  const ranked = nearest(candidates, lat, lng, coordinateLatLng, 10, R_PYTHON, false);
   const enriched = await getFoodbanksByIds(
     session,
     ranked.map((r) => r.item.id),

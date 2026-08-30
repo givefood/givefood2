@@ -1,4 +1,4 @@
-import { coerceBooleans, type Session } from "./types";
+import { coerceBooleans, queryCoordinates, type CoordinateRow, type Session } from "./types";
 import { normalizeUuid } from "./uuid";
 import { getNeedById, type FoodbankChangeRow } from "./needs";
 
@@ -120,6 +120,14 @@ export async function getAllFoodbanks(session: Session): Promise<FoodbankRow[]> 
 export async function getAllOpenFoodbanks(session: Session): Promise<FoodbankRow[]> {
   const result = await session.prepare("SELECT * FROM foodbank WHERE is_closed = 0").all();
   return result.results.map(mapFoodbankRow);
+}
+
+// WP 2.5 perf: the id+coordinate candidate set for ranking a nearest-N
+// food bank search (gfapi1 `api_foodbank_search`, gfapi2 `foodbank_search`,
+// `Foodbank.nearby()`) -- see queryCoordinates's own comment in types.ts.
+// Covered entirely by `foodbank_open_latlng_idx`.
+export async function getOpenFoodbankCoordinates(session: Session): Promise<CoordinateRow[]> {
+  return queryCoordinates(session, "SELECT id, latitude, longitude FROM foodbank WHERE is_closed = 0");
 }
 
 // gfapi1 `api_foodbank` / gfapi2 `foodbank` detail endpoints -- both use

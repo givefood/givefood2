@@ -1,4 +1,4 @@
-import { coerceBooleans, sortByName, type Session } from "./types";
+import { coerceBooleans, queryCoordinates, sortByName, type CoordinateRow, type Session } from "./types";
 
 const BOOLEAN_COLUMNS = ["place_has_photo", "is_closed", "is_donation_point", "is_mobile"] as const;
 
@@ -60,7 +60,9 @@ export async function getLocationsByFoodbankId(session: Session, foodbankId: num
   return sortByName(result.results.map(mapLocationRow));
 }
 
-// gfapi2 `locations`, and the candidate set for `location_search`.
+// gfapi2 `locations`, and the full-detail source for `location_search`'s
+// surviving winners (see getOpenLocationCoordinates for the cheap
+// candidate-set version ranking actually runs against).
 export async function getAllOpenLocations(session: Session): Promise<FoodbankLocationRow[]> {
   const result = await session.prepare("SELECT * FROM foodbanklocation WHERE is_closed = 0").all();
   return result.results.map(mapLocationRow);
@@ -75,6 +77,40 @@ export async function getOpenDonationPointLocations(session: Session): Promise<F
     .prepare("SELECT * FROM foodbanklocation WHERE is_closed = 0 AND is_donation_point = 1")
     .all();
   return result.results.map(mapLocationRow);
+}
+
+// WP 2.5 perf: the id+coordinate candidate set for ranking `location_search`
+// -- see queryCoordinates's own comment in types.ts. Covered entirely by
+// `loc_open_latlng_idx`.
+export async function getOpenLocationCoordinates(session: Session): Promise<CoordinateRow[]> {
+  return queryCoordinates(session, "SELECT id, latitude, longitude FROM foodbanklocation WHERE is_closed = 0");
+}
+
+// Same, for the location branch of `donationpoint_search` -- covered by
+// `loc_open_dp_latlng_idx`.
+export async function getOpenDonationPointLocationCoordinates(session: Session): Promise<CoordinateRow[]> {
+  return queryCoordinates(
+    session,
+    "SELECT id, latitude, longitude FROM foodbanklocation WHERE is_closed = 0 AND is_donation_point = 1",
+  );
+}
+
+// Full rows for a small, already-ranked set of location ids -- the
+// location-typed winners of `location_search`/`donationpoint_search`,
+// fetched after ranking against the cheap coordinate-only candidate set
+// above. Same order-preservation reasoning as `getFoodbanksByIds`: a bare
+// `WHERE id IN (...)` gives no ordering guarantee, so the result is
+// re-sorted back into the caller's `ids` order.
+export async function getLocationsByIds(session: Session, ids: readonly number[]): Promise<FoodbankLocationRow[]> {
+  if (ids.length === 0) return [];
+  const placeholders = ids.map(() => "?").join(", ");
+  const result = await session
+    .prepare(`SELECT * FROM foodbanklocation WHERE id IN (${placeholders})`)
+    .bind(...ids)
+    .all();
+  const rows = result.results.map((r) => mapLocationRow(r as Record<string, unknown>));
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  return ids.map((id) => byId.get(id)).filter((row): row is FoodbankLocationRow => row !== undefined);
 }
 
 // `ParliamentaryConstituency.location_obj()` -- the location half of

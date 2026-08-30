@@ -1,10 +1,14 @@
 import { Hono } from "hono";
 import {
   getAllOpenDonationPoints,
+  getDonationPointsByIds,
   getFoodbanksByIds,
-  getOpenDonationPointLocations,
+  getLocationsByIds,
+  getOpenDonationPointCoordinates,
+  getOpenDonationPointLocationCoordinates,
   getOpenFoodbanksWithDeliveryAddress,
   toDashedUuid,
+  type CoordinateRow,
   type DonationPointRow,
   type FoodbankChangeRow,
   type FoodbankLocationRow,
@@ -157,9 +161,12 @@ api2DonationpointsApp.get("/donationpoints/", async (c) => {
 // nearest() call over the combined array is contract-exact for every
 // skip_first=False search (every one of these), so the two sources are
 // concatenated before ranking once, not independently capped at 20 first.
-type DonationpointSearchCandidate =
-  | { kind: "donationpoint"; row: DonationPointRow }
-  | { kind: "location"; row: FoodbankLocationRow };
+//
+// WP 2.5 perf: ranking runs against the cheap id+coordinate candidate set
+// (a covering-index scan), not the full open-donation-point/open-location
+// row sets -- full rows for only the 20 survivors are fetched afterward,
+// by id.
+type DonationpointSearchCandidate = { kind: "donationpoint" | "location"; coord: CoordinateRow };
 
 // --- donationpoint_search (GET /donationpoints/search/) --------------------
 // geocoding judgment call, matching the sibling foodbanks.ts's
@@ -201,25 +208,48 @@ api2DonationpointsApp.get("/donationpoints/search/", async (c) => {
   // there (frozen bug B12) still surfaces as an uncaught 500, distinct
   // from the clean 400 this catch returns.
   let ranked: Ranked<DonationpointSearchCandidate>[];
+  let donationPointById: Map<number, DonationPointRow>;
+  let locationById: Map<number, FoodbankLocationRow>;
   let foodbankById: Map<number, FoodbankWithLatestNeed>;
   try {
-    const [donationPointRows, locationRows] = await Promise.all([
-      getAllOpenDonationPoints(session),
-      getOpenDonationPointLocations(session),
+    const [donationPointCoords, locationCoords] = await Promise.all([
+      getOpenDonationPointCoordinates(session),
+      getOpenDonationPointLocationCoordinates(session),
     ]);
 
     const candidates: DonationpointSearchCandidate[] = [
-      ...donationPointRows.map((row): DonationpointSearchCandidate => ({ kind: "donationpoint", row })),
-      ...locationRows.map((row): DonationpointSearchCandidate => ({ kind: "location", row })),
+      ...donationPointCoords.map((coord): DonationpointSearchCandidate => ({ kind: "donationpoint", coord })),
+      ...locationCoords.map((coord): DonationpointSearchCandidate => ({ kind: "location", coord })),
     ];
 
-    ranked = nearest(candidates, lat, lng, (candidate) => parseLatLng(candidate.row.lat_lng), 20, R_EARTHDISTANCE, false);
+    ranked = nearest(
+      candidates,
+      lat,
+      lng,
+      (candidate) => [candidate.coord.latitude, candidate.coord.longitude],
+      20,
+      R_EARTHDISTANCE,
+      false,
+    );
 
-    // Enrich only the top-20 survivors with the PARENT food bank's
-    // `latest_need` -- both branches read it (`donationpoint.foodbank.
-    // latest_need` in Django), mirroring the per-row access the source
-    // does only after slicing (PLAN.md §7.2's N+1 note).
-    const foodbankIds = Array.from(new Set(ranked.map((r) => r.item.row.foodbank_id)));
+    // Full rows for only the 20 survivors -- donationpoint ids fetch their
+    // own donation-point row; location ids fetch their own location row.
+    const donationPointIds = ranked.filter((r) => r.item.kind === "donationpoint").map((r) => r.item.coord.id);
+    const locationIds = ranked.filter((r) => r.item.kind === "location").map((r) => r.item.coord.id);
+    const [donationPoints, locations] = await Promise.all([
+      getDonationPointsByIds(session, donationPointIds),
+      getLocationsByIds(session, locationIds),
+    ]);
+    donationPointById = new Map(donationPoints.map((dp) => [dp.id, dp]));
+    locationById = new Map(locations.map((loc) => [loc.id, loc]));
+
+    // Enrich with the PARENT food bank's `latest_need` -- both branches
+    // read it (`donationpoint.foodbank.latest_need` in Django), mirroring
+    // the per-row access the source does only after slicing (PLAN.md
+    // §7.2's N+1 note).
+    const foodbankIds = Array.from(
+      new Set([...donationPoints.map((dp) => dp.foodbank_id), ...locations.map((loc) => loc.foodbank_id)]),
+    );
     const foodbanksWithNeed = await getFoodbanksByIds(session, foodbankIds);
     foodbankById = new Map(foodbanksWithNeed.map((fb) => [fb.id, fb]));
   } catch {
@@ -227,12 +257,15 @@ api2DonationpointsApp.get("/donationpoints/search/", async (c) => {
   }
 
   const responseList = ranked.map(({ item, distanceM }) => {
-    const row = item.row; // fields shared by both branches below
+    const dp = item.kind === "donationpoint" ? donationPointById.get(item.coord.id)! : null;
+    const loc = item.kind === "location" ? locationById.get(item.coord.id)! : null;
+    const row = (dp ?? loc)! as { foodbank_id: number; uuid: string; slug: string; name: string; lat_lng: string };
     const parentFoodbank = foodbankById.get(row.foodbank_id)!;
     // Frozen bug B12: latest_need dereferenced unguarded in the source --
     // if it's null this throws here exactly as it 500s in Django. This
     // is OUTSIDE the try/catch above, matching the source's scope.
     const latestNeed: FoodbankChangeRow = parentFoodbank.latestNeed!;
+    const common = dp ?? loc!;
 
     const result: Record<string, SerialisableValue> = {
       id: toDashedUuid(row.uuid),
@@ -242,21 +275,18 @@ api2DonationpointsApp.get("/donationpoints/search/", async (c) => {
       lat_lng: row.lat_lng,
       distance_m: Math.trunc(distanceM),
       distance_mi: round2(miles(distanceM)),
-      address:
-        item.kind === "donationpoint"
-          ? fullAddressUnconditional(item.row.address, item.row.postcode)
-          : fullAddressNullable(item.row.address, item.row.postcode),
-      postcode: row.postcode,
+      address: dp ? fullAddressUnconditional(dp.address, dp.postcode) : fullAddressNullable(loc!.address, loc!.postcode),
+      postcode: common.postcode,
       politics: {
-        parliamentary_constituency: row.parliamentary_constituency_name,
-        mp: row.mp,
-        mp_party: row.mp_party,
-        mp_parl_id: row.mp_parl_id,
-        ward: row.ward,
-        district: row.district,
+        parliamentary_constituency: common.parliamentary_constituency_name,
+        mp: common.mp,
+        mp_party: common.mp_party,
+        mp_parl_id: common.mp_parl_id,
+        ward: common.ward,
+        district: common.district,
         urls: {
-          self: `${SITE_DOMAIN}/api/2/constituency/${row.parliamentary_constituency_slug}/`,
-          html: `${SITE_DOMAIN}/needs/in/constituency/${row.parliamentary_constituency_slug}/`,
+          self: `${SITE_DOMAIN}/api/2/constituency/${common.parliamentary_constituency_slug}/`,
+          html: `${SITE_DOMAIN}/needs/in/constituency/${common.parliamentary_constituency_slug}/`,
         },
       },
       needs: {
@@ -267,12 +297,12 @@ api2DonationpointsApp.get("/donationpoints/search/", async (c) => {
         found: { __datetime: latestNeed.created },
       },
       foodbank: {
-        name: row.foodbank_name,
-        slug: row.foodbank_slug,
-        network: row.foodbank_network,
+        name: common.foodbank_name,
+        slug: common.foodbank_slug,
+        network: common.foodbank_network,
         urls: {
-          self: `${SITE_DOMAIN}/api/2/foodbank/${row.foodbank_slug}/`,
-          html: `${SITE_DOMAIN}/needs/at/${row.foodbank_slug}/`,
+          self: `${SITE_DOMAIN}/api/2/foodbank/${common.foodbank_slug}/`,
+          html: `${SITE_DOMAIN}/needs/at/${common.foodbank_slug}/`,
         },
       },
     };
@@ -283,8 +313,7 @@ api2DonationpointsApp.get("/donationpoints/search/", async (c) => {
     // no "email"; location gets no conditional "homepage"). Assigned here
     // rather than interleaved into the object literal, to preserve that
     // exact insertion order.
-    if (item.kind === "donationpoint") {
-      const dp = item.row;
+    if (dp) {
       result.phone = dp.phone_number;
       const urls: Record<string, SerialisableValue> = {
         html: `${SITE_DOMAIN}/needs/at/${dp.foodbank_slug}/donationpoint/${dp.slug}/`,
@@ -292,10 +321,9 @@ api2DonationpointsApp.get("/donationpoints/search/", async (c) => {
       if (dp.url) urls.homepage = dp.url;
       result.urls = urls;
     } else {
-      const loc = item.row;
-      result.phone = phoneOrFoodbankPhone(loc.phone_number, loc.foodbank_phone_number);
-      result.email = emailOrFoodbankEmail(loc.email, loc.foodbank_email);
-      result.urls = { html: `${SITE_DOMAIN}/needs/at/${loc.foodbank_slug}/${loc.slug}/` };
+      result.phone = phoneOrFoodbankPhone(loc!.phone_number, loc!.foodbank_phone_number);
+      result.email = emailOrFoodbankEmail(loc!.email, loc!.foodbank_email);
+      result.urls = { html: `${SITE_DOMAIN}/needs/at/${loc!.foodbank_slug}/${loc!.slug}/` };
     }
 
     return result;

@@ -5,9 +5,9 @@ import {
   getFoodbankBySlug,
   getFoodbanksByIds,
   getLocationsByFoodbankId,
+  getOpenFoodbankCoordinates,
   toDashedUuid,
   type DonationPointRow,
-  type FoodbankRow,
 } from "@givefood/db";
 import { R_EARTHDISTANCE, R_PYTHON, isUk, miles, nearest } from "@givefood/geo";
 import { round2, type SerialisableValue } from "@givefood/serialise";
@@ -197,10 +197,18 @@ api2FoodbanksApp.get("/foodbank/:slug/", async (c) => {
     // at distance 0). If this food bank is closed it is absent from the
     // candidate set and skip_first instead drops the true nearest other
     // food bank -- a frozen quirk, not special-cased away.
+    // WP 2.5 perf: rank against the cheap id+coordinate candidate set (a
+    // covering-index scan over ~1000 rows), not the full open-foodbank
+    // row set -- full rows for only the 10 survivors come from
+    // getFoodbanksByIds.
     const [selfLat, selfLng] = parseLatLng(foodbank.lat_lng);
-    const nearbyCandidates: FoodbankRow[] = await getAllOpenFoodbanks(session);
-    const nearbyRanked = nearest(nearbyCandidates, selfLat, selfLng, (fb) => parseLatLng(fb.lat_lng), 10, R_PYTHON, true);
-    const nearbyFoodbankList = nearbyRanked.map(({ item: nearbyFoodbank }) => ({
+    const nearbyCandidates = await getOpenFoodbankCoordinates(session);
+    const nearbyRanked = nearest(nearbyCandidates, selfLat, selfLng, (c) => [c.latitude, c.longitude], 10, R_PYTHON, true);
+    const nearbyFoodbanks = await getFoodbanksByIds(
+      session,
+      nearbyRanked.map((r) => r.item.id),
+    );
+    const nearbyFoodbankList = nearbyFoodbanks.map((nearbyFoodbank) => ({
       name: nearbyFoodbank.name,
       slug: nearbyFoodbank.slug,
       urls: {
@@ -379,8 +387,11 @@ api2FoodbanksApp.get("/foodbanks/search/", async (c) => {
   }
 
   const session = dbSession(c);
-  const candidates = await getAllOpenFoodbanks(session);
-  const ranked = nearest(candidates, lat, lng, (fb) => parseLatLng(fb.lat_lng), 10, R_EARTHDISTANCE);
+  // WP 2.5 perf: rank against the cheap id+coordinate candidate set, not
+  // the full open-foodbank row set -- see the sibling nearby_foodbanks
+  // comment above for the same reasoning.
+  const candidates = await getOpenFoodbankCoordinates(session);
+  const ranked = nearest(candidates, lat, lng, (c) => [c.latitude, c.longitude], 10, R_EARTHDISTANCE);
   const rankedIds = ranked.map((r) => r.item.id);
   // getFoodbanksByIds preserves rankedIds's order, so index i here lines
   // up with ranked[i]'s distance.

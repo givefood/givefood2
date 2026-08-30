@@ -1,4 +1,4 @@
-export type { Session } from "./types";
+export type { Session, CoordinateRow } from "./types";
 export { normalizeUuid, toDashedUuid } from "./uuid";
 
 export * from "./foodbank";

@@ -35,3 +35,30 @@ const NAME_COLLATOR = new Intl.Collator("en-US");
 export function sortByName<T extends { name: string }>(rows: T[]): T[] {
   return [...rows].sort((a, b) => NAME_COLLATOR.compare(a.name, b.name));
 }
+
+// The candidate-set shape for nearest-N ranking (WP 2.5, @givefood/geo's
+// `nearest()`). Deliberately just `id` + coordinates, not a full row --
+// every open-row table has a partial index on exactly
+// `(latitude, longitude) WHERE is_closed = 0` (see 0001_core.sql), so a
+// query selecting only these three columns is answered as a covering
+// index scan, never touching the underlying table rows. Fetching every
+// column of every open row (1000-5700+ rows, 40-80 columns each) just to
+// rank by distance and discard everything but the top 10-20 was measured
+// as the dominant cost on every uncached search/nearby request -- see the
+// WP 2.5 perf note in PLAN.md. Full rows for the surviving winners are
+// fetched afterward, by id, same as the existing by-ids functions already
+// do for the `latest_need` join.
+export interface CoordinateRow {
+  id: number;
+  latitude: number;
+  longitude: number;
+}
+
+function mapCoordinateRow(raw: Record<string, unknown>): CoordinateRow {
+  return raw as unknown as CoordinateRow;
+}
+
+export async function queryCoordinates(session: Session, sql: string): Promise<CoordinateRow[]> {
+  const result = await session.prepare(sql).all();
+  return result.results.map((r) => mapCoordinateRow(r as Record<string, unknown>));
+}
