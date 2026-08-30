@@ -1,8 +1,7 @@
-// See PLAN.md §3.4. Nothing here is provisioned yet -- every "<uuid>"/"<id>"
-// placeholder must be replaced with a real resource id before `wrangler dev
-// --remote` or `wrangler deploy` will work. Provisioning commands are noted
-// next to each placeholder; run them once Cloudflare credentials are
-// available (`wrangler login`), then fill in the ids below.
+// See PLAN.md §3.4. D1/KV/R2 resources are provisioned (2026-08-30) --
+// see the comments next to each binding for what's real vs a name that
+// will auto-create on first Worker deploy (R2 buckets need creating
+// explicitly; Analytics Engine datasets do not).
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "givefood2",
@@ -44,22 +43,20 @@
   },
 
   "d1_databases": [
-    // wrangler d1 create givefood
-    { "binding": "DB", "database_name": "givefood", "database_id": "<uuid>" }
+    // Pre-existing, empty (0 tables) -- created 2023-08-04, reused rather
+    // than creating a duplicate. Real data migration (PLAN.md §5) still has
+    // to populate it.
+    { "binding": "DB", "database_name": "givefood", "database_id": "1cae445f-9719-453d-9cf6-1060f8b3ea7e" }
   ],
 
   "r2_buckets": [
-    // wrangler r2 bucket create givefood-media
     { "binding": "MEDIA", "bucket_name": "givefood-media" },
-    // wrangler r2 bucket create givefood-geo
     { "binding": "GEO",   "bucket_name": "givefood-geo"   }
   ],
 
   "kv_namespaces": [
-    // wrangler kv namespace create givefood-sessions
-    { "binding": "SESSIONS", "id": "<id>" },
-    // wrangler kv namespace create givefood-data
-    { "binding": "DATA",     "id": "<id>" }
+    { "binding": "SESSIONS", "id": "578ca791bd1d4cba8b5935f9e5f70438" },
+    { "binding": "DATA",     "id": "c7dbe1c5cbe542efb91364675e081944" }
   ],
 
   "analytics_engine_datasets": [
@@ -81,13 +78,20 @@
 
   // Declares required secret NAMES so `wrangler dev` and deploy both
   // fail loudly if one is missing. Values are set with `wrangler secret put`.
+  // "required" was front-loaded from PLAN.md §3.3's full binding map before
+  // any code that reads these existed -- that made `wrangler deploy` a hard
+  // failure for the media-route slice this pass actually built, which
+  // touches none of them. Move a name back into this list (and set the
+  // real value with `wrangler secret put NAME`) as soon as the code for
+  // that phase lands and genuinely reads it, not before. Do not fetch these
+  // from GfCredential in the Django database and paste them in here without
+  // asking first -- several are live production credentials.
   "secrets": {
-    "required": [
-    "GOOGLE_OAUTH_CLIENT_SECRET", "SESSION_HMAC_KEY", "SUBSCRIBER_SALT",
-    "TURNSTILE_SECRET", "POSTMARK_TOKEN",
-    "GMAP_STATIC_KEY", "GMAP_PLACES_KEY", "GMAP_GEOCODE_KEY",
-    "CF_API_KEY", "CF_ZONE_ID"
-    ]
+    "required": []
+    // GOOGLE_OAUTH_CLIENT_SECRET, SESSION_HMAC_KEY, SUBSCRIBER_SALT -- auth (§3.5)
+    // TURNSTILE_SECRET, POSTMARK_TOKEN -- public forms (§3.12)
+    // GMAP_STATIC_KEY, GMAP_PLACES_KEY, GMAP_GEOCODE_KEY -- media backfill, queued not inline (§3.7)
+    // CF_API_KEY, CF_ZONE_ID -- cache-tag purge (§3.6)
   },
 
   "observability": { "enabled": true, "head_sampling_rate": 1 },

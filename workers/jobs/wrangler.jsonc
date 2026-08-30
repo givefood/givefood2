@@ -1,8 +1,9 @@
 // See PLAN.md §3.4 (base) and §3.3 (the authoritative binding map -- the
 // §3.4 example was abbreviated and omitted the "jobs" queue consumer that
-// §3.3 lists explicitly; it is included here). Nothing is provisioned yet --
-// see workers/site/wrangler.jsonc for the same caveat and the provisioning
-// commands.
+// §3.3 lists explicitly; it is included here). D1 and the R2 buckets are
+// provisioned -- see workers/site/wrangler.jsonc for the D1 note. This
+// Worker has no Workers Build project connected yet (see chat), so its
+// secrets/crons/queues are unverified against the real account.
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "givefood-jobs",
@@ -64,7 +65,8 @@
 
   "browser": { "binding": "BROWSER" },
   "d1_databases": [
-    { "binding": "DB", "database_name": "givefood", "database_id": "<uuid>" }
+    // Same database as workers/site -- see the comment there.
+    { "binding": "DB", "database_name": "givefood", "database_id": "1cae445f-9719-453d-9cf6-1060f8b3ea7e" }
   ],
   "r2_buckets": [
     { "binding": "MEDIA", "bucket_name": "givefood-media" },
