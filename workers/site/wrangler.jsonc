@@ -53,7 +53,11 @@
     // calling env.DB.prepare() on this binding directly, or reads can land
     // on a replica that hasn't caught up with a just-completed write.
     // https://developers.cloudflare.com/d1/best-practices/read-replication/#use-sessions-api
-    { "binding": "DB", "database_name": "givefood", "database_id": "1cae445f-9719-453d-9cf6-1060f8b3ea7e" }
+    {
+      "binding": "DB", "database_name": "givefood", "database_id": "1cae445f-9719-453d-9cf6-1060f8b3ea7e",
+      // Shared with workers/jobs -- lives in packages/db, not duplicated per-Worker.
+      "migrations_dir": "../../packages/db/migrations"
+    }
   ],
 
   "r2_buckets": [
