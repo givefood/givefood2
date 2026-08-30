@@ -1,0 +1,14 @@
+{
+  "name": "@givefood/db",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2",
+    "@cloudflare/workers-types": "^5.20260830.1"
+  }
+}

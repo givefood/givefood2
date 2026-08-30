@@ -15,6 +15,15 @@ importers:
         specifier: ^4.127.1
         version: 4.127.1(@cloudflare/workers-types@5.20260830.1)
 
+  packages/db:
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: ^5.20260830.1
+        version: 5.20260830.1
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+
   workers/jobs:
     devDependencies:
       '@cloudflare/workers-types':
