@@ -2,4 +2,8 @@
 node_modules/
 .wrangler/
 .dev.vars
+.env
 *.log
+.pnpm-store/
+tools/**/dist/
+packages/**/dist/

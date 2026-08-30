@@ -1,0 +1,100 @@
+// See PLAN.md §3.4. Nothing here is provisioned yet -- every "<uuid>"/"<id>"
+// placeholder must be replaced with a real resource id before `wrangler dev
+// --remote` or `wrangler deploy` will work. Provisioning commands are noted
+// next to each placeholder; run them once Cloudflare credentials are
+// available (`wrangler login`), then fill in the ids below.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "givefood",
+  "main": "./src/index.ts",
+
+  // >= 2026-08-04 turns on nodejs_compat and nodejs_compat_v2 with no flag.
+  // >= 2026-07-21 is required for the Workers Cache API used below.
+  "compatibility_date": "2026-08-28",
+
+  // ONE route. Most-specific-wins never has to be reasoned about.
+  // During the strangler phases this pattern starts narrow
+  // (/needs/at/*/photo.jpg, then /api/*, then /needs/*) and widens to /* last.
+  // Until the zone is cut over, leave this commented out and use `wrangler dev`.
+  "routes": [
+    { "pattern": "www.givefood.org.uk/*", "zone_name": "givefood.org.uk" }
+  ],
+
+  // Workers Cache. NOT optional on a catch-all route -- see PLAN.md §3.6.
+  // Tiered, collapses concurrent misses, and serves hits WITHOUT
+  // executing the Worker (so a hit costs 0 CPU-ms).
+  "cache": { "enabled": true },
+
+  "assets": {
+    "directory": "./dist/static",
+    "binding": "ASSETS",
+    // BOTH "none" deliberately. The router owns trailing-slash policy
+    // (Django's APPEND_SLASH). Letting the asset layer emit its own 301s
+    // would fight the router and produce redirect chains across 3,000+
+    // food bank URLs. "force-trailing-slash" only affects ASSET lookups
+    // anyway -- it will look like it works on /static/ and do nothing else.
+    "html_handling": "none",
+    "not_found_handling": "none"
+  },
+
+  "d1_databases": [
+    // wrangler d1 create givefood
+    { "binding": "DB", "database_name": "givefood", "database_id": "<uuid>" }
+  ],
+
+  "r2_buckets": [
+    // wrangler r2 bucket create givefood-media
+    { "binding": "MEDIA", "bucket_name": "givefood-media" },
+    // wrangler r2 bucket create givefood-geo
+    { "binding": "GEO",   "bucket_name": "givefood-geo"   }
+  ],
+
+  "kv_namespaces": [
+    // wrangler kv namespace create givefood-sessions
+    { "binding": "SESSIONS", "id": "<id>" },
+    // wrangler kv namespace create givefood-data
+    { "binding": "DATA",     "id": "<id>" }
+  ],
+
+  "analytics_engine_datasets": [
+    { "binding": "HITS", "dataset": "foodbank_hits" }
+  ],
+
+  "queues": {
+    "producers": [
+      { "queue": "cache-purge", "binding": "PURGE_Q" },
+      { "queue": "jobs",        "binding": "JOBS_Q"  }
+    ]
+  },
+
+  "vars": {
+    "SITE_DOMAIN": "https://www.givefood.org.uk",
+    "GOOGLE_OAUTH_CLIENT_ID": "927281004707-tboi1tsphl4bgtqn72e76rmc7r2q22tk.apps.googleusercontent.com",
+    "TURNSTILE_SITEKEY": "0x4AAAAAAABxtIRWlPcEGwhj"
+  },
+
+  // Declares required secret NAMES so `wrangler dev` and deploy both
+  // fail loudly if one is missing. Values are set with `wrangler secret put`.
+  "secrets": {
+    "required": [
+    "GOOGLE_OAUTH_CLIENT_SECRET", "SESSION_HMAC_KEY", "SUBSCRIBER_SALT",
+    "TURNSTILE_SECRET", "POSTMARK_TOKEN",
+    "GMAP_STATIC_KEY", "GMAP_PLACES_KEY", "GMAP_GEOCODE_KEY",
+    "CF_API_KEY", "CF_ZONE_ID"
+    ]
+  },
+
+  "observability": { "enabled": true, "head_sampling_rate": 1 },
+
+  // 30s is ample: HTML rendering is I/O-bound and waiting on D1 does not
+  // count toward CPU. Raise only if a gfdash aggregation says otherwise.
+  "limits": { "cpu_ms": 30000 },
+
+  // Measure before keeping. Only worth it while the database is Postgres
+  // behind Hyperdrive (pins compute near London); near-pointless on D1.
+  "placement": { "mode": "smart" },
+
+  "preview_urls": true,
+
+  "tail_consumers": []
+}

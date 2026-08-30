@@ -1,0 +1,5 @@
+dist/*
+!dist/static
+dist/static/*
+!dist/static/.gitkeep
+.wrangler/

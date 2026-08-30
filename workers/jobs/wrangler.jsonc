@@ -1,0 +1,91 @@
+// See PLAN.md §3.4 (base) and §3.3 (the authoritative binding map -- the
+// §3.4 example was abbreviated and omitted the "jobs" queue consumer that
+// §3.3 lists explicitly; it is included here). Nothing is provisioned yet --
+// see workers/site/wrangler.jsonc for the same caveat and the provisioning
+// commands.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "givefood-jobs",
+  "main": "./src/index.ts",
+  "compatibility_date": "2026-08-28",
+
+  // Verified against production CrawlSet data: ONE need sweep per day at
+  // ~15:00 UTC. docs/crons.md documents 4x daily and is WRONG. Reconcile
+  // against the Coolify scheduled-task config before deploying for real.
+  "triggers": {
+    "crons": [
+      "0 15 * * *",       // needcheck  (was 45 7,11,15,19 in docs -- see above)
+      "20 8-22/2 * * *",  // getarticles
+      "30 5 * * *",       // charityinfo
+      "30 4 * * *",       // dump
+      "30 3 * * 0",       // days_between_needs  (one SQL statement, not a fan-out)
+      "10 3 * * *",       // crawlitem retention prune (repurposed slot)
+      "*/5 * * * *"       // /frag/ payload refresh into KV
+    ]
+  },
+
+  // Cron Triggers on a >= 1 hour interval get 15 min CPU; sub-hourly gets 30s.
+  // The */5 job is trivial either way.
+  "limits": { "cpu_ms": 300000 },
+
+  "queues": {
+    "producers": [
+      { "queue": "needcheck-render", "binding": "RENDER_Q" },
+      { "queue": "cache-purge", "binding": "PURGE_Q" },
+      { "queue": "jobs", "binding": "JOBS_Q" }
+    ],
+    "consumers": [
+      {
+        "queue": "needcheck-render",
+        "max_batch_size": 5,
+        "max_batch_timeout": 30,
+        "max_retries": 3,
+        // Under Browser Rendering's 30 Quick Actions/sec paid ceiling, and
+        // polite to food banks' own (often tiny) hosting.
+        "max_concurrency": 25,
+        // NON-NEGOTIABLE. Without a DLQ, "messages that repeatedly fail
+        // processing will eventually be discarded" -- silently. The DLQ
+        // consumer writes a FoodbankDiscrepancy so failures land in the
+        // queue the maintainer already reads every day.
+        "dead_letter_queue": "needcheck-render-dlq"
+      },
+      { "queue": "needcheck-render-dlq", "max_batch_size": 10, "max_retries": 1 },
+      {
+        "queue": "cache-purge", "max_batch_size": 100, "max_batch_timeout": 30,
+        "max_retries": 3, "dead_letter_queue": "cache-purge-dlq"
+      },
+      {
+        "queue": "jobs", "max_batch_size": 10, "max_batch_timeout": 30,
+        "max_retries": 3, "dead_letter_queue": "jobs-dlq"
+      },
+      { "queue": "jobs-dlq", "max_batch_size": 10, "max_retries": 1 }
+    ]
+  },
+
+  "browser": { "binding": "BROWSER" },
+  "d1_databases": [
+    { "binding": "DB", "database_name": "givefood", "database_id": "<uuid>" }
+  ],
+  "r2_buckets": [
+    { "binding": "MEDIA", "bucket_name": "givefood-media" },
+    { "binding": "GEO", "bucket_name": "givefood-geo" },
+    { "binding": "DUMPS", "bucket_name": "givefood-dumps" },
+    { "binding": "OPS", "bucket_name": "givefood-ops" }
+  ],
+  "analytics_engine_datasets": [
+    { "binding": "HITS", "dataset": "foodbank_hits" },
+    { "binding": "CRAWLS", "dataset": "crawl_log" }
+  ],
+
+  "secrets": {
+    "required": [
+    "OPENROUTER_KEY", "CF_BROWSER_TOKEN", "CF_ACCOUNT_ID", "GCP_TRANSLATE_KEY",
+    "EW_CHARITY_KEY", "SCOT_CHARITY_KEY", "POSTMARK_TOKEN", "WHATSAPP_TOKEN",
+    "FIREBASE_SERVICE_ACCOUNT", "VAPID_PRIVATE_KEY", "VAPID_PUBLIC_KEY",
+    "VAPID_ADMIN_EMAIL", "GMAP_STATIC_KEY", "GMAP_PLACES_KEY", "GMAP_GEOCODE_KEY",
+    "CF_API_KEY", "CF_ZONE_ID"
+    ]
+  },
+
+  "observability": { "enabled": true, "head_sampling_rate": 1 }
+}

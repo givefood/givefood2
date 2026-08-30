@@ -1,0 +1,3 @@
+Placeholder so `wrangler dev` has an assets directory to bind. The real
+build (packages/templates + static asset pipeline) writes here; this
+directory's tracked contents are otherwise gitignored (see workers/site/.gitignore).
