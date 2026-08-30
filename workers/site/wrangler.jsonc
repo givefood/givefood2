@@ -7,6 +7,30 @@
   "name": "givefood2",
   "main": "./src/index.ts",
 
+  // Cloudflare Workers Builds (the git-integration CI/CD) runs a FIXED
+  // "npx wrangler deploy" -- it does not go through this package's own
+  // package.json scripts at all, so a precompile step prefixed onto an npm
+  // script (as workers/site/package.json's dev/deploy used to do) silently
+  // never runs there. This hook is wrangler's own mechanism for exactly
+  // that gap: it always runs first, regardless of how wrangler was invoked
+  // (a bare `wrangler deploy`, `npx wrangler deploy`, an npm script, CI).
+  // packages/templates/src/generated/precompiled.js is gitignored
+  // (generated, not committed -- see that package's .gitignore entry), so
+  // without this the build step fails to resolve it. See PLAN.md §6.2.3.
+  "build": {
+    "command": "pnpm --filter @givefood/templates run precompile",
+    // ONLY the .njk source -- not packages/templates/src, which is where
+    // the command's own output (src/generated/) lands. Watching that too
+    // makes every run of the command trigger the watcher, which reruns the
+    // command, forever (found by testing this exact config in wrangler dev).
+    // workers/site's own src/ needs no entry here: wrangler's bundler
+    // already watches every file in the Worker's real import graph
+    // (including packages/templates/src/*.ts) independently of this --
+    // watch_dir only scopes when to rerun the custom build command above,
+    // and only the .njk files affect what that command produces.
+    "watch_dir": "../../packages/templates/templates"
+  },
+
   // >= 2026-08-04 turns on nodejs_compat and nodejs_compat_v2 with no flag.
   // >= 2026-07-21 is required for the Workers Cache API used below.
   "compatibility_date": "2026-08-28",
