@@ -1,0 +1,8 @@
+<template id="legendtemplate">
+    <div id="legend">
+        <img src="/static/img/mapmarkers/red.png" alt="{{ _("Organisation") }} {{ _("marker") }}"> {{ _("Organisation") }}<br>
+        <img src="/static/img/mapmarkers/yellow.png" alt="{{ _("Location") }} {{ _("marker") }}"> {{ _("Location") }}<br>
+        {% if foodbank.has_service_area and show_service_area %}<div class="deliveryarea"></div> {{ _("Service area") }}<br>{% endif %}
+        <img src="/static/img/mapmarkers/blue.png" alt="{{ _("Donation point") }} {{ _("marker") }}"> {{ _("Donation point") }}<br>
+    </div>
+</template>

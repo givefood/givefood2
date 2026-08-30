@@ -13,14 +13,17 @@ import { loadCatalogue, translate, type Locale } from "./i18n";
 import {
   commaSeparated,
   djangoDate,
+  djangoSlice,
   filesizeformat,
+  floatformat,
   friendlyPhone,
   friendlyUrl,
   fullPhone,
   intcomma,
+  linebreaks,
   slugify,
 } from "./filters";
-import { url } from "./urls";
+import { urlForLocale } from "./urls";
 
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -52,7 +55,6 @@ function buildEnvironment(): Environment {
     throwOnUndefined: false,
   });
 
-  env.addGlobal("url", url);
   env.addGlobal("now", () => formatRfc2822(new Date()));
   // `.run()` reads the current request's catalogue from the render
   // context (`_i18nCatalogue`, set by render() below) rather than from
@@ -61,14 +63,27 @@ function buildEnvironment(): Environment {
   // a *different* instance of the same class from precompile.ts's.
   env.addExtension("blocktrans", new BlocktransExtension(nunjucksSlim));
 
-  env.addFilter("friendlyPhone", friendlyPhone);
-  env.addFilter("fullPhone", fullPhone);
-  env.addFilter("friendlyUrl", friendlyUrl);
-  env.addFilter("commaSeparated", commaSeparated);
+  // Registered under Django's own filter names (custom_tags.py's
+  // @register.filter def names), snake_case -- not camelCase, which is
+  // what this file originally registered before any real template
+  // (wfbn/index.njk) exercised them. An unknown filter throws
+  // ("filter not found: ...") at render time, throwOnUndefined
+  // notwithstanding -- verified directly, not assumed -- so this would
+  // have been a 500, not a silent wrong-output bug.
+  env.addFilter("friendly_phone", friendlyPhone);
+  env.addFilter("full_phone", fullPhone);
+  env.addFilter("friendly_url", friendlyUrl);
+  env.addFilter("comma_separated", commaSeparated);
   env.addFilter("slugify", slugify);
   env.addFilter("filesizeformat", filesizeformat);
   env.addFilter("intcomma", intcomma);
   env.addFilter("date", djangoDate);
+  env.addFilter("djslice", djangoSlice);
+  env.addFilter("floatformat", floatformat);
+  // Django's `linebreaks` is `is_safe = True` -- its <p>/<br> output must
+  // not be re-escaped by autoescape, same reasoning as blocktrans's
+  // SafeString wrap.
+  env.addFilter("linebreaks", (value: string) => new nunjucksSlim.runtime.SafeString(linebreaks(value)));
 
   return env;
 }
@@ -85,16 +100,19 @@ function getEnvironment(): Environment {
   return cachedEnv;
 }
 
-// `_` (Django's `{% trans %}`) is injected per render() call, not
-// registered as an Environment-level global like `url`/`now` above --
-// unlike those, it's locale-dependent, and locale varies per request while
-// the Environment is shared across the isolate's whole lifetime.
+// `_` and `url` are injected per render() call, not registered as
+// Environment-level globals like `now` above -- both are locale-dependent
+// (url() so `{% url 'wfbn:index' %}` carries the right language prefix on
+// a non-English page -- see urls.ts's I18N_SCOPED), and locale varies per
+// request while the Environment is shared across the isolate's whole
+// lifetime.
 export async function render(name: string, context: Record<string, unknown> = {}, locale: Locale = "en"): Promise<string> {
   const catalogue = await loadCatalogue(locale);
   const renderContext = {
     ...context,
     _i18nCatalogue: catalogue,
     _: (msgid: string, vars?: Record<string, unknown>) => translate(catalogue, msgid, vars),
+    url: (name: string, ...args: string[]) => urlForLocale(locale, name, ...args),
   };
   return getEnvironment().render(name, renderContext);
 }

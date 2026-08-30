@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { LOCALES } from "@givefood/templates";
 import type { AppEnv } from "./types";
 import { serverTiming } from "./middleware/serverTiming";
 import { slugRedirect } from "./middleware/slugRedirect";
@@ -15,6 +16,7 @@ import { api2NeedsApp } from "./routes/api2/needs";
 import { api2ConstituenciesApp } from "./routes/api2/constituencies";
 import { api3App } from "./routes/api3";
 import { api1Index, api2Docs, api2Index } from "./routes/apiDocs";
+import { wfbnIndex } from "./routes/wfbn";
 import { notPortedYet } from "./routes/notPortedYet";
 import { render404 } from "./render404";
 
@@ -83,6 +85,17 @@ app.route("/api", api2App);
 
 // Anything WP 2.4/2.7 didn't mount above -- genuinely unmatched /api/* paths.
 app.route("/api", notPortedYet("gfapi3 docs page"));
+
+// gfwfbn `index` -- i18n-patterned (givefood/urls.py:47, inside
+// i18n_patterns), so it's registered once bare (English, no prefix) and
+// once per other supported language (§2.7.1: cy/ga/gd, not Django's full
+// 21) -- matching prefix_default_language=False exactly, same as
+// resolveLanguage.ts's own PREFIXES set (derived from the same LOCALES).
+app.get("/needs/", wfbnIndex);
+for (const locale of LOCALES) {
+  if (locale === "en") continue;
+  app.get(`/${locale}/needs/`, wfbnIndex);
+}
 
 // Everything below is specified in PLAN.md but not yet built. Each returns
 // 501 so the gap is loud during development. Build order follows PLAN.md

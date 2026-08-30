@@ -1,0 +1,27 @@
+{% if page_translatable %}
+    <div class="langswitcher is-pulled {% if language_direction == 'ltr' %}is-pulled-right{% else %}is-pulled-left{% endif %}">
+        <div class="dropdown is-hoverable is-right">
+            <div class="dropdown-trigger">
+                <button class="button" aria-haspopup="true" aria-controls="langswitcher">
+                    <span>
+                        {% for language in languages %}
+                            {% if language.code == language_code %}
+                                {{ language.name }}
+                            {% endif %}
+                        {% endfor %}
+                    </span>
+                    <svg class="arrow" viewBox="0 0 10 10" fill="none" aria-hidden="true"><path d="M1 1l4 4-4 4"></path></svg>
+                </button>
+            </div>
+            <div class="dropdown-menu" id="langswitcher" role="menu">
+                <div class="dropdown-content">
+                    {% for language in languages %}
+                        <a href="{{ language.url }}" class="dropdown-item">
+                            {{ language.name }}
+                        </a>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+{% endif %}

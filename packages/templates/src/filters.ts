@@ -98,3 +98,33 @@ export function djangoDate(value: string, format: string): string {
   const date = new Date(iso);
   return format.replace(/[Ymd]/g, (token) => DATE_FORMAT_TOKENS[token]!(date));
 }
+
+// django's `floatformat:N` -- fixed N decimal places for display. Only the
+// explicit-positive-arg form is needed by any ported template so far (not
+// floatformat's no-arg/negative-arg "trim trailing zeros" variants).
+export function floatformat(value: number, decimalPlaces: number): string {
+  return value.toFixed(decimalPlaces);
+}
+
+// django's `|slice:"5"` -- Python list-slice syntax (here, just the "first
+// N" form actually used by any ported template so far). Registered as
+// "djslice", not "slice": nunjucks already ships a builtin `slice` filter
+// with completely different (Jinja2 chunking) semantics -- shadowing it
+// would silently break that meaning for any future template that wants it.
+export function djangoSlice(arr: readonly unknown[], count: number): unknown[] {
+  return arr.slice(0, count);
+}
+
+// django's `linebreaks` filter -- HTML-escape, then blank-line-separated
+// paragraphs become <p>, single newlines within a paragraph become <br>.
+// Only the plain (non-`|safe`) input case is needed by any ported template
+// so far, so this always escapes first, matching Django's default
+// autoescape-on behaviour for this filter.
+function escapeHtml(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+export function linebreaks(value: string): string {
+  const paragraphs = escapeHtml(value).split(/\n{2,}/);
+  return paragraphs.map((p) => `<p>${p.replace(/\n/g, "<br>")}</p>`).join("\n\n");
+}
