@@ -10,6 +10,7 @@ export interface Env {
   DB: D1Database;
   MEDIA: R2Bucket;
   GEO: R2Bucket;
+  STATIC_MEDIA: R2Bucket;
   ASSETS: Fetcher;
   SESSIONS: KVNamespace;
   DATA: KVNamespace;

@@ -1,0 +1,35 @@
+{
+	"name" : "Give Food",
+	"short_name" : "Give Food",
+	"description" : "Find a food bank near you, see what they need and how you can help by donating, volunteering or writing to your MP",
+	"start_url" : "https://www.givefood.org.uk/needs/",
+	"scope" : "/needs/",
+	"display" : "minimal-ui",
+	"lang" : "en-UK",
+	"icons": [
+		{
+			"src": "/static/img/favicon.svg",
+			"type": "image/svg",
+			"sizes": "48x48 72x72 96x96 128x128 256x256 512x512",
+			"type": "image/svg+xml",
+			"purpose": "any"
+		}
+	],
+	"screenshots": [
+		{
+		  "src": "/static/img/manifestscreens/index.png",
+		  "type": "image/png",
+		  "sizes": "1402x2356"
+		},
+		{
+		  "src": "/static/img/manifestscreens/search.png",
+		  "type": "image/png",
+		  "sizes": "1402x2356"
+		},
+		{
+		  "src": "/static/img/manifestscreens/foodbank.png",
+		  "type": "image/png",
+		  "sizes": "1402x2356"
+		}
+	  ]
+}

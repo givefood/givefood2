@@ -1,10 +1,11 @@
 import { Hono } from "hono";
-import type { Env } from "../worker-configuration";
+import type { AppEnv } from "./types";
 import { serverTiming } from "./middleware/serverTiming";
 import { slugRedirect } from "./middleware/slugRedirect";
 import { resolveLanguage } from "./middleware/resolveLanguage";
 import { geoJsonPreload } from "./middleware/geoJsonPreload";
 import { mediaApp } from "./routes/media";
+import { staticMediaApp } from "./routes/staticMedia";
 import { notPortedYet } from "./routes/notPortedYet";
 import { render404 } from "./render404";
 
@@ -14,8 +15,7 @@ import { render404 } from "./render404";
 // were deleted outright (GZipMiddleware -> Cloudflare edge, automatic;
 // OfflineKeyCheck -> /offline/ ceases to be an HTTP surface;
 // RedirectToWWW -> a zone Redirect Rule).
-type Vars = { lang: string; pathAfterPrefix: string };
-const app = new Hono<{ Bindings: Env; Variables: Vars }>();
+const app = new Hono<AppEnv>();
 
 app.use("*", serverTiming); // was RenderTime
 app.use("*", slugRedirect); // was SlugRedirectMiddleware
@@ -26,6 +26,11 @@ app.use("*", geoJsonPreload); // was GeoJSONPreload (runs after routing)
 // OUTSIDE i18n_patterns -- one URL each, never language-prefixed. This is
 // the one route group fully built out in this pass; see PLAN.md §3.7.
 app.route("/needs", mediaApp);
+
+// img/ar/** and img/appscreenshots/** -- everything else under /static/* is
+// served by Workers Static Assets (asset-first, never reaches this Worker);
+// only these two excluded families fall through to here. See PLAN.md WP 1.6.
+app.route("/static", staticMediaApp);
 
 // Everything below is specified in PLAN.md but not yet built. Each returns
 // 501 so the gap is loud during development. Build order follows PLAN.md

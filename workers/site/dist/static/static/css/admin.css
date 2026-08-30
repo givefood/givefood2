@@ -1,0 +1,197 @@
+@font-face {
+  font-family:'Soehne Buch';
+  src:url('/static/fonts/soehne-buch.woff2') format('woff2');
+  font-weight:400;
+}
+@font-face {
+  font-family:'Soehne Dreiviertelfett';
+  src:url('/static/fonts/soehne-dreiviertelfett.woff2') format('woff2');
+  font-weight:700;
+}
+.logo {
+  height:35px;
+  margin:5px 10px 5px 0;
+  max-height:unset !important;
+}
+.navbar-dropdown {
+  border-top:0;
+  top:calc(100% - 1px);
+}
+.main {
+  padding:0 10px;
+  margin:15px 0;
+}
+.message-header {
+  display:none;
+}
+th {
+  text-align:left;
+}
+dt {
+  float:left;
+  width:200px;
+}
+dd {
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow: hidden;
+}
+h2 {
+  margin-top:20px;
+}
+h2:first-of-type {
+  margin-top:0;
+}
+h3 {
+  font-size:1em;
+  margin-top:15px;
+}
+input[type=checkbox] {
+  height:18px;
+  width:18px;
+  margin:10px 0;
+}
+.tabs {
+  margin-bottom:20px !important;
+}
+.tabs .tag {
+  height:1.6em;
+  padding:0 4px;
+}
+.tabs .icon {
+  width:20px;
+}
+.tabs .icon:first-child {
+  margin:0 2px 0 0;
+}
+#fbmap {
+  width:1500px;
+  height:1500px;
+}
+.twitter-feed {
+  max-width:425px;
+}
+.small-product-image {
+  width:50px;
+  min-width:50px;
+}
+h1 {
+  margin:10px 0;
+  padding:0;
+  font-size:1.5em;
+}
+input[type='date'] {
+  width:160px;
+}
+.foodbank-sort {
+  font-size:0.8em;
+}
+.extra-form-button {
+  margin-top:10px;
+}
+table {
+  contain:strict; 
+}
+th {
+  position:sticky;
+  top:0;
+  background:#fff !important;
+}
+.box p {
+  margin:0;
+}
+.locationtable tr:last-child {
+  border:0;
+}
+.locationtable td {
+  padding:5px 5px 5px 0;
+}
+.articles li {
+  margin-bottom:10px;
+}
+table td.delivery-provider-icon {
+  padding:.5em 0;
+}
+td.delivery-provider-icon img {
+  width:12px;
+}
+.companyicon {
+  width:16px;
+  height:16px;
+  vertical-align:middle;
+}
+.preview-frame {
+  width:100%;
+  border:0;
+  height:1000px;
+  position:sticky;
+  top:0;
+}
+.settings {
+  font-size:1.1em;
+}
+.settings li {
+  margin-bottom:5px;
+}
+.newwindow img {
+  margin-right:2px;
+  width:16px;
+  height:16px;
+  vertical-align:middle;
+}
+.checktable li {
+  margin-bottom:10px;
+}
+.checktable dl {
+  margin:0;
+}
+.checktable dt {
+  font-weight:bold;
+  float:none;
+  width:auto;
+  margin-top:10px;
+}
+.checktable dt:first-child {
+  margin-top:0;
+}
+.checktable dd {
+  white-space:normal;
+  overflow:visible;
+  margin-left:0;
+}
+.check-changed {
+  background-color:#fff3cd;
+  padding:2px 4px;
+  border-radius:3px;
+}
+.htmx-fade.htmx-swapping {
+  opacity: 0;
+  transition: opacity 0.5s ease-out;
+}
+/* Tab panels fetched on demand, which fade the spinner out and the content in */
+.lazytab.htmx-swapping {
+  opacity: 0;
+  transition: opacity 0.06s ease-out;
+}
+.lazytab > * {
+  animation: lazytab-appear 0.12s ease-out;
+}
+.lazytab .loading {
+  padding: 3rem 0;
+  opacity: 0;
+  /* Only worth showing if the fetch is slow enough to notice */
+  animation: lazytab-appear 0.3s ease-in 0.15s forwards;
+}
+.lazytab .loading .loader {
+  margin: 0 auto;
+}
+@keyframes lazytab-appear {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.footer {
+  margin-top:3rem;
+}
+.mdi-alert {
+  color: #ffb700;
+}

@@ -1,0 +1,430 @@
+@font-face {
+    font-family:'Soehne Buch';
+    src:url('/static/fonts/soehne-buch.woff2') format('woff2');
+    font-weight:400;
+}
+@font-face {
+    font-family:'Soehne Kraftig';
+    src:url('/static/fonts/soehne-kraftig.woff2') format('woff2');
+    font-weight:500;
+}
+@font-face {
+    font-family:'Soehne Dreiviertelfett';
+    src:url('/static/fonts/soehne-dreiviertelfett.woff2') format('woff2');
+    font-weight:700;
+}
+html {
+    hanging-punctuation: first allow-end last;
+}
+body {
+    background:#fff;
+    color:rgb(53, 55, 64);
+}
+body, input, textarea {
+    font-family:"Soehne Buch","Helvetica Neue",Helvetica,Arial,sans-serif;
+}
+.container {
+    padding:0 10px;
+}
+a, .breadcrumb a {
+    color:#007BC7;
+}
+a:hover, .breadcrumb a:hover {
+    color:#363636
+}
+.breadcrumb li.is-active a {
+    color:#363636;
+}
+a.button.is-link:hover, .menu a.is-active:hover {
+    color:#fff;
+}
+label, strong, b, h3 {
+    font-family:"Soehne Kraftig","Helvetica Neue",Helvetica,Arial,sans-serif;
+    font-weight:500 !important;
+}
+.logo img {
+    margin:20px 0 0 0;
+    width:148px;
+    height:37px;
+}
+@media screen and (min-width: 769px) {
+    .logo img {
+        width:200px;
+        height:50px;
+    }
+}
+.country {
+    font-size:1.1em;
+    font-weight: bold;
+    display:inline-block;
+    margin:0 0 0 15px;
+    position:absolute;
+    top:38px;
+}
+@media screen and (min-width: 769px) {
+    .country {
+        margin:0 0 0 30px;
+        top:45px;
+    }
+}
+.country img {
+    width:34px;
+    vertical-align:middle;
+    margin:-3px 2px 0 0;
+    border:1px solid #3B3B3B;
+}
+.favicon {
+    width:16px;
+    height:16px;
+    margin-right:3px;
+    vertical-align:middle;
+}
+.news-page .foodbank-news li {
+    margin-bottom:6px;
+}
+/* Buttons */
+.button {
+    border-radius:3px;
+}
+.button.is-link {
+    background-color: #EAF9FF;
+    color:rgb(53, 55, 64);
+}
+.button.button.is-link:hover {
+    background-color:#d9f2fc;
+    box-shadow:inset 0 0 0 1px #b9dae8;
+    color:rgb(53, 55, 64);
+}
+.button.is-info.is-light:hover {
+    box-shadow:inset 0 0 0 1px #b9dae8;
+}
+.button.is-warning:hover {
+    box-shadow:inset 0 0 0 1px #e0d4ba;
+}
+.button.is-danger:hover {
+    box-shadow:inset 0 0 0 1px #e5b5bf;
+}
+.button[disabled] {
+    background-color:#f5f5f5 !important;
+    box-shadow:inset 0 0 0 1px #dbdbdb !important;
+    cursor:not-allowed;
+    opacity:0.7;
+}
+h1 {
+    font-size: 26px !important;
+    font-family:"Soehne Dreiviertelfett","Helvetica Neue",Helvetica,Arial,sans-serif;
+    font-weight: 700 !important;
+    margin-bottom: 1.3rem;
+}
+h2, .content h2 {
+    font-size: 18px;
+    font-weight:normal;
+    margin:0 0 10px 0;
+    padding:0 0 2px 0;
+    border-bottom:2px solid #eee;
+    max-width:100%;
+  }
+.content h2 {
+    padding-top:10px;
+}
+h3, .content h3 {
+    font-size:1em;
+    margin:0 0 2px 0;
+}
+h4, .content h4 {
+    font-size:1em;
+    font-style:italic
+}
+p {
+    margin-bottom:1.3rem;
+}
+tfoot {
+    font-style: italic;
+}
+#usemylocationbtn {
+    margin:0 0 10px 0;
+    padding:10px 12px;
+    
+}
+#usemylocationbtn:before {
+    width:25px;
+    height:25px;
+    margin:0 7px 0 0;
+    background: url("/static/img/getlocation.svg");
+    background-size: cover;
+    content: '';
+}
+#postcode_field, #address_field {
+    width:300px;
+}
+#addressform {
+    margin-bottom:1rem;
+}
+.txt-dir-rtl #usemylocationbtn:before {
+    margin:0 0 0 7px;
+}
+.working:before {
+    animation-name: spin;
+    animation-duration: 2000ms;
+    animation-iteration-count: infinite;
+    animation-timing-function: linear; 
+}
+.pac-container:after{
+    display:none !important;
+}
+ins {
+    background:#b7fdcb;
+    text-decoration:none;
+}
+del {
+    background:#ff9494;
+}
+.nochange {
+    background:#fbffb3;
+}
+.app-badges {
+    margin:1rem 0;
+}
+#apps-panel .app-badges {
+    margin:0;
+}
+.apps .app-badges {
+    margin:2rem 0;
+}
+.app-badges img, #apps-panel .app-badges img {
+    height:30px
+}
+.apps .app-badges img {
+    height:45px;
+}
+.appscreenshots {
+    margin:1rem 0 2rem 0;
+    overflow:hidden;
+    zoom:0;
+}
+.appscreenshots img {
+    width:150px;
+    float:left;
+    padding:0 10px 10px 0;
+}
+.arproducts img {
+    width:100px;
+    float:left;
+}
+.arproducts span {
+    font-size:1.2em;
+    font-weight:bold;
+}
+.arproducts .box {
+    overflow:hidden;
+    zoom:0;
+}
+.footer {
+    margin-top:3rem;
+    background: #3b3b3b;
+    background: linear-gradient(0deg,rgba(59, 59, 59, 1) 100%, rgba(0, 0, 0, 1) 0%);
+    color:#fff;
+}
+.footer a {
+    color:#fff;
+    text-decoration:underline;
+    text-underline-offset: 0.2em;
+}
+.footer a:hover {
+    color:#D3D3D3;
+}
+.flag svg {
+    stroke:#fff;
+    vertical-align:middle;
+    margin:0 2px 2px 0;
+}
+.flag:hover svg {
+    stroke:#D3D3D3
+}
+.lastupdated {
+    text-transform:lowercase;
+}
+.tabs li.is-active a {
+    color: rgb(53, 55, 64);
+}
+.button.is-medium {
+    border-radius: 4px;
+}
+@keyframes spin {
+    from {
+        transform:rotate(0deg);
+    }
+    to {
+        transform:rotate(360deg);
+    }
+}
+.sticky-toc {
+    position:sticky;
+    top:10px;
+    margin-top:3rem;
+}
+.content figure {
+    margin:0 0 10px 0;
+}
+.content img {
+    border-radius:0.25rem;
+}
+.content img.no-corner {
+    border-radius:0;
+}
+.help {
+    font-size:14px;
+}
+#langswitcher {
+    opacity: 0;
+    animation: langswitcher-fade 0.2s ease-in forwards;
+}
+
+@keyframes langswitcher-fade {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+.langswitcher.is-pulled {
+    margin:25px 0 0 0;
+    zoom:90%;
+}
+@media screen and (min-width: 769px) {
+    .langswitcher.is-pulled {
+        margin:35px 0 0 0;
+    }
+}
+.langswitcher img {
+    width:16px;
+    margin-right:4px;
+    border:1px solid #aaa;
+}
+.langswitcher .arrow {
+    width:10px;
+    height:10px;
+    stroke:rgb(53, 55, 64);
+    stroke-width:1.5;
+    margin-left:3px;
+    rotate: 90deg;
+    margin:2px 0 0 10px;
+}
+.dropdown-item {
+    font-size:inherit;
+}
+#legend {
+    display:none;
+    background:#fff;
+    padding:5px;
+    margin:5px;
+    border:1px solid #dbdbdb;
+    border-radius:4px;
+    font-size:0.85em;
+}
+#legend img {
+    width:18px;
+    vertical-align:middle;
+}
+#legend .deliveryarea {
+    display:inline-block;
+    margin:3px;
+    width:12px;
+    height:12px;
+    vertical-align:middle;
+    background:rgb(247, 167, 35, 0.2);
+    border:1px solid rgb(247, 167, 35);
+    border-radius: 2px;
+}
+.deliveryareadisclaimer {
+    font-size:0.9em;
+    font-style:italic;
+}
+/* MapLibre popup styles */
+.maplibregl-popup {
+    max-width: 300px;
+}
+.maplibregl-popup-content {
+    font-family:"Soehne Buch","Helvetica Neue",Helvetica,Arial,sans-serif;
+    font-size:16px;
+    font-weight: 400;
+    color:rgb(53, 55, 64);
+    padding:10px;
+}
+.maplibregl-popup-content .popup-title {
+    font-weight: 700;
+    margin-bottom: 0.5em;
+}
+.maplibregl-popup-content .button {
+    margin-top:0.5em;
+}
+.maplibregl-popup-close-button {
+    display:none;
+}
+.maplibregl-popup-content p {
+    padding:0;
+    margin-bottom:0.25em;
+}
+.maplibregl-popup-content address {
+    margin-bottom:0.5em;
+}
+/* Legacy Google Maps styles - kept for backwards compatibility */
+.gm-style-iw {
+    width: auto !important;
+    height: auto !important;
+    left: 0 !important;
+    font-size: 16px !important;
+    font-weight: 400 !important;
+    top: 0 !important;
+    overflow: hidden !important;
+    border-radius: 2px;
+    font-family:'Soehne Buch' !important;
+}
+.gm-style-iw-chr {
+    display:none;
+}
+.serviceareadisclaimer {
+    font-size:0.9em;
+    font-style:italic;
+    margin-top: -5px;
+}
+.infowindow a {
+    outline:0;
+}
+.infowindow h3 {
+    margin-top:10px;
+}
+.infowindow h3, .infowindow p, .infowindow address {
+    margin-bottom:10px;
+}
+address {
+    font-style:normal;
+}
+
+@page {
+    margin:1cm;
+}
+@media print {
+    .breadcrumb, .menu-col, .cta, .subscribe-form, .directions-btn, footer, .maplibregl-ctrl, .subscribe, .links, #usemylocationbtn, #addressform {
+        display:none;
+    }
+}
+
+.txt-dir-rtl .breadcrumb.has-arrow-separator li+li:before {
+    content:"←"
+}
+.txt-dir-rtl .menu-list a {
+    text-align:right;
+}
+@media screen and (max-width: 769px) {
+    .txt-dir-rtl .menu-list a.is-active {
+        padding-right:40px;
+    }
+}
+.txt-dir-rtl .dropdown.is-right .dropdown-menu {
+    left: 0;
+    right: auto;
+}
+.txt-dir-rtl .dropdown .dropdown-menu {
+    left: auto;
+}
+.txt-dir-rtl .langswitcher .arrow {
+    margin:2px 10px 0 0;
+}

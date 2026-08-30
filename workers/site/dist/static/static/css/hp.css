@@ -1,0 +1,226 @@
+/* FORM */
+.find-foodbank {
+    margin-top:1rem;
+}
+#postcode_field, #address_field {
+    width:300px;
+}
+
+/* NAVS */
+nav.primary {
+    margin:1rem 0 3rem 0;
+}
+@media screen and (min-width: 1200px) {
+    nav.primary {
+        margin:2rem 0 4rem 0;
+    }
+}
+nav.secondary {
+    margin:0 0 2rem 0;
+}
+
+/* GF LOGO */
+h1 {
+    margin:20px 0 0 0;
+    width:148px;
+    height:37px;
+}
+@media screen and (min-width: 769px) {
+    h1 {
+        margin:30px 0 20px 0;
+        width:200px;
+        height:50px;
+    }
+}
+.how-help-container h2, .logos-container h2 {
+    text-align:center;
+    font-size:20px;
+    border-bottom:1px solid lightgrey;
+    padding-bottom:0;
+}
+#map {
+    width:100%;
+    height:1000px;
+    border-radius:3px;
+    margin-bottom:64px;
+    background:#AECFE2 !important;
+}
+.app-badges {
+    float:right;
+}
+.app-badges a {
+    display:block;
+    margin-bottom:5px;
+}
+.recently-updated, .most-viewed, #index-intro ul {
+    margin-bottom:1rem;
+}
+.recently-updated, .most-viewed {
+    column-count:2;
+    column-gap:10px;
+}
+.recently-updated {
+    margin-bottom:1rem;
+}
+.foodbank-news div {
+    margin-bottom:5px;
+}
+
+
+/* LOGOS */
+.logos-container {
+    background:#D8EDFE;
+}
+.logos-container h2 {
+    padding:1rem 0 0 0;
+    border-bottom-color:#b4daf9;
+}
+.logos {
+    padding-bottom:2rem;
+}
+.logos img {
+    max-width:108px;
+}
+.logos div {
+    margin:auto;
+    text-align:center;
+}
+.trussell {
+    height:36px;
+}
+.thetimes {
+    width:99px;
+}
+.nhs {
+    height:31px;
+}
+.bbc {
+    height:31px;
+}
+.scottishgov {
+    width:135px;
+}
+.cdrc {
+    height:54px;
+}
+.reach {
+    width:67px;
+}
+.ifan {
+    height:40px;
+}
+.channel4 {
+    height:54px;
+}
+.welshgov {
+    height:54px;
+}
+.fcdo {
+    width:135px;
+}
+.mars {
+    width:90px;
+}
+.ca {
+    width:72px;
+}
+@media screen and (min-width: 769px) {
+    .trussell {
+        height:72px;
+    }
+    .thetimes {
+        width:153px;
+    }
+    .nhs {
+        height:36px;
+    }
+    .bbc {
+        height:31px;
+    }
+    .scottishgov {
+        width:171px;
+    }
+    .cdrc {
+        height:63px;
+    }
+    .reach {
+        width:99px;
+    }
+    .ifan {
+        height:45px;
+    }
+    .fcdo {
+        width:90px;
+    }
+    .mars {
+        width:90px;
+    }
+}
+
+
+/* HOW TO HELP */
+.how-help-container {
+    padding-top:4rem;
+}
+.how-help-cat {
+    padding-bottom:2rem;
+}
+.how-help-cat a svg, .all-news svg {
+    width:10px;
+    height:10px;
+    stroke:#007BC7;
+    stroke-width:1.5;
+    margin-left:3px;
+}
+.how-help-cat a:hover svg, .all-news:hover svg {
+    stroke:#363636;
+}
+
+/* COUNTRIES */
+.countries {
+    text-align:center;
+    padding:0 0 3rem 0;
+}
+.countries img {
+    margin-top:20px;
+    height:90px;
+    display:inline;
+    padding:0 10px 0 0;
+    vertical-align: middle;
+}
+.countries .england img {
+    width:100px;
+}
+.countries .scotland img {
+    height:110px;
+    margin-top:0;
+}
+
+/* STATS */
+.stats {
+    text-align: center;
+}
+
+/* ANNUAL REPORT */
+.annualreportteaser {
+    margin:30px 0;
+    padding:20px;
+    background:#FAFAFA;
+    border-radius:3px;
+}
+
+/* INFOWINDOW */
+.gm-style-iw {
+    width: auto !important;
+    height: auto !important;
+    left: 0 !important;
+    font-size: 16px !important;
+    font-weight: 400 !important;
+    top: 0 !important;
+    overflow: hidden !important;
+    border-radius: 2px;
+    font-family:'Soehne Buch' !important;
+}
+.gm-style-iw-chr {
+    display:none;
+}

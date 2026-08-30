@@ -1,0 +1,211 @@
+@media screen and (max-width: 769px) {
+    .breadcrumb {
+        margin:-1em 0 0.3em 0 !important;
+    }
+    .foodbank-menu {
+        position:relative;
+    }
+    .foodbank-menu li a {
+        display:none;
+    }
+    .foodbank-menu li a.is-active {
+        display:block;
+    }
+    .navbar-burger {
+        position:absolute;
+        top:0;
+        right:0;
+        height:2.25rem;
+        width:2.25rem;
+    }
+    .navbar-burger span {
+        background-color:#fff;
+    }
+}
+.placetitle {
+    font-size:22px;
+    margin-bottom:0;
+}
+#status-msg img {
+    vertical-align: middle;
+    margin-right:5px;
+}
+.altname {
+    margin-top:-1.3rem;
+    font-style: italic;
+}
+.tabs {
+    padding-top:25px;
+    margin:0 !important;
+}
+.byitem-form {
+    margin:15px 0 0 0;
+}
+.byitem-explanation {
+    margin:15px 0;
+}
+.needs {
+    width:100%;
+}
+.needs tr:last-child td, .donationpoints tr:last-child td {
+    border-bottom:0;
+}
+.needs td, .donationpoints td {
+    padding:0.75em 0.75em 0.75em 0;
+}
+.distance, .parent_org {
+    font-size:0.8em;
+}
+.links img {
+    margin:13px 7px 0 0;
+    width:20px;
+}
+.news li {
+    margin-bottom:10px;
+}
+#theresults {
+    margin-top:-10px;
+}
+.subscribe {
+    margin-top:10px;
+}
+.subscribe li.is-active a {
+    background:#FCFCFC !important;
+}
+.subscribe p {
+    margin:0 0 10px 0;
+}
+.subscribe .tabs {
+    padding:0;
+}
+.subscribe .tabcontent {
+    padding:15px;
+    background:#FCFCFC;
+    border:1px solid #D6DAE0;
+    border-top:0;
+}
+#subscribe_browser_btn {
+    margin-bottom:12px;
+}
+#map {
+    height:1000px;
+    border-radius: 0.25rem;
+    background:#F7F7F7;
+}
+.sidemap {
+    height:400px !important;
+    margin-bottom:10px;
+}
+.mainmap {
+    height:600px !important;
+    margin-bottom:10px;
+}
+.placephoto {
+    margin-bottom:10px;
+    max-height:450px;
+    border-radius: 0.25rem;
+}
+.placephoto.is-pulled-right {
+    margin-left:10px;
+}
+.txt-dir-rtl .placephoto {
+    margin-right:5px;
+    margin-left:0;
+}
+div.pluscode {
+    margin-bottom:10px;
+}
+.contacts:not(:first-child) {
+    margin-top:10px;
+}
+.contacts a, a.pluscode {
+    display:block;
+    padding:0 0 2px 21px;
+    background:no-repeat left center;
+    background-size:16px;
+}
+a.pluscode {
+    background-image:url(/static/img/pluscode.svg);
+}
+.contacts .website {
+    background-image:url(/static/img/web.svg);
+}
+.contacts .phone {
+    background-image:url(/static/img/phone.svg);
+}
+.contacts .email {
+    background-image:url(/static/img/email.svg);
+}
+.contacts .facebook {
+    background-image:url(/static/img/facebook.svg);
+}
+.contact-icon {
+    width:16px;
+    display:inline-block;
+    margin:0 2px 0 2px;
+    vertical-align:middle;
+}
+p.needs {
+    border-left:2px solid #eee;
+    padding:7px 0 7px 15px;
+}
+.txt-dir-rtl p.needs {
+    border-left:0;
+    border-right:2px solid #eee;
+    padding:7px 15px 7px 0;
+}
+.txt-dir-rtl .contacts a, .txt-dir-rtl a.pluscode {
+    padding:0 21px 2px 0;
+    background-position:right center;
+}
+.dayname {
+    padding-right:20px;
+}
+.cta {
+    margin-bottom: 1.3rem;
+}
+.cta p {
+    margin-bottom:10px;
+}
+.cta a {
+    vertical-align: middle;
+    margin-right:5px;
+}
+#fsarating img[style] {
+    min-width:150px !important;
+    width:150px;
+}
+#subscription_example {
+    width:100%;
+    height:500px;
+}
+#postcode_field {
+    text-transform:uppercase;
+}
+#postcode_field::placeholder {
+    text-transform:none;
+}
+.table td.foodbank_name {
+    padding-left:0;
+}
+.fb_needs p {
+    margin-bottom:0;
+}
+textarea[name='address'] {
+    height:200px !important;
+}
+textarea[name='body'] {
+    height:500px !important;
+}
+.mp_photo {
+    width:200px;
+    border-radius:3px;
+}
+.locations address, .donationpoints address {
+    margin-bottom:20px;
+}
+.companyicon {
+    width:16px;
+    height:16px;
+    vertical-align:middle;
+}
