@@ -9,5 +9,9 @@
   },
   "devDependencies": {
     "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "js-yaml": "^5.4.1",
+    "js2xmlparser": "^5.0.0"
   }
 }

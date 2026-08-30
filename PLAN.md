@@ -7376,6 +7376,8 @@ export function pyJson(v: PyValue, indent: number | null = 2, depth = 0): string
 
 #### 7.4.3 XML
 
+> **Resolved 2026-08-30, alongside the JSON and YAML calls above.** `packages/serialise` moved XML to structural parity too, on the same reasoning as JSON: no library reproduces `dicttoxml`+`minidom`'s exact quirks (the `<None>` tag, raw unindented newlines, self-closing null/empty), so matching them byte-for-byte would mean hand-writing all of that logic regardless of whether a library sits underneath. `js2xmlparser` (one dependency, `xmlcreate`) now builds the actual XML string; `packages/serialise/src/xml.ts` supplies only the item-naming logic (still reproducing the `<None>` tag for `donationpoints`, since that's domain knowledge no library has) and reshapes the value tree to fit. See `packages/serialise/src/yaml.ts` too -- `js-yaml` replaced the hand-rolled YAML emitter for the same reason once byte parity was already off the table for it.
+
 `gfapi2/func.py:52-57`:
 
 ```python

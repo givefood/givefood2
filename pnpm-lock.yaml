@@ -25,6 +25,13 @@ importers:
         version: 7.0.2
 
   packages/serialise:
+    dependencies:
+      js-yaml:
+        specifier: ^5.4.1
+        version: 5.4.1
+      js2xmlparser:
+        specifier: ^5.0.0
+        version: 5.0.0
     devDependencies:
       typescript:
         specifier: ^7.0.2
@@ -577,6 +584,9 @@ packages:
     cpu: [x64]
     os: [win32]
 
+  argparse@2.0.1:
+    resolution: {integrity: sha512-8+9WqebbFzpX9OR+Wa6O29asIogeRMzcGtAINdpMHHyAg10f05aSFVBbcEqGf/PXw1EjAZ+q2/bEBg3DvurK3Q==}
+
   blake3-wasm@2.1.5:
     resolution: {integrity: sha512-F1+K8EbfOZE49dtoPtmxUQrpXaBIl3ICvasLh+nJta0xkz+9kF/7uet9fLnwKqhDrmj6g+6K3Tw9yQPUg2ka5g==}
 
@@ -604,6 +614,13 @@ packages:
   hono@4.13.5:
     resolution: {integrity: sha512-O6+/eCYRkzzzy0rPWwKLiGBR1nFuUPZynnwjxN1MBA62NNqbT0wQEzQyK2gSO5yDIDB336sXQleAhOHrzlYyKw==}
     engines: {node: '>=16.9.0'}
+
+  js-yaml@5.4.1:
+    resolution: {integrity: sha512-28R/k+NAjeuf7+CKlTxWZVExJGwVVLwY06DgEnOMz2gEpfNkDcD7QvyiVPT0xy0XXhU8vHsd4Ot42OOPdJG7dQ==}
+    hasBin: true
+
+  js2xmlparser@5.0.0:
+    resolution: {integrity: sha512-ckXs0Fzd6icWurbeAXuqo+3Mhq2m8pOPygsQjTPh8K5UWgKaUgDSHrdDxAfexmT11xvBKOQ6sgYwPkYc5RW/bg==}
 
   kleur@4.1.5:
     resolution: {integrity: sha512-o+NO+8WrRiQEE4/7nwRJhN1HWpVmJm511pBHUxPLtp0BUISzlBplORYSmTclCnJvQq2tKu/sgl3xVpkc7ZWuQQ==}
@@ -673,6 +690,9 @@ packages:
         optional: true
       utf-8-validate:
         optional: true
+
+  xmlcreate@2.0.4:
+    resolution: {integrity: sha512-nquOebG4sngPmGPICTS5EnxqhKbCmz5Ox5hsszI2T6U5qdrJizBc+0ilYSEjTSzU0yZcmvppztXe/5Al5fUwdg==}
 
   youch-core@0.3.3:
     resolution: {integrity: sha512-ho7XuGjLaJ2hWHoK8yFnsUGy2Y5uDpqSTq1FkHLK4/oqKtyUU1AFbOOxY4IpC9f0fTLjwYbslUz0Po5BpD1wrA==}
@@ -985,6 +1005,8 @@ snapshots:
   '@typescript/typescript-win32-x64@7.0.2':
     optional: true
 
+  argparse@2.0.1: {}
+
   blake3-wasm@2.1.5: {}
 
   cookie@1.1.1: {}
@@ -1026,6 +1048,14 @@ snapshots:
     optional: true
 
   hono@4.13.5: {}
+
+  js-yaml@5.4.1:
+    dependencies:
+      argparse: 2.0.1
+
+  js2xmlparser@5.0.0:
+    dependencies:
+      xmlcreate: 2.0.4
 
   kleur@4.1.5: {}
 
@@ -1139,6 +1169,8 @@ snapshots:
       - utf-8-validate
 
   ws@8.21.0: {}
+
+  xmlcreate@2.0.4: {}
 
   youch-core@0.3.3:
     dependencies:

@@ -1,4 +1,4 @@
-import { pyFloatRepr } from "./pyfloat";
+import { formatFloat } from "./float";
 
 // WP 2.3, PLAN.md §7.4.5. Two dialects, both real production contracts:
 // `unicodecsv.writer(response)` (default `excel`, QUOTE_MINIMAL) for
@@ -9,7 +9,7 @@ import { pyFloatRepr } from "./pyfloat";
 // including `None -> ""` and `True -> "True"`. Neither dialect preserves
 // the null/empty-string distinction -- already lost in the real API, not
 // something to "improve" here.
-export function pyCsvRow(vals: unknown[], quoteAll = false): string {
+export function formatCsvRow(vals: unknown[], quoteAll = false): string {
   return (
     vals
       .map((v) => {
@@ -23,7 +23,7 @@ export function pyCsvRow(vals: unknown[], quoteAll = false): string {
               : typeof v === "number"
                 ? Number.isInteger(v)
                   ? String(v)
-                  : pyFloatRepr(v)
+                  : formatFloat(v)
                 : String(v);
         const needsQuoting = quoteAll || /[,"\r\n]/.test(s);
         return needsQuoting ? '"' + s.replace(/"/g, '""') + '"' : s;
