@@ -128,3 +128,18 @@ export function linebreaks(value: string): string {
   const paragraphs = escapeHtml(value).split(/\n{2,}/);
   return paragraphs.map((p) => `<p>${p.replace(/\n/g, "<br>")}</p>`).join("\n\n");
 }
+
+// django's `linebreaksbr` -- NOT the same as linebreaks above: no <p>
+// wrapping/paragraph grouping at all, just a flat escape-then-replace of
+// every newline with <br>.
+export function linebreaksbr(value: string): string {
+  return escapeHtml(value.replace(/\r\n|\r/g, "\n")).replace(/\n/g, "<br>");
+}
+
+// django's `truncatechars:N` -- Truncator(value).chars(N): if value is
+// already <= N chars, returned unchanged; otherwise cut so that text plus
+// a single trailing "…" together total exactly N characters.
+export function truncatechars(value: string, count: number): string {
+  if (value.length <= count) return value;
+  return `${value.slice(0, count - 1)}…`;
+}

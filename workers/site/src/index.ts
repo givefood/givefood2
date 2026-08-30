@@ -17,6 +17,7 @@ import { api2ConstituenciesApp } from "./routes/api2/constituencies";
 import { api3App } from "./routes/api3";
 import { api1Index, api2Docs, api2Index } from "./routes/apiDocs";
 import { wfbnIndex } from "./routes/wfbn";
+import { wfbnFoodbank } from "./routes/wfbn/foodbank";
 import { notPortedYet } from "./routes/notPortedYet";
 import { render404 } from "./render404";
 
@@ -92,9 +93,11 @@ app.route("/api", notPortedYet("gfapi3 docs page"));
 // 21) -- matching prefix_default_language=False exactly, same as
 // resolveLanguage.ts's own PREFIXES set (derived from the same LOCALES).
 app.get("/needs/", wfbnIndex);
+app.get("/needs/at/:slug/", wfbnFoodbank);
 for (const locale of LOCALES) {
   if (locale === "en") continue;
   app.get(`/${locale}/needs/`, wfbnIndex);
+  app.get(`/${locale}/needs/at/:slug/`, wfbnFoodbank);
 }
 
 // Everything below is specified in PLAN.md but not yet built. Each returns

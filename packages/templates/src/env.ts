@@ -21,7 +21,9 @@ import {
   fullPhone,
   intcomma,
   linebreaks,
+  linebreaksbr,
   slugify,
+  truncatechars,
 } from "./filters";
 import { urlForLocale } from "./urls";
 
@@ -79,6 +81,8 @@ function buildEnvironment(): Environment {
   env.addFilter("intcomma", intcomma);
   env.addFilter("date", djangoDate);
   env.addFilter("djslice", djangoSlice);
+  env.addFilter("truncatechars", truncatechars);
+  env.addFilter("linebreaksbr", (value: string) => new nunjucksSlim.runtime.SafeString(linebreaksbr(value)));
   env.addFilter("floatformat", floatformat);
   // Django's `linebreaks` is `is_safe = True` -- its <p>/<br> output must
   // not be re-escaped by autoescape, same reasoning as blocktrans's

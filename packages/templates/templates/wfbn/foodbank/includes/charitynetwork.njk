@@ -1,0 +1,28 @@
+{# `not` binds TIGHTER than `==` in Nunjucks -- opposite of Python/Django,
+   where `not X == Y` means `not (X == Y)`. `{% if not X == Y %}` here
+   parsed as `(not X) == Y`, which for a non-empty string X is `false ==
+   Y` -- always false -- so this always fell into the Salvation Army
+   branch regardless of the real name. Found only by seeding a real
+   non-"Salvation Army" foodbank locally and seeing the wrong branch
+   render; every "not X == Y" in a ported template needs the same
+   explicit parens. #}
+{% if foodbank.charity_number %}
+    <br>
+    {% if not (foodbank.name == "Salvation Army") %}
+        <p>
+            {% if has_charity_details %}
+                {% set charity_url = url('wfbn:foodbank_charity', foodbank.slug) %}{% blocktrans with charity_url=charity_url charity_number=foodbank.charity_number %}Charity Registration <a href="{{ charity_url }}" id="charity_link">{{ charity_number }}</a>{% endblocktrans %}<br>
+            {% else %}
+                {% blocktrans with charity_number=foodbank.charity_number %}Charity Registration {{ charity_number }}{% endblocktrans %}<br>
+            {% endif %}
+            {% if not (foodbank.network == "Independent") %}
+                {% blocktrans %}Part of{% endblocktrans %}
+                <a href="{{ network_url }}?ref=givefood.org.uk">{{ foodbank.network }}</a>
+            {% endif %}
+        </p>
+    {% else %}
+        <p>Salvation Army {% blocktrans %}is a registered charity in England &amp; Wales{% endblocktrans %} <a href="https://register-of-charities.charitycommission.gov.uk/charity-search/-/charity-details/214779/charity-overview">214779</a> &amp; <a href="https://register-of-charities.charitycommission.gov.uk/charity-search/-/charity-details/215174/charity-overview">215174</a>, Scotland <a href="https://www.oscr.org.uk/about-charities/search-the-register/charity-details?number=SC009359">SC009359</a> &amp; <a href="https://www.oscr.org.uk/about-charities/search-the-register/charity-details?number=SC037691">SC037691</a>.</p>
+    {% endif %}
+{% else %}
+    <br>
+{% endif %}

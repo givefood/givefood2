@@ -23,6 +23,8 @@ const ROUTES: Record<string, string> = {
   "wfbn:index": "/needs/",
   "wfbn:rss": "/needs/rss.xml",
   "wfbn:get_location": "/needs/getlocation/",
+  "wfbn-generic:webpush_config": "/needs/webpush/config/",
+  human: "/human/",
 };
 
 const PARAMETERISED: Record<string, (...args: string[]) => string> = {
@@ -34,6 +36,17 @@ const PARAMETERISED: Record<string, (...args: string[]) => string> = {
   "wfbn-generic:foodbank_hit": (slug) => `/needs/at/${slug}/hit/`,
   "wfbn-generic:foodbank_location_photo": (slug, locslug) => `/needs/at/${slug}/${locslug}/photo.jpg`,
   "wfbn-generic:foodbank_donationpoint_photo": (slug, dpslug) => `/needs/at/${slug}/donationpoint/${dpslug}/photo.jpg`,
+  "wfbn-generic:foodbank_photo": (slug) => `/needs/at/${slug}/photo.jpg`,
+  "wfbn:foodbank_rss": (slug) => `/needs/at/${slug}/rss.xml`,
+  "wfbn:foodbank_map": (slug) => `/needs/at/${slug}/map.png`,
+  "wfbn:foodbank_locations": (slug) => `/needs/at/${slug}/locations/`,
+  "wfbn:foodbank_donationpoints": (slug) => `/needs/at/${slug}/donationpoints/`,
+  "wfbn:foodbank_news": (slug) => `/needs/at/${slug}/news/`,
+  "wfbn:foodbank_charity": (slug) => `/needs/at/${slug}/charity/`,
+  "wfbn:foodbank_nearby": (slug) => `/needs/at/${slug}/nearby/`,
+  "wfbn:updates": (slug, action) => `/needs/at/${slug}/updates/${action}/`,
+  "wfbn-md:md_foodbank": (slug) => `/md/needs/at/${slug}/`,
+  "api2:foodbank": (slug) => `/api/2/foodbank/${slug}/`,
 };
 
 // Route names reached inside Django's i18n_patterns -- `{% url %}` for one
@@ -60,6 +73,14 @@ const I18N_SCOPED = new Set([
   "wfbn:foodbank",
   "wfbn:foodbank_location",
   "wfbn:foodbank_donationpoint",
+  "wfbn:foodbank_rss",
+  "wfbn:foodbank_map",
+  "wfbn:foodbank_locations",
+  "wfbn:foodbank_donationpoints",
+  "wfbn:foodbank_news",
+  "wfbn:foodbank_charity",
+  "wfbn:foodbank_nearby",
+  "wfbn:updates",
 ]);
 
 function build(name: string, args: string[]): string {

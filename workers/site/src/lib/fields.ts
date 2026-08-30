@@ -29,6 +29,25 @@ export function fullNameLocation(locationName: string, foodbankName: string): st
   return `${locationName}, ${fullNameFoodbank(foodbankName)}`;
 }
 
+// "Foodbank" translated, matching the cy/gd .po catalogues' own msgstr for
+// this exact msgid -- hardcoded rather than threading async catalogue
+// access into what's otherwise a synchronous helper (only 2 of the 4
+// supported locales need this word at all; en/ga both use the English
+// suffix form below).
+const FOODBANK_WORD: Record<"cy" | "gd", string> = { cy: "Banc Bwyd", gd: "Banca-bìdh" };
+
+// Foodbank.full_name()/full_name_en() -- locale-aware, unlike
+// fullNameFoodbank() above (which is the JSON API's English-only version).
+// cy with a set alt_name returns alt_name verbatim, no suffix/prefix at
+// all; cy/gd otherwise prefix the translated word; every other locale
+// (including cy without an alt_name) appends "Foodbank" in English.
+export function fullNameLocaleAware(name: string, altName: string | null, locale: "en" | "cy" | "ga" | "gd"): string {
+  if (locale === "cy" && altName) return altName;
+  if (DONT_APPEND_FOOD_BANK.includes(name)) return name;
+  if (locale === "cy" || locale === "gd") return `${FOODBANK_WORD[locale]} ${name}`;
+  return `${name} Foodbank`;
+}
+
 // Foodbank.full_address() / FoodbankDonationPoint.full_address() -- both
 // unconditional, no null-guard (their address/postcode columns are
 // effectively always present).
@@ -72,6 +91,25 @@ export function charityRegisterUrl(charityNumber: string | null, country: string
     return "https://www.gov.im/about-the-government/offices/attorney-generals-chambers/crown-office/charities/index-of-charities-registered-in-the-isle-of-man/";
   }
   return null;
+}
+
+// Foodbank.fsa_url()
+export function fsaUrl(fsaId: string | null): string | null {
+  return fsaId ? `https://ratings.food.gov.uk/business/${fsaId}` : null;
+}
+
+// Foodbank.network_url() -- `False` (not null/undefined) for anything
+// other than the two known networks, matching Python's `return False`
+// verbatim (same reasoning as urlWithRefDonationPoint below).
+export function networkUrl(network: string | null): string | false {
+  if (network === "Trussell") return "https://www.trussell.org.uk/";
+  if (network === "IFAN") return "https://www.foodaidnetwork.org.uk/";
+  return false;
+}
+
+// Foodbank.bankuet_url()
+export function bankuetUrl(bankuetSlug: string | null): string | null {
+  return bankuetSlug ? `https://www.bankuet.co.uk/${bankuetSlug}/?ref=givefood.org.uk` : null;
 }
 
 // Foodbank.url_with_ref() -- merges `ref=givefood.org.uk` into the

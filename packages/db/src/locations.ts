@@ -95,6 +95,19 @@ export async function getOpenDonationPointLocationCoordinates(session: Session):
   );
 }
 
+// Foodbank.has_service_area() -- a live count, not a cached field (the
+// Python source queries FoodbankLocation fresh on every call, no
+// annotation/cache column exists to read instead).
+export async function hasServiceArea(session: Session, foodbankId: number): Promise<boolean> {
+  const row = await session
+    .prepare(
+      "SELECT COUNT(*) AS n FROM foodbanklocation WHERE foodbank_id = ? AND boundary_geojson IS NOT NULL AND boundary_geojson != ''",
+    )
+    .bind(foodbankId)
+    .first();
+  return ((row as { n: number } | null)?.n ?? 0) > 0;
+}
+
 // Full rows for a small, already-ranked set of location ids -- the
 // location-typed winners of `location_search`/`donationpoint_search`,
 // fetched after ranking against the cheap coordinate-only candidate set

@@ -1,0 +1,15 @@
+<div class="cta">
+
+    <p>
+        <a href="{{ url_with_ref }}" class="button is-info is-medium is-light" id="donate_btn">{% blocktrans %}Donate{% endblocktrans %}</a>
+        {% blocktrans %}Food, money or your time{% endblocktrans %}
+    </p>
+
+    {% if foodbank.bankuet_slug %}
+        <p>
+            <a href="{{ bankuet_url }}" class="button is-info is-small is-light" id="bankuet_btn">Bankuet</a>
+            {% blocktrans %}Donate using {% endblocktrans %} Bankuet
+        </p>
+    {% endif %}
+
+</div>

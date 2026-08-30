@@ -1,0 +1,9 @@
+{% if need_text == "Unknown" %}
+  {% blocktrans %}We currently don't know what is needed at this food bank. Please contact them to find out.{% endblocktrans %}
+{% else %}
+  {% if need_text == "Nothing" %}
+    {% blocktrans %}This food bank isn't requesting anything, but may appreciate other support like a financial donation or volunteers. Please contact them to find out.{% endblocktrans %}
+  {% else %}
+    {{ need_text|linebreaksbr }}
+  {% endif %}
+{% endif %}
