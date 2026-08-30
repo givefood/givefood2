@@ -8,10 +8,13 @@
 //
 // Run before `wrangler dev`/`wrangler deploy` picks up workers/site -- see
 // the `predev`/`predeploy` scripts in workers/site/package.json.
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import nunjucks from "nunjucks";
+import { BlocktransExtension } from "../src/blocktransExtension";
+import { parsePoFile } from "../src/poParser";
+import { LOCALES, type Locale } from "../src/i18n";
 
 interface PrecompiledTemplate {
   name: string;
@@ -39,19 +42,31 @@ function esmWrapper(templates: PrecompiledTemplate[]): string {
 
 const here = dirname(fileURLToPath(import.meta.url));
 const templatesDir = join(here, "..", "templates");
+const localeDir = join(here, "..", "locale");
 const outDir = join(here, "..", "src", "generated");
+const localesOutDir = join(outDir, "locales");
 // Plain .js, not .ts: this is nunjucks's own code-generator output (untyped,
 // not meant to be strict-mode-checked) -- .d.ts alongside it is what tsc
 // actually reads on `import ... from "./generated/precompiled"`.
 const outFile = join(outDir, "precompiled.js");
 const outTypesFile = join(outDir, "precompiled.d.ts");
 
+mkdirSync(outDir, { recursive: true });
+mkdirSync(localesOutDir, { recursive: true });
+
+// {% blocktrans %} needs the FULL nunjucks parser (nunjucks-slim strips
+// nodes/parser to nothing -- see blocktransExtension.ts's module comment),
+// registered on the Environment passed to precompile() so its .parse()
+// method runs during compilation, same as every built-in tag.
+const compileEnv = new nunjucks.Environment(null, { autoescape: true });
+compileEnv.addExtension("blocktrans", new BlocktransExtension(nunjucks));
+
 const source: string = nunjucks.precompile(templatesDir, {
   include: [/\.njk$/],
   wrapper: esmWrapper as unknown as (templates: PrecompiledTemplate[], opts: unknown) => string,
+  env: compileEnv,
 });
 
-mkdirSync(outDir, { recursive: true });
 writeFileSync(outFile, source);
 writeFileSync(
   outTypesFile,
@@ -60,3 +75,14 @@ writeFileSync(
 
 const count = (source.match(/^const t_\d+ = /gm) ?? []).length;
 console.log(`@givefood/templates: precompiled ${count} template(s) -> ${outFile}`);
+
+// locale/{cy,ga,gd}/django.po -- copied verbatim from the Django app's own
+// locale/ directory (§2.7.1) -- built into plain JSON catalogues, one per
+// locale, dynamically imported at render time (i18n.ts).
+for (const locale of LOCALES) {
+  if (locale === "en") continue; // en is the source language, no catalogue
+  const poPath = join(localeDir, locale, "django.po");
+  const catalogue = parsePoFile(readFileSync(poPath, "utf-8"));
+  writeFileSync(join(localesOutDir, `${locale}.json`), JSON.stringify(catalogue));
+  console.log(`@givefood/templates: built ${Object.keys(catalogue).length} msgid(s) for locale "${locale satisfies Locale}"`);
+}

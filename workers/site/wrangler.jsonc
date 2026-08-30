@@ -19,16 +19,16 @@
   // without this the build step fails to resolve it. See PLAN.md §6.2.3.
   "build": {
     "command": "pnpm --filter @givefood/templates run precompile",
-    // ONLY the .njk source -- not packages/templates/src, which is where
-    // the command's own output (src/generated/) lands. Watching that too
-    // makes every run of the command trigger the watcher, which reruns the
-    // command, forever (found by testing this exact config in wrangler dev).
-    // workers/site's own src/ needs no entry here: wrangler's bundler
-    // already watches every file in the Worker's real import graph
-    // (including packages/templates/src/*.ts) independently of this --
-    // watch_dir only scopes when to rerun the custom build command above,
-    // and only the .njk files affect what that command produces.
-    "watch_dir": "../../packages/templates/templates"
+    // ONLY the .njk/.po source -- not packages/templates/src, which is
+    // where the command's own output (src/generated/) lands. Watching that
+    // too makes every run of the command trigger the watcher, which
+    // reruns the command, forever (found by testing this exact config in
+    // wrangler dev). workers/site's own src/ needs no entry here:
+    // wrangler's bundler already watches every file in the Worker's real
+    // import graph (including packages/templates/src/*.ts) independently
+    // of this -- watch_dir only scopes when to rerun the custom build
+    // command above, and only .njk/.po files affect what it produces.
+    "watch_dir": ["../../packages/templates/templates", "../../packages/templates/locale"]
   },
 
   // >= 2026-08-04 turns on nodejs_compat and nodejs_compat_v2 with no flag.

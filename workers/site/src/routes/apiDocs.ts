@@ -17,7 +17,7 @@ function pageContext(c: Context<AppEnv>, appName: string) {
 
 // gfapi1 `api` (GET /api/1/) -- static doc page, no DB reads.
 export async function api1Index(c: Context<AppEnv>): Promise<Response> {
-  return c.html(render("api1.njk", pageContext(c, "gfapi1")));
+  return c.html(await render("api1.njk", pageContext(c, "gfapi1")));
 }
 
 // gfapi2 `index` (GET /api/2/) -- the one dynamic bit is `dumps`, which the
@@ -27,7 +27,7 @@ export async function api1Index(c: Context<AppEnv>): Promise<Response> {
 export async function api2Index(c: Context<AppEnv>): Promise<Response> {
   const session = dbSession(c);
   const dumps = await getLatestDumps(session);
-  return c.html(render("api2/index.njk", { ...pageContext(c, "gfapi2"), dumps }));
+  return c.html(await render("api2/index.njk", { ...pageContext(c, "gfapi2"), dumps }));
 }
 
 // gfapi2/views.py:33-40 -- static, verbatim from the Python source.
@@ -61,7 +61,7 @@ export async function api2Docs(c: Context<AppEnv>): Promise<Response> {
   const recentNeeds = await getPublishedNeeds(session, 5);
 
   return c.html(
-    render("api2/docs.njk", {
+    await render("api2/docs.njk", {
       ...pageContext(c, "gfapi2"),
       api_formats: API_FORMATS,
       eg_foodbanks: EG_FOODBANKS,

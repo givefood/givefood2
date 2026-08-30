@@ -8,6 +8,8 @@
 // PrecompiledLoader -- see that script for how templates/*.njk gets there.
 import nunjucksSlim, { type Environment } from "nunjucks/browser/nunjucks-slim.js";
 import { precompiledTemplates } from "./generated/precompiled";
+import { BlocktransExtension } from "./blocktransExtension";
+import { loadCatalogue, translate, type Locale } from "./i18n";
 import {
   commaSeparated,
   djangoDate,
@@ -52,10 +54,12 @@ function buildEnvironment(): Environment {
 
   env.addGlobal("url", url);
   env.addGlobal("now", () => formatRfc2822(new Date()));
-  // English-only passthrough for Django's `{% trans %}`/`{% blocktrans %}`.
-  // WP 3.2 (i18n) replaces this with a real lookup; every ported template
-  // already calls through `_()` so that swap won't touch template source.
-  env.addGlobal("_", (text: string) => text);
+  // `.run()` reads the current request's catalogue from the render
+  // context (`_i18nCatalogue`, set by render() below) rather than from
+  // this instance, so one Environment-level registration covers every
+  // locale -- see blocktransExtension.ts's module comment for why this is
+  // a *different* instance of the same class from precompile.ts's.
+  env.addExtension("blocktrans", new BlocktransExtension(nunjucksSlim));
 
   env.addFilter("friendlyPhone", friendlyPhone);
   env.addFilter("fullPhone", fullPhone);
@@ -81,6 +85,16 @@ function getEnvironment(): Environment {
   return cachedEnv;
 }
 
-export function render(name: string, context: Record<string, unknown> = {}): string {
-  return getEnvironment().render(name, context);
+// `_` (Django's `{% trans %}`) is injected per render() call, not
+// registered as an Environment-level global like `url`/`now` above --
+// unlike those, it's locale-dependent, and locale varies per request while
+// the Environment is shared across the isolate's whole lifetime.
+export async function render(name: string, context: Record<string, unknown> = {}, locale: Locale = "en"): Promise<string> {
+  const catalogue = await loadCatalogue(locale);
+  const renderContext = {
+    ...context,
+    _i18nCatalogue: catalogue,
+    _: (msgid: string, vars?: Record<string, unknown>) => translate(catalogue, msgid, vars),
+  };
+  return getEnvironment().render(name, renderContext);
 }

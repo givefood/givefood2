@@ -22,12 +22,14 @@ declare module "nunjucks/browser/nunjucks-slim.js" {
     constructor(loader?: TemplateSource | TemplateSource[] | null, opts?: EnvironmentOptions);
     addGlobal(name: string, value: unknown): this;
     addFilter(name: string, fn: (...args: never[]) => unknown): this;
+    addExtension(name: string, extension: unknown): this;
     render(name: string, context?: Record<string, unknown>): string;
   }
 
   const nunjucksSlim: {
     Environment: typeof Environment;
     PrecompiledLoader: typeof PrecompiledLoader;
+    runtime: { SafeString: new (value: string) => unknown };
   };
   export default nunjucksSlim;
 }
