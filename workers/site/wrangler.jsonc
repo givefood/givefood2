@@ -133,8 +133,17 @@
     "required": []
     // GOOGLE_OAUTH_CLIENT_SECRET, SESSION_HMAC_KEY, SUBSCRIBER_SALT -- auth (§3.5)
     // TURNSTILE_SECRET, POSTMARK_TOKEN -- public forms (§3.12)
-    // GMAP_STATIC_KEY, GMAP_PLACES_KEY, GMAP_GEOCODE_KEY -- media backfill, queued not inline (§3.7)
+    // GMAP_STATIC_KEY, GMAP_PLACES_KEY -- media backfill, queued not inline (§3.7)
     // CF_API_KEY, CF_ZONE_ID -- cache-tag purge (§3.6)
+    //
+    // GMAP_GEOCODE_KEY: lib/geocode.ts now reads this (the four
+    // */search/?address= endpoints, WP 2.4 follow-up) -- code landed before
+    // the value did, deliberately: c.env.GMAP_GEOCODE_KEY being undefined
+    // just makes every geocode() call fail its Google API request, which
+    // geocode() already turns into "0,0" and every caller already 400s on
+    // (or, for gfapi1, passes through to its own frozen no-isUk-check
+    // behaviour) -- not a crash. Move the name into "required" above once
+    // `wrangler secret put GMAP_GEOCODE_KEY` has actually been run.
   },
 
   "observability": { "enabled": true, "head_sampling_rate": 1 },

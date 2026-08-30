@@ -13,6 +13,7 @@ import { miles, nearest, R_PYTHON } from "@givefood/geo";
 import { formatCsvRow, round2 } from "@givefood/serialise";
 import type { AppEnv } from "../types";
 import { dbSession } from "../lib/session";
+import { geocode } from "../lib/geocode";
 import { charityRegisterUrl, fullAddressUnconditional, noItems } from "../lib/fields";
 import { timesince } from "../lib/timesince";
 
@@ -176,10 +177,7 @@ api1App.get("/foodbanks/search/", async (c) => {
 
   let latLng = latLngParam;
   if (addressParam && !latLngParam) {
-    // geocode(address) is not available in this port (needs a Google API
-    // key not yet wired into this Worker) -- a known gap, flagged in the
-    // task report rather than silently dropped.
-    return new Response("", { status: 501 });
+    latLng = await geocode(c, addressParam);
   }
 
   const [latStr, lngStr] = (latLng as string).split(",");

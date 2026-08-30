@@ -11,6 +11,7 @@ import { R_EARTHDISTANCE, R_PYTHON, isUk, miles, nearest } from "@givefood/geo";
 import { round2, type SerialisableValue } from "@givefood/serialise";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
+import { geocode } from "../../lib/geocode";
 import { apiResponse, SECONDS_IN_DAY, SECONDS_IN_HOUR } from "../../lib/apiResponse";
 import {
   charityRegisterUrl,
@@ -347,16 +348,14 @@ api2FoodbanksApp.get("/foodbank/:slug/", async (c) => {
 });
 
 // --- foodbank_search (GET /foodbanks/search/) -----------------------------
-// geocoding judgment call: the real view falls back to Google Maps
-// Geocoding when only `?address=` is given (no `?lat_lng=`), turning the
-// address into a lat_lng before proceeding. That geocoder isn't ported in
-// this work package (no shared geocoding infra exists yet), so an
-// address-only request returns a bare 501 instead of silently 400ing or
-// pretending to geocode -- flagged here and in the final report rather
-// than guessed at.
+// The real view falls back to Google Maps Geocoding when only `?address=`
+// is given (no `?lat_lng=`), turning the address into a lat_lng before
+// proceeding -- ported via lib/geocode.ts. A failed/misconfigured geocode
+// falls back to "0,0", which the isUk() check below then correctly rejects
+// as a 400, same as any other out-of-UK coordinate.
 api2FoodbanksApp.get("/foodbanks/search/", async (c) => {
   const format = c.req.query("format") ?? "json";
-  const latLngParam = c.req.query("lat_lng");
+  let latLngParam = c.req.query("lat_lng");
   const addressParam = c.req.query("address");
 
   if (format === "geojson") {
@@ -375,11 +374,12 @@ api2FoodbanksApp.get("/foodbanks/search/", async (c) => {
     }
   }
   if (addressParam && !latLngParam) {
-    return new Response("", { status: 501 });
+    latLngParam = await geocode(c, addressParam);
   }
 
   // latLngParam is guaranteed defined here: the only ways to reach this
-  // point without it are covered by the two early returns above.
+  // point without it are covered by the two early returns above (or it was
+  // just set by geocode(), which always returns a "lat,lng" string).
   const [lat, lng] = parseLatLng(latLngParam!);
   if (!isUk(lat, lng)) {
     return new Response("", { status: 400 });

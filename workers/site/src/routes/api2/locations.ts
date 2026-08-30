@@ -13,6 +13,7 @@ import { R_EARTHDISTANCE, isUk, miles, nearest, type Ranked } from "@givefood/ge
 import { round2, type SerialisableValue } from "@givefood/serialise";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
+import { geocode } from "../../lib/geocode";
 import { apiResponse, SECONDS_IN_DAY, SECONDS_IN_MONTH } from "../../lib/apiResponse";
 import {
   emailOrFoodbankEmail,
@@ -155,15 +156,13 @@ api2LocationsApp.get("/locations/", async (c) => {
 type LocationSearchCandidate = { kind: "organisation" | "location"; coord: CoordinateRow };
 
 // --- location_search (GET /locations/search/) ------------------------------
-// geocoding judgment call, matching the sibling foodbanks.ts's
-// foodbank_search: the real view falls back to Google Maps Geocoding when
-// only `?address=` is given. That geocoder isn't ported in this work
-// package (no shared geocoding infra exists yet), so an address-only
-// request returns a bare 501 instead of silently 400ing or pretending to
-// geocode -- flagged here and in the final report rather than guessed at.
+// geocoding, matching the sibling foodbanks.ts's foodbank_search: the real
+// view falls back to Google Maps Geocoding when only `?address=` is given
+// -- ported via lib/geocode.ts. A failed/misconfigured geocode falls back
+// to "0,0", which the isUk() check below then correctly rejects as a 400.
 api2LocationsApp.get("/locations/search/", async (c) => {
   const format = c.req.query("format") ?? "json";
-  const latLngParam = c.req.query("lat_lng");
+  let latLngParam = c.req.query("lat_lng");
   const addressParam = c.req.query("address");
 
   if (format === "geojson") {
@@ -173,11 +172,12 @@ api2LocationsApp.get("/locations/search/", async (c) => {
     return new Response("", { status: 400 });
   }
   if (addressParam && !latLngParam) {
-    return new Response("", { status: 501 });
+    latLngParam = await geocode(c, addressParam);
   }
 
   // latLngParam is guaranteed defined here: the only ways to reach this
-  // point without it are covered by the two early returns above.
+  // point without it are covered by the two early returns above (or it was
+  // just set by geocode()).
   // B5: no digit-format pre-validation and no try/catch here -- see
   // parseQueryLatLng's own comment.
   const [lat, lng] = parseQueryLatLng(latLngParam as string);
