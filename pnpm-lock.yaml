@@ -24,6 +24,12 @@ importers:
         specifier: ^7.0.2
         version: 7.0.2
 
+  packages/serialise:
+    devDependencies:
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+
   workers/jobs:
     devDependencies:
       '@cloudflare/workers-types':

@@ -8001,7 +8001,7 @@ That is within the 30–41 pd range in the delivery plan (§10.2.2, revised for 
 
 | # | Question | Method | Resolution needed by |
 |---|---|---|---|
-| S1 | **What is YAML usage?** | Two-line log statement in `gfapi2/func.py`, 14 days of Coolify logs, `grep -c` (§7.4.4). | **Phase 0** — it decides whether WP 2.3 is 8 days or 12. |
+| S1 | **What is YAML usage?** | Two-line log statement in `gfapi2/func.py`, 14 days of Coolify logs, `grep -c` (§7.4.4). | **Phase 0** — it decides whether WP 2.3 is 8 days or 12. **Resolved 2026-08-30, by decision rather than measurement**: the 14-day log capture was never run, and no production request-log access was available when WP 2.3 started. The maintainer decided directly, without waiting on the measurement: YAML moves to structural parity (see §7.4.4's note and `packages/serialise/src/pyyaml.ts`). JSON, XML and CSV remain byte-exact — verified against the real pinned libraries (`dicttoxml` 1.7.16, `json.dumps`, `unicodecsv` 0.14.1), matching production's `uv.lock`. |
 | S2 | **Is any open food bank missing `latest_need`?** | The SQL in §7.3. | Before WP 2.4 — decides whether B12 is theoretical. |
 | S3 | **What is `/api/*` vs `/api/2/*` traffic?** | Cloudflare Analytics, 30 days. | Before WP 2.7 — informs cutover ordering only. |
 | S4 | **Does PyYAML fold any address in the real data at 80 columns?** | Capture all YAML golden files (WP 2.0) and grep for continuation indents. | Before WP 2.3 — a "no" makes the YAML emitter materially simpler. |
@@ -10542,6 +10542,8 @@ The image surface is larger than the three photo routes. From `gfwfbn/urls/gener
 | **CSV — two dialects** | `gfapi1/views.py:62` uses `unicodecsv.writer` with the **default** dialect (`QUOTE_MINIMAL`): `None` and `''` both render as a bare empty field, `True`/`False` as capitalised bare words. `gfdumps/management/commands/dump.py:434,486,544,596` use **`QUOTE_ALL`**: `None` → `""`, `True` → `"True"`. Both `\r\n`. |
 
 **Escalation path for YAML, agreed in advance:** measure YAML traffic through AI Gateway / Cloudflare Analytics during Phase 0. If it is negligible, take the decision to the maintainer *before* Phase 2 starts — "YAML moves to structural rather than byte parity" — rather than discovering it mid-phase, where it is a plausible trigger for kill criterion K2.
+
+> **Resolved 2026-08-30.** The measurement was never run — no production log access was available at WP 2.3 start. Rather than guess at byte parity's value blind, the maintainer took the decision directly: YAML is structural parity (same keys, sorted; same values; valid YAML; multiline strings as a `|-` block literal rather than PyYAML's folded-scalar style). JSON, XML and CSV are unaffected and remain byte-exact, per K2's own reasoning about API consumers with no version negotiation — verified against the real pinned libraries, not just the plan text. See `packages/serialise/src/pyyaml.ts`.
 
 **Parity exclusions, and why:** `/api/2/docs/` uses `order_by('?')[:5]` (non-deterministic) and `/api/2/` shows a dumps table that changes daily. Both go to structural comparison. Send a **fixed `Accept-Language: en`** on all API parity requests, and test `Accept-Language: cy` separately — assuming WP 0.5 did not already pin the API to English.
 
