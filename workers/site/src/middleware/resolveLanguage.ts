@@ -1,4 +1,5 @@
 import type { MiddlewareHandler } from "hono";
+import { LOCALES } from "@givefood/templates";
 import type { AppEnv } from "../types";
 
 // PLAN.md §3.5 "Language resolution — reproduce exactly, do not improve".
@@ -16,7 +17,13 @@ import type { AppEnv } from "../types";
 // path production's own `/de/` (an unconfigured language) already takes --
 // not a new code path, just a larger set of inputs landing on the existing
 // one.
-export const PREFIXES = new Set(["cy", "ga", "gd"]); // "en" is NOT here, and /en/ must 404 (it 404s today)
+//
+// Derived from @givefood/templates' LOCALES, not a second hardcoded list --
+// that's the single place the 4-language decision lives; adding a 5th
+// language means editing i18n.ts's LOCALES and having every consumer
+// (this router, slugRedirect.ts's regex, the .po-driven catalogues) pick
+// it up, not remembering to update N independent copies.
+export const PREFIXES: ReadonlySet<string> = new Set(LOCALES.filter((locale) => locale !== "en")); // "en" is NOT here, and /en/ must 404 (it 404s today)
 
 export const resolveLanguage: MiddlewareHandler<AppEnv> = async (c, next) => {
   const url = new URL(c.req.url);
