@@ -6,6 +6,7 @@ import { resolveLanguage } from "./middleware/resolveLanguage";
 import { geoJsonPreload } from "./middleware/geoJsonPreload";
 import { mediaApp } from "./routes/media";
 import { staticMediaApp } from "./routes/staticMedia";
+import { dumpsApp } from "./routes/dumps";
 import { notPortedYet } from "./routes/notPortedYet";
 import { render404 } from "./render404";
 
@@ -32,6 +33,10 @@ app.route("/needs", mediaApp);
 // only these two excluded families fall through to here. See PLAN.md WP 1.6.
 app.route("/static", staticMediaApp);
 
+// The two download URL shapes redirect to dumps.givefood.org.uk (R2 custom
+// domain, no Worker in that request path). See PLAN.md WP 1.4/1.5.
+app.route("/dumps", dumpsApp);
+
 // Everything below is specified in PLAN.md but not yet built. Each returns
 // 501 so the gap is loud during development. Build order follows PLAN.md
 // §10's phases: wfbn (translated pages) and the APIs next, admin last.
@@ -39,7 +44,9 @@ app.route("/needs", notPortedYet("gfwfbn (translated pages)"));
 app.route("/api", notPortedYet("gfapi1/2/3"));
 app.route("/dashboard", notPortedYet("gfdash"));
 app.route("/write", notPortedYet("gfwrite"));
-app.route("/dumps", notPortedYet("gfdumps redirect layer"));
+// The three listing pages (dump_index, dump_type, dump_format) -- unmatched
+// by dumpsApp above, so they fall through to here.
+app.route("/dumps", notPortedYet("gfdumps listing pages"));
 app.route("/auth", notPortedYet("gfauth (Google OAuth)"));
 app.route("/admin", notPortedYet("gfadmin"));
 app.route("/", notPortedYet("public site"));

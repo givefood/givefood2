@@ -55,7 +55,11 @@
     // Pre-existing, empty bucket (created 2025-04-24), reused rather than
     // creating a duplicate. img/ar/** and img/appscreenshots/** -- see
     // routes/staticMedia.ts and PLAN.md WP 1.6.
-    { "binding": "STATIC_MEDIA", "bucket_name": "givefood-static" }
+    { "binding": "STATIC_MEDIA", "bucket_name": "givefood-static" },
+    // Served directly at dumps.givefood.org.uk via an R2 custom domain --
+    // this binding is list()-only, to resolve /latest/ redirects. See
+    // routes/dumps.ts and PLAN.md WP 1.4/1.5.
+    { "binding": "DUMPS", "bucket_name": "givefood-dumps" }
   ],
 
   "kv_namespaces": [
