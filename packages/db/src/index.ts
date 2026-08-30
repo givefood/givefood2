@@ -1,5 +1,5 @@
 export type { Session } from "./types";
-export { normalizeUuid } from "./uuid";
+export { normalizeUuid, toDashedUuid } from "./uuid";
 
 export * from "./foodbank";
 export * from "./locations";

@@ -7,8 +7,28 @@ import { geoJsonPreload } from "./middleware/geoJsonPreload";
 import { mediaApp } from "./routes/media";
 import { staticMediaApp } from "./routes/staticMedia";
 import { dumpsApp } from "./routes/dumps";
+import { api1App } from "./routes/api1";
+import { api2FoodbanksApp } from "./routes/api2/foodbanks";
+import { api2LocationsApp } from "./routes/api2/locations";
+import { api2DonationpointsApp } from "./routes/api2/donationpoints";
+import { api2NeedsApp } from "./routes/api2/needs";
+import { api2ConstituenciesApp } from "./routes/api2/constituencies";
+import { api3App } from "./routes/api3";
 import { notPortedYet } from "./routes/notPortedYet";
 import { render404 } from "./render404";
+
+// gfapi2 (WP 2.4) split across 5 files by concern during the build; every
+// "self"/"urls" field each one emits is hardcoded to /api/2/... regardless
+// of which mount point actually served the request (verified against the
+// Python source -- it never derives these from the current request path
+// either), so the combined app below is safe to mount at both /api/2 and
+// /api.
+const api2App = new Hono<AppEnv>();
+api2App.route("/", api2FoodbanksApp);
+api2App.route("/", api2LocationsApp);
+api2App.route("/", api2DonationpointsApp);
+api2App.route("/", api2NeedsApp);
+api2App.route("/", api2ConstituenciesApp);
 
 // PLAN.md §3.5 "Request lifecycle". Hono's onion middleware model maps 1:1
 // onto Django's MIDDLEWARE list, in the same order -- see the table in that
@@ -37,11 +57,38 @@ app.route("/static", staticMediaApp);
 // domain, no Worker in that request path). See PLAN.md WP 1.4/1.5.
 app.route("/dumps", dumpsApp);
 
+// WP 2.4: the 20 JSON/XML/YAML/CSV/geojson API endpoints. gfapi2 is
+// dual-mounted at /api/2/* AND /api/* per PLAN.md §10.2.2 -- "every gfapi2
+// route is live at both; only the /api/2/ forms are in the current purge
+// list, so the /api/ aliases have been going stale to TTL". Mount the
+// specific /api/1, /api/2, /api/3 prefixes before the bare /api dual-mount
+// so e.g. /api/1/foodbanks/ resolves via api1App, not by falling through
+// to api2App's own /foodbanks/ path (Hono's router disambiguates these
+// fine on path structure alone, but the order keeps intent obvious).
+app.route("/api/1", api1App);
+app.route("/api/2", api2App);
+// Mounting a sub-app whose own root route is registered as .get("/", ...)
+// matches the bare mount prefix ("/api/3") but NOT the prefix with a
+// trailing slash ("/api/3/") -- the same Hono quirk found and documented
+// during WP 1.x's diagnostic testing. gfapi3's real index route (Django's
+// path("", index) under the /api/3/ app prefix) needs the slashed form,
+// so it's registered directly here rather than depending on api3App's
+// internal "/" route for this one case.
+app.get("/api/3/", (c) => c.text("Give Food API 3"));
+app.route("/api/3", api3App);
+app.route("/api", api2App);
+
+// The three HTML documentation pages (gfapi1 index, gfapi2 index, gfapi2
+// docs) are NOT part of WP 2.4 -- gfapi2's need the `dump` metadata table
+// (not yet in D1, see PLAN.md's WP 2.2b scope note) and Phase 3's HTML
+// templating infra, neither built yet. This catches anything WP 2.4 didn't
+// mount above (those 3 pages, and any genuinely unmatched /api/* path).
+app.route("/api", notPortedYet("gfapi1/2/3 docs pages (WP 2.7)"));
+
 // Everything below is specified in PLAN.md but not yet built. Each returns
 // 501 so the gap is loud during development. Build order follows PLAN.md
 // §10's phases: wfbn (translated pages) and the APIs next, admin last.
 app.route("/needs", notPortedYet("gfwfbn (translated pages)"));
-app.route("/api", notPortedYet("gfapi1/2/3"));
 app.route("/dashboard", notPortedYet("gfdash"));
 app.route("/write", notPortedYet("gfwrite"));
 // The three listing pages (dump_index, dump_type, dump_format) -- unmatched

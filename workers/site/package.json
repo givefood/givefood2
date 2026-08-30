@@ -9,6 +9,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@givefood/db": "workspace:*",
+    "@givefood/geo": "workspace:*",
+    "@givefood/serialise": "workspace:*",
     "hono": "^4.13.5"
   },
   "devDependencies": {

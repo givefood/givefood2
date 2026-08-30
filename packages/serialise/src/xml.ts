@@ -57,10 +57,18 @@ function transformObject(
   return out;
 }
 
+// `data` is a top-level array for every gfapi2 *list* endpoint
+// (`response_list = [...]` in the Python source) -- verified against real
+// dicttoxml output: a list passed as the top-level value, with
+// custom_root=objName, wraps each item in item_func(objName) directly
+// under the root, the same shape a nested array under a key produces.
 export function formatXml(
   rootTag: string,
-  data: { [key: string]: SerialisableValue },
+  data: SerialisableValue[] | { [key: string]: SerialisableValue },
   itemName: (parentKey: string) => string = xmlItemName,
 ): string {
-  return buildXml(rootTag, transformObject(data, itemName));
+  const payload = Array.isArray(data)
+    ? { [itemName(rootTag)]: data.map((item) => transformValue(item, itemName)) }
+    : transformObject(data, itemName);
+  return buildXml(rootTag, payload);
 }

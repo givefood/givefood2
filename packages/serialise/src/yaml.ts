@@ -25,6 +25,6 @@ function toPlainJs(v: SerialisableValue): unknown {
   return out;
 }
 
-export function formatYaml(data: { [key: string]: SerialisableValue }): string {
+export function formatYaml(data: SerialisableValue[] | { [key: string]: SerialisableValue }): string {
   return dump(toPlainJs(data), { sortKeys: true });
 }
