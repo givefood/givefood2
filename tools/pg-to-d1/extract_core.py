@@ -11,11 +11,19 @@ Idempotent: uses INSERT OR REPLACE, so re-running this (e.g. before WP
 2.7's route cutover, to pick up writes made since the last run) is safe.
 
 Loads via the D1 REST API with bound parameters, not `wrangler d1 execute
---file` with inline SQL literals: a handful of rows carry large TEXT
+--file` with inline SQL literals -- a handful of rows carry large TEXT
 values (parliamentaryconstituency.boundary_geojson up to ~1.57 MB) that
 exceed D1's parsed-SQL-statement-text limit even though the value itself
-is well under the documented 2 MB per-value cap. Binding sends large
-values out-of-band from the SQL text, sidestepping that limit entirely.
+is well under the documented 2 MB per-value cap. Binding sends values
+out-of-band from the SQL text, sidestepping that limit entirely -- and
+because bound params don't inflate the SQL text, most rows can be batched
+many-per-statement (multi-row VALUES) rather than one HTTP call per row,
+which is what made the first version of this script slow: ~1.7 rows/s
+one-at-a-time made the two largest tables take 15-20 minutes each. Rows
+are batched up to a row/param/byte cap (whichever is hit first) and
+batches are sent with a small thread pool, so the few oversized rows
+(which land alone in their own batch) don't throttle the thousands of
+small ones sharing a table with them.
 
 Usage:
     uv run --with psycopg2-binary python tools/pg-to-d1/extract_core.py
@@ -30,10 +38,13 @@ import decimal
 import json
 import os
 import sys
+import threading
+import time
 import tomllib
 import urllib.error
 import urllib.request
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 FOODCHARITY_ENV_PATH = os.path.expanduser(
     os.environ.get("FOODCHARITY_ENV_PATH", "~/Sites/foodcharity/.env")
@@ -43,6 +54,22 @@ WRANGLER_CONFIG_PATH = os.path.expanduser(
 )
 ACCOUNT_ID = "211195b9bf606f797a6d2dbc0bf41791"
 DATABASE_ID = "1cae445f-9719-453d-9cf6-1060f8b3ea7e"  # the `givefood` D1 database
+
+# Batch sizing. MAX_PARAMS_PER_BATCH=100 is not a guess -- D1 rejected a
+# first attempt at 400 with "too many SQL variables at offset 1458:
+# SQLITE_ERROR", and counting placeholders up to that byte offset in the
+# generated SQL landed on exactly 100, confirmed by testing multi-row
+# INSERTs at increasing widths. That's D1's real per-statement bound-
+# parameter ceiling, well under SQLite's own default. It caps batching hard
+# for wide tables (foodbank at 79 columns fits only 1 row/statement), so
+# the row/byte caps below mostly matter for the narrower tables; the
+# flush-before-append logic handles any single row larger than the caps by
+# giving it a solo batch, so correctness never depends on these numbers --
+# only throughput does.
+MAX_ROWS_PER_BATCH = 50
+MAX_PARAMS_PER_BATCH = 100
+MAX_BYTES_PER_BATCH = 200_000
+CONCURRENCY = 8
 
 # psycopg2 returns uuid columns as plain `str` (dashed) in this environment,
 # not `uuid.UUID` -- confirmed by direct query, not assumed. isinstance()
@@ -159,13 +186,37 @@ def to_param(value, is_uuid_column=False):
     return value  # int, float, str all JSON-safe as-is
 
 
-def d1_query(token, sql, params=None):
+class TokenBox:
+    """Holds the OAuth token, reloadable from disk. wrangler refreshes its
+    own token file periodically; a long run (the original one-row-per-call
+    version took 15-20 minutes on the two largest tables) can outlive a
+    token snapshot taken at startup, which is exactly what failed with a
+    403 partway through foodbanklocation the first time this ran. Threads
+    share one box and reload together on the first 401/403 any of them see,
+    rather than each independently re-reading the file on every call."""
+
+    def __init__(self):
+        self._token = load_wrangler_oauth_token()
+        self._lock = threading.Lock()
+
+    def get(self):
+        with self._lock:
+            return self._token
+
+    def refresh(self):
+        with self._lock:
+            self._token = load_wrangler_oauth_token()
+            return self._token
+
+
+def d1_query(token_box, sql, params=None, _retried=False):
     url = "https://api.cloudflare.com/client/v4/accounts/%s/d1/database/%s/query" % (
         ACCOUNT_ID, DATABASE_ID,
     )
     body = {"sql": sql}
     if params is not None:
         body["params"] = params
+    token = token_box.get()
     req = urllib.request.Request(
         url, data=json.dumps(body).encode(), method="POST",
         headers={"Authorization": "Bearer %s" % token, "Content-Type": "application/json"},
@@ -174,13 +225,74 @@ def d1_query(token, sql, params=None):
         with urllib.request.urlopen(req) as resp:
             return json.loads(resp.read())
     except urllib.error.HTTPError as e:
+        if e.code in (401, 403) and not _retried:
+            token_box.refresh()
+            return d1_query(token_box, sql, params, _retried=True)
         raise RuntimeError("D1 API error %s: %s" % (e.code, e.read().decode()))
+
+
+def make_batches(rows, uuid_flags):
+    """Group rows into (params_list, row_count) batches under the row/param/
+    byte caps. A single row that alone exceeds a cap still gets its own
+    batch rather than being split or dropped -- correctness never depends
+    on the caps being right, only throughput does."""
+    n_cols = len(uuid_flags)
+    batch = []
+    batch_bytes = 0
+
+    for row in rows:
+        row_params = [to_param(v, f) for v, f in zip(row, uuid_flags)]
+        row_bytes = sum(len(str(p)) for p in row_params if p is not None)
+
+        if batch and (
+            len(batch) >= MAX_ROWS_PER_BATCH
+            or (len(batch) + 1) * n_cols > MAX_PARAMS_PER_BATCH
+            or batch_bytes + row_bytes > MAX_BYTES_PER_BATCH
+        ):
+            yield batch
+            batch = []
+            batch_bytes = 0
+
+        batch.append(row_params)
+        batch_bytes += row_bytes
+
+    if batch:
+        yield batch
+
+
+def load_table(token_box, pg_table, d1_table, cols, cur):
+    uuid_cols = UUID_COLUMNS[d1_table]
+    uuid_flags = [c in uuid_cols for c in cols]
+    col_list = ", ".join(cols)
+
+    cur.execute("SELECT %s FROM %s ORDER BY id" % (col_list, pg_table))
+    rows = cur.fetchall()
+
+    batches = list(make_batches(rows, uuid_flags))
+    row_placeholders = "(" + ", ".join(["?"] * len(cols)) + ")"
+
+    def send(batch):
+        values_sql = ", ".join([row_placeholders] * len(batch))
+        sql = "INSERT OR REPLACE INTO %s (%s) VALUES %s" % (d1_table, col_list, values_sql)
+        flat_params = [p for row_params in batch for p in row_params]
+        result = d1_query(token_box, sql, flat_params)
+        if not result.get("success"):
+            raise RuntimeError("batch failed on %s: %s" % (d1_table, result))
+        return len(batch)
+
+    loaded = 0
+    with ThreadPoolExecutor(max_workers=CONCURRENCY) as pool:
+        futures = [pool.submit(send, b) for b in batches]
+        for future in as_completed(futures):
+            loaded += future.result()  # raises immediately if any batch failed
+
+    return loaded, len(rows)
 
 
 def main():
     import psycopg2  # deferred: only needed for this one-off script, not a repo dependency
 
-    token = load_wrangler_oauth_token()
+    token_box = TokenBox()
     env = load_env(FOODCHARITY_ENV_PATH)
     conn = psycopg2.connect(
         host=env["DB_HOST"], dbname=env["DB_NAME"],
@@ -189,35 +301,18 @@ def main():
     )
     cur = conn.cursor()
 
+    t0 = time.monotonic()
     total_loaded = 0
     for pg_table, d1_table, cols in TABLES:
-        uuid_cols = UUID_COLUMNS[d1_table]
-        uuid_flags = [c in uuid_cols for c in cols]
-        col_list = ", ".join(cols)
-
-        cur.execute("SELECT %s FROM %s ORDER BY id" % (col_list, pg_table))
-        rows = cur.fetchall()
-
-        placeholders = ", ".join(["?"] * len(cols))
-        sql = "INSERT OR REPLACE INTO %s (%s) VALUES (%s)" % (d1_table, col_list, placeholders)
-
-        loaded = 0
-        for row in rows:
-            params = [to_param(v, is_uuid) for v, is_uuid in zip(row, uuid_flags)]
-            result = d1_query(token, sql, params)
-            if not result.get("success"):
-                print("FAILED on %s row id=%s: %s" % (d1_table, row[0], result), file=sys.stderr)
-                raise SystemExit(1)
-            loaded += 1
-            if loaded % 200 == 0:
-                print("  %s: %d/%d" % (d1_table, loaded, len(rows)), flush=True)
-
+        table_start = time.monotonic()
+        loaded, total = load_table(token_box, pg_table, d1_table, cols, cur)
         total_loaded += loaded
-        print("%s: loaded %d/%d rows" % (d1_table, loaded, len(rows)), flush=True)
+        elapsed = time.monotonic() - table_start
+        print("%s: loaded %d/%d rows (%.1fs)" % (d1_table, loaded, total, elapsed), flush=True)
 
     cur.close()
     conn.close()
-    print("\nTotal rows loaded: %d" % total_loaded)
+    print("\nTotal rows loaded: %d (%.1fs)" % (total_loaded, time.monotonic() - t0))
 
 
 if __name__ == "__main__":
