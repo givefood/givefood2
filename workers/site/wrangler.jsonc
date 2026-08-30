@@ -5,7 +5,7 @@
 // available (`wrangler login`), then fill in the ids below.
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "givefood",
+  "name": "givefood2",
   "main": "./src/index.ts",
 
   // >= 2026-08-04 turns on nodejs_compat and nodejs_compat_v2 with no flag.
