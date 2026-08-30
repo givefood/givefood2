@@ -1232,6 +1232,26 @@ machine-translated into it.
 `locale/` has **20 directories** (no `en`). Note the directory is `locale/zh_Hans/` while the language
 code is `zh-hans`.
 
+> **Revised 2026-08-30 — maintainer decision: 4 languages, not 21, for the Workers port.** `en`, `cy`
+> (Cymraeg), `ga` (Gaeilge), `gd` (Gàidhlig) — English plus the UK and Ireland's three indigenous
+> minority languages. The other 17 (`pl`, `bn`, `ro`, `pa`, `ur`, `ar`, `gu`, `es`, `pt`, `it`, `ta`,
+> `fr`, `lt`, `zh-hans`, `tr`, `bg`, `tlh`) are dropped. This applies to **both** halves of i18n in this
+> codebase: the site's `i18n_patterns` UI catalogues (WP 3.2/3.3 below) **and** `FoodbankChange`'s
+> per-need machine translation fan-out (`needs.py:285`, table row above and §5's need-pipeline
+> phase) — 3 `translate_need_async` tasks per publish (`cy`, `ga`, `gd`), not 19. This is a scope
+> decision for the *Workers rewrite*, not (yet) a change to the live Django app — `settings.py`'s
+> `LANGUAGES` list and the 19-task translation fan-out there are unchanged unless/until the maintainer
+> separately says to change production too.
+>
+> **Not re-derived below:** every downstream count computed against the original 21-language scope —
+> `decache_async`'s "~90 URLs and ~26 prefixes" (line 998, and §7.7's ~7,704 arithmetic), the
+> 43-sitemap/5.58M-place-URL crawl-surface analysis (§9's M13, §11.5's D+5, §6.11's Decision D below),
+> `robots.txt`'s 44 `Disallow` lines, and the ~250 pd top-line estimate's "21 languages do not multiply
+> every bug" caveat (§3) — is **smaller** now, not larger, but hasn't been recomputed line by line.
+> Re-derive the ones that matter (crawl surface, decache fan-out) when their phase (4, 5) actually
+> starts; don't treat the old 21-language numbers in those sections as current. §10.2.4's WP 3.2 row
+> below **has** been updated.
+
 #### 2.7.2 Catalogue inventory
 
 **285 translatable msgids per language** (284 for `tlh`). Total `locale/` = 1.8 MB; all `.mo` files =
@@ -7040,7 +7060,7 @@ These are genuine forks, not things to be settled by an implementer at 3am.
 | **A** | **Does `/cdn-cgi/image/` survive a Worker route?** Unverified, documented as failure modes 9524/9403, and it gates Phase 1 — the first thing shipped. | **Spike in Phase 0 (½ day).** See 6.4.6(a). If it fails, either resize in the Worker (reinstating ~£6/month of Images cost) or precompute four widths and remove the prefix from the markup — an HTML change on pages the fidelity rule covers. |
 | **B** | **`/aac/` — Unicode folding vs STRICT parity.** These contradict each other. §04 adopts a folded `name_fold` column so `mon` finds `Ynys-Môn`; but folding provably changes the result set (measured: `q=mon` 3876 vs 3872 matches; `q=dwr` 54 vs 39). SQLite's `upper()` is ASCII-only, so *not* folding is a real search regression for 8,442 Welsh and Gaelic place names on a site that serves Welsh. | **Fold, and move `/aac/` from STRICT to structural comparison** with an allow-list of queries expected to differ. Get sign-off **before** the harness is configured, or Phase 2.5 opens with a suite that is red by design. |
 | **C** | **FTS5 query escaping.** The plan drops `_like_escape()` (`views.py:1475`) without replacing it. Bound parameters do **not** protect against FTS5 query-expression syntax: `q=king's` and `q=-yn-` produce uncaught errors on a public, CORS-open endpoint. Production returns 228 and 9 matches today. | **Wrap as a phrase**: `'"' + q.replace('"','""') + '"'`. Verified to restore exact LIKE-equivalence. Add `king's`, `-yn-`, `a OR b` and `"` to the edge-case corpus. |
-| **D** | **Do 21 language variants of the 26 place sitemaps earn their place?** `sitemap_places.xml` emits `{% url 'wfbn:place' %}`, which resolves in the **active** language, so `/cy/sitemap_places_1.xml` lists `/cy/needs/at/place/…`. That advertises **22 × 26 × 10,000 = 5,578,848** place URLs, each of which runs four KNN searches. | **Trim the place sitemaps to English only.** 5.58 M → 254 k advertised URLs, a ~95% reduction in crawl surface, for a one-line change. Nobody is searching in Welsh for every hamlet in Britain. This would do more for goals 1 and 2 than several migration phases. |
+| **D** | ~~Do 21 language variants of the 26 place sitemaps earn their place?~~ **RESOLVED 2026-08-30**, superseded by the broader 4-language decision at §2.7.1: place sitemaps exist in `en`/`cy`/`ga`/`gd` only, not 21. Crawl-surface arithmetic still needs re-deriving for 4 languages, not 21 (§2.7.1's "not re-derived" note) — smaller than either the original 21-language number or the English-only floor this row used to recommend, since `cy`/`ga`/`gd` are real (if much smaller) advertised surfaces, not zero. | — |
 | **E** | **The `/nearby/` known divergence** (6.6). | Document it as a known divergence and use the global scan, unless byte-identical output is worth emulating the two-leg quirk. |
 | **F** | **Reproduce or fix `?size=` on photo URLs?** It is accepted, threaded through, and has **no effect** on a stored photo — `photo_from_place_id()` only honours it on the very first Google fetch. But it *is* part of the cache key, silently multiplying entries for identical bytes. | **Normalise it away** to an allow-list of the four widths the markup actually uses. Confirm no external consumer passes arbitrary sizes. |
 | **G** | **`firebase-messaging-sw.js` deletion.** Nothing registers it, but an already-registered service worker persists in browsers until its URL 404s. | Check Cloudflare Analytics for the path, then delete. |
@@ -8087,7 +8107,7 @@ Everything in this table moves. Nothing stays on the Mythic Beasts box.
 | 16 | `import_places`, `import_postcodes` | manual | 253k / 1.79M rows, 61 MB CSV | Container (§8.13) |
 | 17 | `newlang`, `regenerate_need_ids`, `resaver`, `set_foodbank_bounds`, `place_populations`, `checkschema` | manual | varies | Container or admin-triggered Queue (§8.13) |
 | 18 | 4 notification channels | admin POST | 5,855 / 49 / 47 / 49 subscribers | Queue fan-out (§8.14) |
-| 19 | Translation fan-out | `FoodbankChange.save()` | **19 tasks per publish** | Queue |
+| 19 | Translation fan-out | `FoodbankChange.save()` | **19 tasks per publish today; 3 in the port** (§2.7.1 — `cy`/`ga`/`gd` only) | Queue |
 | 20 | Cache purge | model `save()` | ~90 URLs + 26 prefixes/save | Queue (see §5, caching) |
 | 21 | Media ingest — photos, favicons, screenshots, maps | lazy, in-request | 7,114 / ~1,000 / 5,355 / 9,135 objects | Queue → R2 (§8.11) |
 
@@ -9541,7 +9561,7 @@ Every one of those is load-bearing to the review decision. The diffs in particul
 #### Acceptance criteria for group A
 
 - [ ] A need can be reviewed, published, categorised and notified end to end against D1, and the resulting rows match what Django produces for the same input.
-- [ ] Publishing enqueues exactly 19 translation jobs (21 languages minus `en` minus `tlh`).
+- [ ] Publishing enqueues exactly 3 translation jobs (`cy`, `ga`, `gd`) — **deliberately not** the 19 Django's current `19 languages − en − tlh` fan-out produces; see §2.7.1's 2026-08-30 language-scope decision. This is the one acceptance criterion in this group that is *supposed* to diverge from Django's output, not match it.
 - [ ] The four diffs render identically to Django's for 200 sampled `(prev, current)` pairs.
 - [ ] The index queue returns the same row count and order as production for the same data.
 - [ ] Notify shows the same four subscriber counts as Django.
@@ -10613,7 +10633,7 @@ The image surface is larger than the three photo routes. From `gfwfbn/urls/gener
 | WP | Task | Depends | Acceptance criteria | pd |
 |---|---|---|---|---|
 | 3.1 | **Base template + templating.** `public/page.html` is extended by 70+ templates across seven apps — get it right once and freeze it. Precompiled Nunjucks importing `nunjucks/browser/nunjucks-slim` (**no compiler in the bundle**). | 2.1 | Transpiler converts `{% extends %}`/`{% block %}`/`{% include %}`/`{% if %}`/`{% for %}` verbatim. Tolerant parity green on the base layout. **Lint rule** forbidding `import nunjucks` — the full package reaches `new Function` and throws `EvalError` at *runtime*, invisible to any test that mocks the renderer. | 6 |
-| 3.2 | i18n: `.po` → per-locale JSON at build time; `{% blocktrans %}` Nunjucks extension preserving `%(name)s` semantics so **the 21 existing catalogues work unmodified**. Lazy `import()` per locale (21 static imports would blow the 1s startup budget). | 3.1 | All 285 msgids × 20 locales resolve; missing and fuzzy entries fall through to the msgid, matching gettext. | 4 |
+| 3.2 | *(Revised 2026-08-30 — see §2.7.1: 4 languages, not 21.)* i18n: `.po` → per-locale JSON at build time; `{% blocktrans %}` Nunjucks extension preserving `%(name)s` semantics so **the `cy`/`ga`/`gd` catalogues work unmodified** (the other 17 are dropped, not just deferred). Lazy `import()` per locale still applies even at this size — no reason to eagerly load all 3. | 3.1 | All 285 msgids × 3 locales (`cy`, `ga`, `gd`) resolve; missing and fuzzy entries fall through to the msgid, matching gettext. | 2 |
 | 3.3 | Language-prefix router reproducing `i18n_patterns(prefix_default_language=False)` **exactly**: prefix wins and is the only signal; no prefix ⇒ hard `en`; **`/en/` 404s**; `Vary: Accept-Language` present only when no prefix matched. | 3.2 | The seven live-verified header cases pass as a pinned test. | 2 |
 | 3.4 | 29 i18n page routes + 12 generic + 8 markdown. `APPEND_SLASH` as an explicit `notFound` retry (`html_handling: "force-trailing-slash"` affects **asset lookups only**, not Worker routes — reaching for it will appear to work on `/static/` and do nothing for 3,000 food bank URLs). | 3.1–3.3 | Tolerant parity across 50 stratified food banks × 8 page types × 3 languages. | 8 |
 | 3.5 | Nearest-search: in-memory haversine over the ~8,721-point index (285 KB CSV / ~113 KB packed) in module scope, rebuilt on write. | 2.5 | Ordering and `distance_m` match across 200 postcodes — **with the documented divergence below**. | 4 |
@@ -11367,7 +11387,7 @@ Add a banner to admin **GET** pages too, so nobody starts editing a form they ca
 10. `/dumps/items/json/latest/` 302s to R2 and the object is fetchable
 11. A test subscribe → confirm → unsubscribe round trip completes
 12. `POST /needs/at/<slug>/hit/` returns **204** and the data point appears in AE
-13. Admin: sign in, open the review queue, open one need, publish it, confirm 19 translation jobs enqueue
+13. Admin: sign in, open the review queue, open one need, publish it, confirm 3 translation jobs enqueue (`cy`/`ga`/`gd` — §2.7.1's 4-language decision, not Django's current 19)
 14. `pnpm reverse-sync --verify-once` shows that publish landed back in Postgres
 
 ---
