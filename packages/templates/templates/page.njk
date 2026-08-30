@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="{{ language_code }}" dir="{{ language_direction }}" class="txt-dir-{{ language_direction }}">
+{% include "includes/debugcomment.njk" %}
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#F2DECB">
+  <link rel="stylesheet" href="/static/css/bulma.min.css?v={{ version }}">
+  <link rel="stylesheet" href="/static/css/gf.css?v={{ version }}">
+  <link rel="preload" href="/static/fonts/soehne-buch.woff2" as="font" type="font/woff2" crossorigin="anonymous">
+  <link rel="preload" href="/static/fonts/soehne-kraftig.woff2" as="font" type="font/woff2" crossorigin="anonymous">
+  <link rel="preload" href="/static/fonts/soehne-dreiviertelfett.woff2" as="font" type="font/woff2" crossorigin="anonymous">
+  <link rel="icon" href="/static/img/favicon.svg" type="image/svg+xml">
+  <link rel="icon" type="image/png" sizes="32x32" href="/static/img/favicon.png">
+  <link rel="canonical" href="{{ canonical_path }}">
+  <link rel="manifest" href="{{ url('manifest') }}">
+  <meta name="apple-itunes-app" content="app-id=6755759247">
+  <link rel="dns-prefetch" href="https://maptiles.opencommons.uk">
+  <link rel="preconnect" href="https://maptiles.opencommons.uk">
+  <script async src="https://plausible.io/js/pa-PD2OkuImFE4CH10pz_DWm.js"></script>
+  <script>
+    window.plausible=window.plausible||function(){(plausible.q=plausible.q||[]).push(arguments)},plausible.init=plausible.init||function(i){plausible.o=i||{}};
+    plausible.init({customProperties: {language: "{{ language_code }}"}});
+  </script>
+  {% if page_translatable %}{% for language in languages %}
+  <link rel="alternate" hreflang="{{ language.code }}" href="{{ domain }}{{ language.url }}">{% endfor %}{% endif %}
+  {% block head %}{% endblock %}
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "NGO",
+    "@id": "https://www.givefood.org.uk/#organization",
+    "name": "Give Food",
+    "url": "https://www.givefood.org.uk",
+    "logo": "https://www.givefood.org.uk/static/img/logo.svg",
+    "sameAs": [
+      "https://register-of-charities.charitycommission.gov.uk/{% if language_code == 'cy' %}cy{% else %}en{% endif %}/charity-search/-/charity-details/5147019"
+    ],
+    "description": "A UK charity that uses data to highlight food insecurity and provides tools to help alleviate it."
+  }
+  </script>
+  <title>{% block title %}{% endblock %}</title>
+</head>
+<body data-instant-allow-query-string data-instant-allow-external-links>
+  <div class="container{% block container_class %}{% endblock %}">
+    {% block body %}{% endblock %}
+  </div>
+  {% if not headless %}
+    <footer class="footer">
+      <div class="container">
+        <div class="columns">
+          <div class="column {% if (language_direction | default('ltr')) == 'ltr' %}has-text-left{% else %}has-text-right{% endif %}">
+            {% if not is_flag_page %}
+              <p class="flag">
+                <svg fill="none" height="16" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24" width="16"><path d="m4 15s1-1 4-1 5 2 8 2 4-1 4-1v-12s-1 1-4 1-5-2-8-2-4 1-4 1z"/><path d="m4 22v-7"/></svg>
+                <a href="{{ url('flag') }}#{{ flag_path }}" rel="nofollow" class="flag">
+                  {{ _("Something wrong in this page?") }}
+                </a>
+              </p>
+            {% endif %}
+            <p>
+              {{ _("Last updated") }} <span class="lastupdated" data-include="{{ url('frag', 'last-updated') }}" data-update="130"></span><br>
+              <span class="needhits" data-include="{{ url('frag', 'need-hits') }}" data-update="130"></span> {{ _("food bank needs viewed this week") }}
+            </p>
+            <p>
+              {{ _("Give Food is a registered charity in England & Wales") }} <a rel="self" href="https://register-of-charities.charitycommission.gov.uk/en/charity-search/-/charity-details/5147019">1188192</a><br>
+              {{ _("Registered with the") }} <a href="https://www.fundraisingregulator.org.uk/directory/give-food">Fundraising Regulator</a><br>
+              {{ _("ICO Data Protection Registration") }} <a href="https://ico.org.uk/ESDWebPages/Entry/ZB528540">ZB528540</a>
+            </p>
+          </div>
+          <div class="column {% if (language_direction | default('ltr')) == 'ltr' %}has-text-right{% else %}has-text-left{% endif %}">
+            <ul>
+              <li><a href="{{ url('index') }}">{{ _("Home") }}</a></li>
+              <li><a href="{{ url('apps') }}">{{ _("Apps") }}</a></li>
+              <li><a href="{{ url('dash:index') }}">{{ _("Dashboards") }}</a></li>
+              <li><a href="/api/">API</a> {% if language_code != 'en' %} ({{ _("English") }}){% endif %}</li>
+              <li><a href="{{ url('annual_report_index') }}">{{ _("Annual reports") }}</a></li>
+              <li><a href="{{ url('donate') }}">{{ _("Donate") }}</a></li>
+              <li><a href="{{ url('about_us') }}">{{ _("About us") }}</a></li>
+              <li><a href="{{ url('colophon') }}">{{ _("Colophon") }}</a></li>
+              <li><a href="{{ url('privacy') }}">{{ _("Privacy policy") }}</a></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </footer>
+  {% endif %}
+  {% block script %}{% endblock %}
+  <script src="/static/js/gf.js?v={{ version }}" defer></script>
+  <script src="/static/js/csi.js?v={{ version }}" defer></script>
+  <script async src="https://www.googletagmanager.com/gtag/js?id=AW-448372895"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+    gtag('config', 'AW-448372895');
+  </script>
+  <script src="/static/js/instantpage-5.2.0.js" type="module"></script>
+</body>
+</html>

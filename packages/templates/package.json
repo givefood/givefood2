@@ -1,0 +1,20 @@
+{
+  "name": "@givefood/templates",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "precompile": "tsx scripts/precompile.ts",
+    "typecheck": "pnpm run precompile && tsc --noEmit"
+  },
+  "dependencies": {
+    "nunjucks": "^3.2.4"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2",
+    "tsx": "^4.19.2",
+    "@types/nunjucks": "^3.2.6",
+    "@cloudflare/workers-types": "^5.20260830.1"
+  }
+}

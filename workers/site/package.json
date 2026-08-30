@@ -3,15 +3,16 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
+    "dev": "pnpm --filter @givefood/templates run precompile && wrangler dev",
+    "deploy": "pnpm --filter @givefood/templates run precompile && wrangler deploy",
     "types": "wrangler types",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "pnpm --filter @givefood/templates run precompile && tsc --noEmit"
   },
   "dependencies": {
     "@givefood/db": "workspace:*",
     "@givefood/geo": "workspace:*",
     "@givefood/serialise": "workspace:*",
+    "@givefood/templates": "workspace:*",
     "hono": "^4.13.5"
   },
   "devDependencies": {

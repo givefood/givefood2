@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "givefood-site",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "@givefood/site", "run", "dev"],
+      "port": 8787
+    }
+  ]
+}

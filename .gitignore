@@ -9,3 +9,4 @@ __pycache__/
 *.pyc
 tools/**/dist/
 packages/**/dist/
+packages/templates/src/generated/
