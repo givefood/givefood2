@@ -1,0 +1,355 @@
+{% extends "page.njk" %}
+
+{% block title %}Give Food API{% endblock %}
+
+{% block head %}
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:site" content="@GiveFoodCharity">
+  <meta property="og:title" content="Give Food Food Bank API">
+  <meta property="og:description" content="Use Give Food's API to programmatically find food banks and their details such as what they are requesting to have donated">
+  <meta property="og:image" content="https://www.givefood.org.uk/static/img/map.png">
+  <meta property="og:image:alt" content="Map of UK food banks">
+  <meta name="description" content="Use Give Food's API to programmatically find food banks and their details such as what they are requesting to have donated">
+  <meta name="robots" content="noindex">
+{% endblock %}
+
+{% block body %}
+
+  <div class="columns is-centered">
+    <div class="column">
+      <a href="{{ url('index') }}" class="logo"><img src="/static/img/logo.svg" alt="Give Food"></a>
+    </div>
+  </div>
+
+  <div class="columns is-centered">
+    <div class="column">
+      <h1 style="margin-bottom:0;">API</h1>
+    </div>
+  </div>
+
+
+  <div class="columns">
+    <div class="column is-one-third intro content">
+      <div class="notification is-danger">
+        <p style="margin-bottom:0;">This API has been deprecated. It'll continue to work, but it's recommended that you <a href="/api/">use the v2 instead</a>.</p>
+      </div>
+      <p>Get access to our data over HTTPS in JSON.</p>
+      <ul>
+        <li><em>Do good</em> with the data</li>
+        <li>We only cover the UK</li>
+        <li>If you display a food bank and their need also use their URL to link to them</li>
+        <li>Credit us with a link to our homepage if you republish</li>
+      </ul>
+      <p>Our data is used by governments, trade associations, councils, universities, supermarkets, political parties, the NHS, food manufacturers, hundreds of national &amp; local news websites, apps &amp; the Trussell Trust.</p>
+      <p>Please contact us at <a href="mailto:mail@givefood.org.uk">mail@givefood.org.uk</a> if you're going to launch something using our data. We'll be more than happy to help with any technical questions &amp; optimisations, PR and to ensure that we're all helping food banks as effectively as possible.</p>
+    </div>
+    <div class="column is-two-thirds">
+
+      <nav style="margin-bottom:20px;" aria-label="API sections">
+        <ul id="methods">
+          <li><a href="#all-food-banks">All Food Banks</a> - list of all food bank organisations</li>
+          <li><a href="#food-bank-search">Food Bank Search</a> - search by location or lattlong, returns needs</li>
+          <li><a href="#food-bank">Food Bank</a> - individual food bank, including their locations &amp; needs</li>
+          <li><a href="#needs">Needs</a> - reverse chronological list of the needs of food banks that we've found</li>
+        </ul>
+      </nav>
+
+      <h2 id="all-food-banks">All Food Banks</h2>
+      <p>Returns a list of all food bank organisations known to us. This is also available as a <a href="/api/1/foodbanks/?format=csv">CSV</a>.</p>
+      <a href="/api/1/foodbanks/">https://www.givefood.org.uk/api/1/foodbanks/</a>
+      <table class="table is-fullwidth is-hoverable">
+        <tr>
+          <th></th>
+          <th>Description</th>
+          <th>Example</th>
+        </tr>
+        <tr>
+          <td><code>name</code></td>
+          <td>Name of the food bank</td>
+          <td>Bristol East</td>
+        </tr>
+        <tr>
+          <td><code>slug</code></td>
+          <td>URL-safe slug of the name of the food bank</td>
+          <td>bristol-east</td>
+        </tr>
+        <tr>
+          <td><code>address</code></td>
+          <td>Address of the food bank</td>
+          <td>
+            32 Stapleton Road<br>
+            Easton<br>
+            Bristol<br>
+          </td>
+        </tr>
+        <tr>
+          <td><code>postcode</code></td>
+          <td>Postcode of the food bank</td>
+          <td>BS5 0QY</td>
+        </tr>
+        <tr>
+          <td><code>country</code></td>
+          <td>Country (or British crown dependency) of the food bank</td>
+          <td>England</td>
+        </tr>
+        <tr>
+          <td><code>latt_long</code></td>
+          <td>Latitude and longitude of the food bank</td>
+          <td>51.4597049,-2.577905</td>
+        </tr>
+        <tr>
+          <td><code>closed</code></td>
+          <td>If the food bank has closed</td>
+          <td>false</td>
+        </tr>
+        <tr>
+          <td><code>phone</code></td>
+          <td>Phone number of the food bank</td>
+          <td>07584 625082</td>
+        </tr>
+        <tr>
+          <td><code>email</code></td>
+          <td>Email address of the food bank</td>
+          <td>ebfoodbank@crisis-centre.org.uk</td>
+        </tr>
+        <tr>
+          <td><code>url</code></td>
+          <td>URL of the homepage of the food bank</td>
+          <td>https://eastbristol.foodbank.org.uk</td>
+        </tr>
+        <tr>
+          <td><code>shopping_list_url</code></td>
+          <td>URL of the shopping list for the food bank</td>
+          <td>https://eastbristol.foodbank.org.uk/give-help/donate-food/</td>
+        </tr>
+        <tr>
+          <td><code>charity_number</code></td>
+          <td>Identifer of the charity the food bank runs under in it's country</td>
+          <td>298528</td>
+        </tr>
+        <tr>
+          <td><code>charity_register_url</code></td>
+          <td>URL of the details of the food bank's charity at the charity registrar</td>
+          <td>https://beta.charitycommission.gov.uk/charity-details/?regId=298528</td>
+        </tr>
+        <tr>
+          <td><code>network</code></td>
+          <td>Name of the network the food banks is a member of</td>
+          <td>Trussell Trust</td>
+        </tr>
+        <tr>
+          <td><code>parliamentary_constituency</code></td>
+          <td>Name of the parliamentary constituency in which the food bank is in</td>
+          <td>Bristol West</td>
+        </tr>
+        <tr>
+          <td><code>mp_party</code></td>
+          <td>Name of the political party of the MP representing the parliamentary constituency in which the food bank is in</td>
+          <td>Labour</td>
+        </tr>
+        <tr>
+          <td><code>mp</code></td>
+          <td>Name of the MP representing the parliamentary constituency in which the food bank is in</td>
+          <td>Thangam Debbonaire</td>
+        </tr>
+        <tr>
+          <td><code>district</code></td>
+          <td>Name of the district in the food bank is in</td>
+          <td>Bristol, City of</td>
+        </tr>
+        <tr>
+          <td><code>ward</code></td>
+          <td>Name of the ward in the food bank is in</td>
+          <td>Lawrence Hill</td>
+        </tr>
+        <tr>
+          <td><code>self</code></td>
+          <td>URL of the JSON representing this food bank</td>
+          <td>https://www.givefood.org.uk/api/1/foodbank/black-country/</td>
+        </tr>
+      </table>
+
+      <h2 id="food-bank-search">Food Bank Search</h2>
+      <p>When given a place returns list of ten food banks nearby that are not closed. Querying by <code>lattlong</code> is much quicker than <code>address</code>, so use that if possible.</p>
+      <p>Address can be a full address, but works well with just a postcode too.</p>
+      <a href="/api/1/foodbanks/search/?lattlong=53.42,-2.55">https://www.givefood.org.uk/api/1/foodbanks/search/?lattlong=53.42,-2.55</a><br>
+      <a href="/api/1/foodbanks/search/?address=66%20The%20Headrow%20Leeds%20LS1%208EQ">https://www.givefood.org.uk/api/1/foodbanks/search/?address=66 The Headrow Leeds LS1 8EQ</a><br>
+      <a href="/api/1/foodbanks/search/?address=SW1A%200AA">https://www.givefood.org.uk/api/1/foodbanks/search/?address=SW1A 0AA</a><br><br>
+      <p>Returns all of the fields above, plus...</p>
+      <table class="table is-fullwidth is-hoverable">
+        <tr>
+          <th></th>
+          <th>Description</th>
+          <th>Example</th>
+        </tr>
+        <tr>
+          <td><code>distance_mi</code></td>
+          <td>Distance in miles from the place submitted</td>
+          <td>7.72</td>
+        </tr>
+        <tr>
+          <td><code>distance_m</code></td>
+          <td>Distance in metres from the place submitted</td>
+          <td>4350</td>
+        </tr>
+        <tr>
+          <td><code>latt_long</code></td>
+          <td>Latitude and longitude of the food bank</td>
+          <td>51.4597049,-2.577905</td>
+        </tr>
+        <tr>
+          <td><code>number_needs</code></td>
+          <td>Number of line items requested by the food bank</td>
+          <td>4</td>
+        </tr>
+        <tr>
+          <td><code>needs</code></td>
+          <td>Linebreak separated list of line items requested by the food bank, or "Nothing", "Unknown" or "Facebook"</td>
+          <td>
+            Coffee<br>
+            Long life Juice<br>
+            Cooking sauce<br>
+            Tinned custard
+          </td>
+        </tr>
+        <tr>
+          <td><code>need_id</code></td>
+          <td>String that uniquely identifies a need requested</td>
+          <td>57e15d18</td>
+        </tr>
+        <tr>
+          <td><code>updated</code></td>
+          <td>Date and time the need was updated</td>
+          <td>2020-02-17 09:04:44.603292+00:00</td>
+        </tr>
+        <tr>
+          <td><code>updated_text</code></td>
+          <td>Human readable version of date and time the need was updated</td>
+          <td>1 week, 4 days</td>
+        </tr>
+        <tr>
+          <td><code>self</code></td>
+          <td>URL of the JSON representing this food bank</td>
+          <td>https://www.givefood.org.uk/api/1/foodbank/black-country/</td>
+        </tr>
+      </table>
+
+      <h2 id="food-bank">Food Bank</h2>
+      <p>When given the food bank slug returns the details for an individual food bank organisation.</p>
+      <a href="/api/1/foodbank/black-country/">https://www.givefood.org.uk/api/1/foodbank/black-country/</a><br><br>
+      <p>Returns all of the fields above, plus...</p>
+      <table class="table is-fullwidth is-hoverable">
+        <tr>
+          <th></th>
+          <th>Description</th>
+          <th>Example</th>
+        </tr>
+        <tr>
+          <td><code>locations</code></td>
+          <td>List of locations we know of for this organisation</td>
+          <td>
+            <pre>{
+  latt_long: "51.4324167,-0.1034595",
+  postcode: "SE27 0HS",
+  name: "Norwood",
+  address: "St Luke's Church Knights Hill West Norwood London",
+  phone: "07722 121108",
+}</pre>
+          </td>
+        </tr>
+        <tr>
+          <td><code>parliamentary_constituency</code></td>
+          <td>Name of the parliamentary constituency in which the food bank is in</td>
+          <td>Bristol West</td>
+        </tr>
+        <tr>
+          <td><code>mp_party</code></td>
+          <td>Name of the political party of the MP representing the parliamentary constituency in which the food bank is in</td>
+          <td>Labour</td>
+        </tr>
+        <tr>
+          <td><code>mp</code></td>
+          <td>Name of the MP representing the parliamentary constituency in which the food bank is in</td>
+          <td>Thangam Debbonaire</td>
+        </tr>
+        <tr>
+          <td><code>district</code></td>
+          <td>Name of the district in the food bank is in</td>
+          <td>Bristol, City of</td>
+        </tr>
+        <tr>
+          <td><code>ward</code></td>
+          <td>Name of the ward in the food bank is in</td>
+          <td>Lawrence Hill</td>
+        </tr>
+        <tr>
+          <td><code>self</code></td>
+          <td>URL of the JSON representing this food bank</td>
+          <td>https://www.givefood.org.uk/api/1/foodbank/black-country/</td>
+        </tr>
+      </table>
+
+      <h2 id="needs">Needs</h2>
+      <p>Reverse chronological list of the last 100 needs published by food banks that we've found. This is usually up to the last 5-10 days worth. You can also append <a href="/api/1/needs/?limit=1000">?limit=1000</a> to return more, but go easy on this please as it's expensive.</p>
+      <a href="/api/1/needs/">https://www.givefood.org.uk/api/1/needs/</a>
+      <table class="table is-fullwidth is-hoverable">
+        <tr>
+          <th></th>
+          <th>Description</th>
+          <th>Example</th>
+        </tr>
+        <tr>
+          <td><code>id</code></td>
+          <td>String that uniquely identifies a need requested</td>
+          <td>57e15d18</td>
+        </tr>
+        <tr>
+          <td><code>created</code></td>
+          <td>Date and time that the need was found</td>
+          <td>2020-06-19T17:09:51.852Z</td>
+        </tr>
+        <tr>
+          <td><code>foodbank_name</code></td>
+          <td>Name of the food bank that published the need</td>
+          <td>Sid Valley</td>
+        </tr>
+        <tr>
+          <td><code>foodbank_slug</code></td>
+          <td>Unique slug of the food bank</td>
+          <td>sid_valley</td>
+        </tr>
+        <tr>
+          <td><code>foodbank_self</code></td>
+          <td>URL of the JSON representing this food bank</td>
+          <td>https://www.givefood.org.uk/api/1/foodbank/sid-valley/</td>
+        </tr>
+        <tr>
+          <td><code>needs</code></td>
+          <td>Linebreak separated list of line items requested by the food bank, or "Nothing", "Unknown" or "Facebook"</td>
+          <td>
+            Coffee<br>
+            Long life Juice<br>
+            Cooking sauce<br>
+            Tinned custard
+          </td>
+        </tr>
+        <tr>
+          <td><code>url</code></td>
+          <td>URL where we found the need published</td>
+          <td>http://www.sidvalleyfoodbank.org.uk/shopping-list/</td>
+        </tr>
+        <tr>
+          <td><code>self</code></td>
+          <td>URL of the JSON representing this need</td>
+          <td>https://www.givefood.org.uk/api/1/need/a44f6dd2/</td>
+        </tr>
+      </table>
+
+    </div>
+
+  </div>
+
+
+
+
+{% endblock %}

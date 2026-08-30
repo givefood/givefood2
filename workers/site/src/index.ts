@@ -14,6 +14,7 @@ import { api2DonationpointsApp } from "./routes/api2/donationpoints";
 import { api2NeedsApp } from "./routes/api2/needs";
 import { api2ConstituenciesApp } from "./routes/api2/constituencies";
 import { api3App } from "./routes/api3";
+import { api1Index, api2Docs, api2Index } from "./routes/apiDocs";
 import { notPortedYet } from "./routes/notPortedYet";
 import { render404 } from "./render404";
 
@@ -70,20 +71,18 @@ app.route("/api/2", api2App);
 // Mounting a sub-app whose own root route is registered as .get("/", ...)
 // matches the bare mount prefix ("/api/3") but NOT the prefix with a
 // trailing slash ("/api/3/") -- the same Hono quirk found and documented
-// during WP 1.x's diagnostic testing. gfapi3's real index route (Django's
-// path("", index) under the /api/3/ app prefix) needs the slashed form,
-// so it's registered directly here rather than depending on api3App's
-// internal "/" route for this one case.
+// during WP 1.x's diagnostic testing. Applies equally to gfapi1's and
+// gfapi2's index/docs pages below, so each is registered directly on `app`
+// rather than as a "/" (or "docs/") route on a mounted sub-app.
+app.get("/api/1/", api1Index); // gfapi1 `api` (WP 2.7)
+app.get("/api/2/", api2Index); // gfapi2 `index` (WP 2.7)
+app.get("/api/2/docs/", api2Docs); // gfapi2 `docs` (WP 2.7)
 app.get("/api/3/", (c) => c.text("Give Food API 3"));
 app.route("/api/3", api3App);
 app.route("/api", api2App);
 
-// The three HTML documentation pages (gfapi1 index, gfapi2 index, gfapi2
-// docs) are NOT part of WP 2.4 -- gfapi2's need the `dump` metadata table
-// (not yet in D1, see PLAN.md's WP 2.2b scope note) and Phase 3's HTML
-// templating infra, neither built yet. This catches anything WP 2.4 didn't
-// mount above (those 3 pages, and any genuinely unmatched /api/* path).
-app.route("/api", notPortedYet("gfapi1/2/3 docs pages (WP 2.7)"));
+// Anything WP 2.4/2.7 didn't mount above -- genuinely unmatched /api/* paths.
+app.route("/api", notPortedYet("gfapi3 docs page"));
 
 // Everything below is specified in PLAN.md but not yet built. Each returns
 // 501 so the gap is loud during development. Build order follows PLAN.md

@@ -1,0 +1,401 @@
+{% extends "page.njk" %}
+{% import "api2/_macros.njk" as macros %}
+
+{% block title %}Give Food API Docs {% endblock %}
+
+{% block head %}
+  <link rel="stylesheet" href="/static/css/api.css">
+  <link rel="stylesheet" href="/static/css/highlight-default.css">
+  <script src="/static/js/api2.js" defer></script>
+  <script src="/static/js/highlight.pack.js" defer></script>
+  <meta name="description" content="We're a UK charity that aims to help local organisations address the immediate and critical need created by food insecurity">
+{% endblock %}
+
+{% block container_class %} is-fluid{% endblock %}
+
+{% block body %}
+
+<div class="columns">
+
+    <div class="column is-one-fifth">
+        <a href="{{ url('index') }}" class="logo"><img src="/static/img/logo.svg" alt="Give Food"></a>
+        <br><br>
+        <h1>API Docs</h1>
+        <dl id="api_methods">
+            <dt class="is-size-5"><a href="#">foodbanks</a></dt>
+            <dd>List of all the food banks we know of</dd>
+            <dt class="is-size-5"><a href="#foodbank">foodbank</a></dt>
+            <dd>Food bank including needs and locations</dd>
+            <dt class="is-size-5"><a href="#foodbanks/search">foodbanks/search</a></dt>
+            <dd>Find food banks closest to an inputted location</dd>
+            <dt class="is-size-5"><a href="#locations">locations</a></dt>
+            <dd>List of all the food bank loctions we know of</dd>
+            <dt class="is-size-5"><a href="#locations/search">locations/search</a></dt>
+            <dd>Find food bank locations closest to an inputted location</dd>
+            <dt class="is-size-5"><a href="#needs">needs</a></dt>
+            <dd>Latest needs published countrywide</dd>
+            <dt class="is-size-5"><a href="#need">need</a></dt>
+            <dd>Need requested by a food bank</dd>
+            <dt class="is-size-5"><a href="#constituencies">constituencies</a></dt>
+            <dd>List of all parliamentary constituencies</dd>
+            <dt class="is-size-5"><a href="#constituency">constituency</a></dt>
+            <dd>Parliamentary constituency</dd>
+        </dl>
+    </div>
+
+    <div class="column is-four-fifths">
+
+        {# foodbanks #}
+        <div id="foodbanks" class="api_method active" data-method-url="/api/2/foodbanks/">
+
+            <div class="columns">
+                <div class="column">
+                    <h2>foodbanks</h2>
+                    <p>Returns a list of all known food banks, with limited information about them.</p>
+                </div>
+            </div>
+
+            <div class="columns">
+
+                <div class="column">
+                    {% include "api2/method_table/foodbanks.njk" %}
+                </div>
+
+                <div class="column">
+                    <table class="table">
+                        <tr>
+                            <td>format</td>
+                            <td>{{ macros.api_formats(api_formats, true) }}</td>
+                        </tr>
+                    </table>
+
+                    {{ macros.method_fields() }}
+
+                    <pre><code class="prettyprint language-json"></code></pre>
+
+                </div>
+
+            </div>
+
+        </div>
+
+        {# foodbank #}
+        <div id="foodbank" class="api_method" data-method-url="/api/2/foodbank/:foodbank:/">
+
+            <div class="columns">
+                <div class="column">
+                    <h2>foodbank</h2>
+                    <p>Returns the details of a single food bank, including what is requesting to be donated and nearby food banks.</p>
+                </div>
+            </div>
+
+            <div class="columns">
+
+                <div class="column">
+                    {% include "api2/method_table/foodbank.njk" %}
+                </div>
+
+                <div class="column">
+                    <table class="table is-fullwidth">
+                        <tr>
+                            <td>foodbank</td>
+                            <td>
+                            <span class="select">
+                                <select class="control api_method_argument" id="foodbank_argument" name="foodbank">
+                                {% for foodbank in eg_foodbanks %}
+                                    <option value="{{ foodbank|slugify }}">{{ foodbank }}</option>
+                                {% endfor %}
+                                </select>
+                            </span>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>format</td>
+                            <td>{{ macros.api_formats(api_formats, true) }}</td>
+                        </tr>
+                    </table>
+
+                    {{ macros.method_fields() }}
+
+                    <pre><code class="prettyprint language-json"></code></pre>
+
+                </div>
+
+            </div>
+
+        </div>
+
+        {# foodbanks/search #}
+        <div id="foodbanks-search" class="api_method" data-method-url="/api/2/foodbanks/search/:search:">
+
+            <div class="columns">
+                <div class="column">
+                    <h2>foodbank/search</h2>
+                    <p>When given a location (either latitude and longitude or an address) returns the details of the closest open food banks, including what is being requested to have donated.</p>
+                </div>
+            </div>
+
+            <div class="columns">
+                <div class="column">
+                    {% include "api2/method_table/foodbanks-search.njk" %}
+                </div>
+                <div class="column">
+                    <table class="table is-fullwidth">
+                        <tr>
+                            <td>search</td>
+                            <td>
+                            <span class="select">
+                                <select class="control api_method_argument" name="search">
+                                {% for search in eg_searches %}
+                                    <option value="?{{ search.type }}={{ search.query }}">{{ search.query }}</option>
+                                {% endfor %}
+                                </select>
+                            </span>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>format</td>
+                            <td>{{ macros.api_formats(api_formats) }}</td>
+                        </tr>
+                    </table>
+                    {{ macros.method_fields() }}
+
+                    <pre class="result"><code class="language-json"></code></pre>
+                </div>
+            </div>
+
+        </div>
+
+        {# locations #}
+        <div id="locations" class="api_method active" data-method-url="/api/2/locations/">
+
+            <div class="columns">
+                <div class="column">
+                    <h2>locations</h2>
+                    <p>Returns a list of all known food bank locations, with limited information about them.</p>
+                </div>
+            </div>
+
+            <div class="columns">
+
+                <div class="column">
+                    {% include "api2/method_table/locations.njk" %}
+                </div>
+
+                <div class="column">
+                    <table class="table">
+                        <tr>
+                            <td>format</td>
+                            <td>{{ macros.api_formats(api_formats, true) }}</td>
+                        </tr>
+                    </table>
+
+                    {{ macros.method_fields() }}
+
+                    <pre><code class="prettyprint language-json"></code></pre>
+
+                </div>
+
+            </div>
+
+        </div>
+
+
+        {# locations/search #}
+        <div id="locations-search" class="api_method active" data-method-url="/api/2/locations/search/:search:">
+
+            <div class="columns">
+                <div class="column">
+                    <h2>locations/search</h2>
+                    <p>When given a location (either latitude and longitude or an address) returns the details of the closest open food banks locations, including what is being requested to have donated.</p>
+                </div>
+            </div>
+
+            <div class="columns">
+                <div class="column">
+                    {% include "api2/method_table/locations-search.njk" %}
+                </div>
+                <div class="column">
+                    <table class="table is-fullwidth">
+                        <tr>
+                            <td>search</td>
+                            <td>
+                            <span class="select">
+                                <select class="control api_method_argument" name="search">
+                                {% for search in eg_searches %}
+                                    <option value="?{{ search.type }}={{ search.query }}">{{ search.query }}</option>
+                                {% endfor %}
+                                </select>
+                            </span>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>format</td>
+                            <td>{{ macros.api_formats(api_formats) }}</td>
+                        </tr>
+                    </table>
+                    {{ macros.method_fields() }}
+
+                    <pre class="result"><code class="language-json"></code></pre>
+                </div>
+            </div>
+
+        </div>
+
+        {# needs #}
+        <div id="needs" class="api_method" data-method-url="/api/2/needs/">
+
+            <div class="columns">
+                <div class="column">
+                    <h2>needs</h2>
+                    <p>The latest 100 food bank needs that we've discovered.</p>
+                </div>
+            </div>
+
+            <div class="columns">
+
+                <div class="column">
+                    {% include "api2/method_table/needs.njk" %}
+                </div>
+
+                <div class="column">
+                    <table class="table is-fullwidth">
+                        <tr>
+                            <td>format</td>
+                            <td>{{ macros.api_formats(api_formats) }}</td>
+                        </tr>
+                    </table>
+
+                    {{ macros.method_fields() }}
+
+                    <pre class="result"><code class="language-json"></code></pre>
+                </div>
+
+            </div>
+
+        </div>
+
+
+        {# need #}
+        <div id="need" class="api_method" data-method-url="/api/2/need/:id:/">
+
+            <div class="columns">
+                <div class="column">
+                    <h2>need</h2>
+                    <p>When given a need identifier returns the details of that need.</p>
+                </div>
+            </div>
+
+            <div class="columns">
+
+                <div class="column">
+                    {% include "api2/method_table/need.njk" %}
+                </div>
+
+                <div class="column">
+                    <table class="table is-fullwidth">
+                        <tr>
+                            <td>id</td>
+                            <td>
+                            <span class="select">
+                                <select class="control api_method_argument" id="id_argument" name="id">
+                                {% for need_id in eg_needs %}
+                                    <option value="{{ need_id }}">{{ need_id }}</option>
+                                {% endfor %}
+                                </select>
+                            </span>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>format</td>
+                            <td>{{ macros.api_formats(api_formats) }}</td>
+                        </tr>
+                    </table>
+
+                    {{ macros.method_fields() }}
+
+                    <pre class="result"><code class="language-json"></code></pre>
+                </div>
+
+            </div>
+
+        </div>
+
+
+        {# constituencies #}
+        <div id="constituencies" class="api_method is-7" data-method-url="/api/2/constituencies/">
+
+            <div class="columns">
+                <div class="column">
+                    <h2>constituencies</h2>
+                    <p>Returns a list of all UK parliamentary constituencies</p>
+                </div>
+            </div>
+
+            <div class="columns">
+                <div class="column">
+                    {% include "api2/method_table/constituencies.njk" %}
+                </div>
+                <div class="column">
+                    <table class="table is-fullwidth">
+                        <tr>
+                            <td>format</td>
+                            <td>{{ macros.api_formats(api_formats) }}</td>
+                        </tr>
+                    </table>
+
+                    {{ macros.method_fields() }}
+
+                    <pre class="result"><code class="language-json"></code></pre>
+                </div>
+            </div>
+
+        </div>
+
+        {# constituency #}
+        <div id="constituency" class="api_method is-7" data-method-url="/api/2/constituency/:constituency:/">
+
+            <div class="columns">
+                <div class="column">
+                    <h2>constituency</h2>
+                    <p>Returns details of a parliamentary constituency, it's MP and the food banks that reside in it and what they are asking to have donated.</p>
+                </div>
+            </div>
+
+            <div class="columns">
+                <div class="column">
+                    {% include "api2/method_table/constituency.njk" %}
+                </div>
+                <div class="column">
+                    <table class="table is-fullwidth">
+                        <tr>
+                            <td>Parliamentary Constituency</td>
+                            <td>
+                            <span class="select">
+                                <select class="control api_method_argument" id="constituency_argument" name="constituency">
+                                {% for constituency in eg_parl_cons %}
+                                    <option value="{{ constituency|slugify }}">{{ constituency }}</option>
+                                {% endfor %}
+                                </select>
+                            </span>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>format</td>
+                            <td>{{ macros.api_formats(api_formats, true) }}</td>
+                        </tr>
+                    </table>
+
+                    {{ macros.method_fields() }}
+
+                    <pre class="result"><code class="language-json"></code></pre>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+</div>
+
+
+{% endblock %}

@@ -1,0 +1,36 @@
+{# Django's docs.html passes extra context into these two partials via
+   `{% include "x.html" with hasgeojson=True %}` -- Nunjucks's {% include %}
+   has no `with` clause, so these became macros (explicit parameters do the
+   same job, without the outer-scope {% set %} fragility a plain include
+   would need instead). #}
+
+{% macro api_formats(formats, has_geojson=false) %}
+<span class="select">
+    <select class="control api_format" name="api_format">
+        {% for format in formats %}
+            <option value="{{ format|lower }}">{{ format }}</option>
+        {% endfor %}
+        {% if has_geojson %}
+        <option value="geojson">GeoJSON</option>
+        {% endif %}
+    </select>
+</span>
+{% endmacro %}
+
+{% macro method_fields() %}
+<div class="field has-addons">
+    <div class="control is-expanded">
+      <input class="input method_url" type="text" name="method_url" value="">
+    </div>
+    <p class="control">
+      <a class="button">
+        <img class="clipboard" src="/static/img/clipboard.svg" alt="Clipboard icon" title="Copy API URL to clipboard" width="16">
+      </a>
+    </p>
+    <p class="control">
+      <a class="button openurl" href="#" target="_blank">
+        <img src="/static/img/newwindow.svg" alt="New window icon" title="Open API URL in a new window" width="16">
+      </a>
+    </p>
+</div>
+{% endmacro %}

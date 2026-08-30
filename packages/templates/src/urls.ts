@@ -17,16 +17,20 @@ const ROUTES: Record<string, string> = {
   manifest: "/manifest.json",
   privacy: "/privacy/",
   "dash:index": "/dashboard/",
+  "api2:index": "/api/2/",
+  "api2:docs": "/api/2/docs/",
+  "dumps:dump_index": "/dumps/",
 };
 
-const PARAMETERISED: Record<string, (arg: string) => string> = {
+const PARAMETERISED: Record<string, (...args: string[]) => string> = {
   frag: (slug) => `/frag/${slug}/`,
+  "dumps:dump_latest": (dumpType, dumpFormat) => `/dumps/${dumpType}/${dumpFormat}/latest/`,
 };
 
-export function url(name: string, arg?: string): string {
-  if (arg !== undefined) {
+export function url(name: string, ...args: string[]): string {
+  if (args.length > 0) {
     const build = PARAMETERISED[name];
-    if (build) return build(arg);
+    if (build) return build(...args);
   }
   const path = ROUTES[name];
   if (path === undefined) throw new Error(`url(): no route named "${name}" in packages/templates/src/urls.ts`);

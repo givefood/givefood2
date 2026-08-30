@@ -8,7 +8,16 @@
 // PrecompiledLoader -- see that script for how templates/*.njk gets there.
 import nunjucksSlim, { type Environment } from "nunjucks/browser/nunjucks-slim.js";
 import { precompiledTemplates } from "./generated/precompiled";
-import { commaSeparated, friendlyPhone, friendlyUrl, fullPhone } from "./filters";
+import {
+  commaSeparated,
+  djangoDate,
+  filesizeformat,
+  friendlyPhone,
+  friendlyUrl,
+  fullPhone,
+  intcomma,
+  slugify,
+} from "./filters";
 import { url } from "./urls";
 
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -52,6 +61,10 @@ function buildEnvironment(): Environment {
   env.addFilter("fullPhone", fullPhone);
   env.addFilter("friendlyUrl", friendlyUrl);
   env.addFilter("commaSeparated", commaSeparated);
+  env.addFilter("slugify", slugify);
+  env.addFilter("filesizeformat", filesizeformat);
+  env.addFilter("intcomma", intcomma);
+  env.addFilter("date", djangoDate);
 
   return env;
 }
@@ -68,22 +81,6 @@ function getEnvironment(): Environment {
   return cachedEnv;
 }
 
-// Django's RenderTime middleware timed the whole request (view + DB queries
-// + template render) and did a global response.content.replace() for it --
-// deliberately NOT ported that way (see middleware/serverTiming.ts): doing
-// that on every response, including streamed R2 bodies, forces full
-// buffering. An HTML page string is never streamed in the first place, so
-// substituting here is free -- it just can only account for the template
-// render itself, not the view/DB work before it. If a future page route
-// wants the full request duration in this comment, time from the route
-// handler and pass the elapsed ms in through context instead.
-const RENDER_TIME_PLACEHOLDER = "PUTTHERENDERTIMEHERE";
-
 export function render(name: string, context: Record<string, unknown> = {}): string {
-  const t0 = performance.now();
-  const html = getEnvironment().render(name, context);
-  const durationMs = performance.now() - t0;
-  return html.includes(RENDER_TIME_PLACEHOLDER)
-    ? html.replace(RENDER_TIME_PLACEHOLDER, durationMs.toFixed(3))
-    : html;
+  return getEnvironment().render(name, context);
 }
