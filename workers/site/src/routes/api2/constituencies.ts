@@ -56,10 +56,13 @@ async function buildConstituencyFoodbankEntries(
 ): Promise<ConstituencyFoodbankEntry[]> {
   const { foodbanks, locations } = await getFoodbanksForConstituency(session, constituencyId);
 
-  const foodbanksWithNeed = await getFoodbanksByIds(
-    session,
-    foodbanks.map((fb) => fb.id),
-  );
+  // One getFoodbanksByIds call covering BOTH the organisation entries' own
+  // ids and the location entries' parent-food-bank ids, instead of two
+  // sequential calls -- found via real timing comparisons against
+  // production (a WP 2.5 follow-up): this endpoint was ~3.5x slower than
+  // Django's, and the two back-to-back id-batch fetches were most of it.
+  const allIds = [...new Set([...foodbanks.map((fb) => fb.id), ...locations.map((loc) => loc.foodbank_id)])];
+  const foodbanksWithNeed = await getFoodbanksByIds(session, allIds);
   const foodbankById = new Map<number, FoodbankWithLatestNeed>(foodbanksWithNeed.map((fb) => [fb.id, fb]));
 
   const organisationEntries: ConstituencyFoodbankEntry[] = foodbanks.map((fb) => {
@@ -79,14 +82,10 @@ async function buildConstituencyFoodbankEntries(
     };
   });
 
-  const parentIds = [...new Set(locations.map((loc) => loc.foodbank_id))];
-  const parentFoodbanksWithNeed = await getFoodbanksByIds(session, parentIds);
-  const parentById = new Map<number, FoodbankWithLatestNeed>(parentFoodbanksWithNeed.map((fb) => [fb.id, fb]));
-
   const locationEntries: ConstituencyFoodbankEntry[] = locations.map((loc) => {
     // A location's `foodbank_id` FK is trusted to resolve, matching the
     // Django source's unguarded `location.foodbank` access.
-    const parent = parentById.get(loc.foodbank_id) as FoodbankWithLatestNeed;
+    const parent = foodbankById.get(loc.foodbank_id) as FoodbankWithLatestNeed;
     return {
       type: "location",
       name: loc.name,

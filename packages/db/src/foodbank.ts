@@ -1,6 +1,6 @@
 import { coerceBooleans, queryCoordinates, type CoordinateRow, type Session } from "./types";
 import { normalizeUuid } from "./uuid";
-import { getNeedById, type FoodbankChangeRow } from "./needs";
+import { getNeedById, getNeedsByIds, type FoodbankChangeRow } from "./needs";
 
 const BOOLEAN_COLUMNS = [
   "charity_just_foodbank",
@@ -147,6 +147,12 @@ export async function getFoodbankBySlug(session: Session, slug: string): Promise
 // over the full open set). `WHERE id IN (...)` gives no ordering guarantee,
 // so the result is re-sorted back into the caller's `ids` order -- a caller
 // ranking by distance must see that ranking preserved, not D1's rowid order.
+//
+// The `latest_need` fetch batches all distinct latest_need_ids into ONE
+// `WHERE id IN (...)` query rather than one getNeedById() call per row --
+// found via real timing comparisons against production (a follow-up to WP
+// 2.5): every list/search endpoint calling this with N results was making
+// N+1 D1 round trips, and was the slowest thing in the whole API for it.
 export async function getFoodbanksByIds(session: Session, ids: readonly number[]): Promise<FoodbankWithLatestNeed[]> {
   if (ids.length === 0) return [];
   const placeholders = ids.map(() => "?").join(", ");
@@ -157,7 +163,15 @@ export async function getFoodbanksByIds(session: Session, ids: readonly number[]
   const rows = result.results.map((r) => mapFoodbankRow(r as Record<string, unknown>));
   const byId = new Map(rows.map((row) => [row.id, row]));
   const ordered = ids.map((id) => byId.get(id)).filter((row): row is FoodbankRow => row !== undefined);
-  return Promise.all(ordered.map((row) => attachLatestNeed(session, row)));
+
+  const needIds = Array.from(
+    new Set(ordered.map((row) => row.latest_need_id).filter((id): id is number => id !== null)),
+  );
+  const needsById = await getNeedsByIds(session, needIds);
+  return ordered.map((row) => ({
+    ...row,
+    latestNeed: row.latest_need_id === null ? null : (needsById.get(row.latest_need_id) ?? null),
+  }));
 }
 
 // gfapi3 `slugfromid` -- projected to just `slug`, matching Django's

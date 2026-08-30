@@ -1,13 +1,11 @@
 import { Hono } from "hono";
 import {
   getAllOpenFoodbanks,
-  getDonationPointsByFoodbankId,
   getFoodbankBySlug,
   getFoodbanksByIds,
-  getLocationsByFoodbankId,
+  getLocationsAndDonationPointsByFoodbankId,
   getOpenFoodbankCoordinates,
   toDashedUuid,
-  type DonationPointRow,
 } from "@givefood/db";
 import { R_EARTHDISTANCE, R_PYTHON, isUk, miles, nearest } from "@givefood/geo";
 import { round2, type SerialisableValue } from "@givefood/serialise";
@@ -132,8 +130,9 @@ api2FoodbanksApp.get("/foodbank/:slug/", async (c) => {
   const foodbank = await getFoodbankBySlug(session, slug);
   if (!foodbank) return c.notFound();
 
-  const locations = await getLocationsByFoodbankId(session, foodbank.id);
-  const donationPoints = await getDonationPointsByFoodbankId(session, foodbank.id);
+  // One D1 round trip for both, not two sequential ones -- found via real
+  // timing comparisons against production (a WP 2.5 follow-up).
+  const { locations, donationPoints } = await getLocationsAndDonationPointsByFoodbankId(session, foodbank.id);
 
   let responseData: SerialisableValue;
   if (format !== "geojson") {
@@ -162,7 +161,7 @@ api2FoodbanksApp.get("/foodbank/:slug/", async (c) => {
       },
     }));
 
-    const donationPointList = donationPoints.map((donationPoint: DonationPointRow) => ({
+    const donationPointList = donationPoints.map((donationPoint) => ({
       id: toDashedUuid(donationPoint.uuid),
       name: donationPoint.name,
       slug: donationPoint.slug,

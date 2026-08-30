@@ -46,7 +46,7 @@ export interface DonationPointRow {
   edited: string | null;
 }
 
-function mapDonationPointRow(raw: Record<string, unknown>): DonationPointRow {
+export function mapDonationPointRow(raw: Record<string, unknown>): DonationPointRow {
   return coerceBooleans<DonationPointRow>(raw, BOOLEAN_COLUMNS);
 }
 

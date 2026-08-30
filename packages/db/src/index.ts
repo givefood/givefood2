@@ -6,3 +6,4 @@ export * from "./locations";
 export * from "./donationpoints";
 export * from "./needs";
 export * from "./constituencies";
+export * from "./foodbankDetail";

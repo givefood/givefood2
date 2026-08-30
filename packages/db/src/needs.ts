@@ -49,11 +49,32 @@ export async function getNeedByUuid(session: Session, needId: string): Promise<F
   return row ? mapNeedRow(row as Record<string, unknown>) : null;
 }
 
-// Internal: used by foodbank.ts to resolve `foodbank.latest_need_id` --
-// two small PK/indexed lookups instead of a ~95-column JOIN alias list.
-// D1 meters rows scanned, not returned (PLAN.md §4.3); a PK lookup scans
-// exactly one row either way, so this costs nothing extra over a JOIN.
+// Internal: used by foodbank.ts to resolve a single foodbank's
+// `latest_need_id` -- two small PK/indexed lookups instead of a
+// ~95-column JOIN alias list. D1 meters rows scanned, not returned
+// (PLAN.md §4.3); a PK lookup scans exactly one row either way, so this
+// costs nothing extra over a JOIN.
 export async function getNeedById(session: Session, id: number): Promise<FoodbankChangeRow | null> {
   const row = await session.prepare("SELECT * FROM foodbankchange WHERE id = ?").bind(id).first();
   return row ? mapNeedRow(row as Record<string, unknown>) : null;
+}
+
+// Internal: used by foodbank.ts to resolve `latest_need_id` for a BATCH of
+// foodbank rows -- e.g. every search/list endpoint that ranks or filters
+// multiple food banks then needs each one's latest_need. Calling
+// getNeedById once per row (even fired concurrently via Promise.all) is
+// still N separate D1 round trips; one `WHERE id IN (...)` query is one
+// round trip regardless of N. Found via real cache-busted timing
+// comparisons against production (WP 2.5 follow-up) -- endpoints doing
+// this per-row were the slowest ones, by a wide margin, once the WP 2.5
+// covering-index fix landed.
+export async function getNeedsByIds(session: Session, ids: readonly number[]): Promise<Map<number, FoodbankChangeRow>> {
+  if (ids.length === 0) return new Map();
+  const placeholders = ids.map(() => "?").join(", ");
+  const result = await session
+    .prepare(`SELECT * FROM foodbankchange WHERE id IN (${placeholders})`)
+    .bind(...ids)
+    .all();
+  const rows = result.results.map((r) => mapNeedRow(r as Record<string, unknown>));
+  return new Map(rows.map((row) => [row.id, row]));
 }

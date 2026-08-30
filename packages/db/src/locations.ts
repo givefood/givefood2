@@ -44,7 +44,7 @@ export interface FoodbankLocationRow {
   edited: string | null;
 }
 
-function mapLocationRow(raw: Record<string, unknown>): FoodbankLocationRow {
+export function mapLocationRow(raw: Record<string, unknown>): FoodbankLocationRow {
   return coerceBooleans<FoodbankLocationRow>(raw, BOOLEAN_COLUMNS);
 }
 
