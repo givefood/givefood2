@@ -96,6 +96,9 @@ UUID_COLUMNS = {
     "foodbankchangeline": set(),
     "foodbankhit": set(),
     "foodbankarticle": set(),
+    "orders": set(),
+    "orderline": set(),
+    "charityyear": set(),
 }
 
 # (postgres_table, d1_table, [d1_columns_in_order])
@@ -176,6 +179,45 @@ HOMEPAGE_TABLES = [
     ], {
         "where": "featured = true",
     }),
+]
+
+# WP 4.5's gfdash dashboards. `articles` widens foodbankarticle from
+# HOMEPAGE_TABLES' featured-only 168 rows to the full 17k+ (a strict
+# superset -- INSERT OR REPLACE makes re-running HOMEPAGE_TABLES afterwards
+# harmless too). orders/orderline/charityyear are brand new tables
+# (migrations/0005_orders_and_charity.sql) with no prior D1 data at all.
+DASHBOARD_TABLES = [
+    ("givefood_foodbankarticle", "foodbankarticle", [
+        'id', 'foodbank_id', 'foodbank_name', 'published_date', 'title', 'url', 'featured',
+    ]),
+    ("givefood_order", "orders", [
+        'id', 'order_id', 'items_text', 'country', 'created', 'modified',
+        'notification_email_sent', 'source_url', 'delivery_date', 'delivery_hour',
+        'delivery_datetime', 'delivery_provider', 'delivery_provider_id', 'weight', 'calories',
+        'cost', 'actual_cost', 'no_lines', 'no_items', 'foodbank_id', 'need_id', 'order_group_id',
+    ], {
+        "select_cols": [
+            'id', 'order_id', 'items_text', 'country', 'created', 'modified',
+            'notification_email_sent', 'source_url', 'delivery_date', 'delivery_hour',
+            'delivery_datetime', 'delivery_provider', 'delivery_provider_id', 'weight', 'calories',
+            'cost', 'actual_cost', 'no_lines', 'no_items', 'foodbank_id', 'need_id',
+            'order_group_id',
+        ],
+        # "order" is a Postgres reserved word too (see SITE_STATS_SQL above).
+        "from_table": '"givefood_order"',
+    }),
+    ("givefood_orderline", "orderline", [
+        'id', 'name', 'quantity', 'item_cost', 'line_cost', 'weight', 'calories', 'order_id',
+        'delivery_date', 'category', 'group_name',
+    ], {
+        "select_cols": [
+            'id', 'name', 'quantity', 'item_cost', 'line_cost', 'weight', 'calories', 'order_id',
+            'delivery_date', 'category', '"group" AS group_name',
+        ],
+    }),
+    ("givefood_charityyear", "charityyear", [
+        'id', 'foodbank_id', 'created', 'date', 'income', 'expenditure',
+    ]),
 ]
 
 
@@ -267,7 +309,17 @@ def d1_query(token_box, sql, params=None, _retried=False, _network_retries=0):
         if e.code in (401, 403) and not _retried:
             token_box.refresh()
             return d1_query(token_box, sql, params, _retried=True, _network_retries=_network_retries)
-        raise RuntimeError("D1 API error %s: %s" % (e.code, e.read().decode()))
+        body_text = e.read().decode()
+        # D1's own "internal error" (code 7500) is a documented-transient
+        # platform hiccup, not a request problem -- seen here under this
+        # script's 8-way concurrent load on a 17k-row table (the original
+        # 168-row featured-only copy never hit it). Retry it exactly like a
+        # network error rather than failing the whole run on one flaky call.
+        if e.code == 500 and "7500" in body_text and _network_retries < MAX_NETWORK_RETRIES:
+            delay = NETWORK_RETRY_BASE_DELAY * (2 ** _network_retries) + random.uniform(0, 1)
+            time.sleep(delay)
+            return d1_query(token_box, sql, params, _retried=_retried, _network_retries=_network_retries + 1)
+        raise RuntimeError("D1 API error %s: %s" % (e.code, body_text))
     except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
         if _network_retries >= MAX_NETWORK_RETRIES:
             raise
@@ -305,7 +357,8 @@ def make_batches(rows, uuid_flags):
         yield batch
 
 
-def load_table(token_box, pg_table, d1_table, cols, cur, where=None, select_cols=None, order_by="id"):
+def load_table(token_box, pg_table, d1_table, cols, cur, where=None, select_cols=None, order_by="id",
+                from_table=None):
     uuid_cols = UUID_COLUMNS[d1_table]
     uuid_flags = [c in uuid_cols for c in cols]
     col_list = ", ".join(cols)
@@ -313,10 +366,13 @@ def load_table(token_box, pg_table, d1_table, cols, cur, where=None, select_cols
     # foodbankchangeline's `group` -- a SQL reserved word there too, so the
     # D1 schema calls it group_name; `SELECT group AS group_name` is what
     # bridges the two names) without cols (the D1-side INSERT column list)
-    # needing to match Postgres's own naming.
+    # needing to match Postgres's own naming. from_table overrides pg_table
+    # in the FROM clause for "order" -- also a Postgres reserved word,
+    # needing to stay quoted there even though pg_table itself (used for
+    # logging) doesn't.
     select_col_list = ", ".join(select_cols) if select_cols else col_list
 
-    query = "SELECT %s FROM %s" % (select_col_list, pg_table)
+    query = "SELECT %s FROM %s" % (select_col_list, from_table or pg_table)
     if where:
         query += " WHERE %s" % where
     query += " ORDER BY %s" % order_by
@@ -378,8 +434,26 @@ def load_site_stats(token_box, cur):
     return foodbanks, donationpoints, items, meals
 
 
+def run_table_list(token_box, table_list, cur):
+    total_loaded = 0
+    for entry in table_list:
+        pg_table, d1_table, cols = entry[0], entry[1], entry[2]
+        kwargs = entry[3] if len(entry) > 3 else {}
+        table_start = time.monotonic()
+        loaded, total = load_table(token_box, pg_table, d1_table, cols, cur, **kwargs)
+        total_loaded += loaded
+        elapsed = time.monotonic() - table_start
+        print("%s: loaded %d/%d rows (%.1fs)" % (d1_table, loaded, total, elapsed), flush=True)
+    return total_loaded
+
+
 def main():
     import psycopg2  # deferred: only needed for this one-off script, not a repo dependency
+
+    # `dashboards`: WP 4.5's gfdash one-time snapshot (DASHBOARD_TABLES) only
+    # -- skips the slow original 5-table + homepage copy, which nothing here
+    # needs re-run for.
+    dashboards_only = len(sys.argv) > 1 and sys.argv[1] == "dashboards"
 
     token_box = TokenBox()
     env = load_env(FOODCHARITY_ENV_PATH)
@@ -391,25 +465,14 @@ def main():
     cur = conn.cursor()
 
     t0 = time.monotonic()
-    total_loaded = 0
-    for pg_table, d1_table, cols in TABLES:
-        table_start = time.monotonic()
-        loaded, total = load_table(token_box, pg_table, d1_table, cols, cur)
-        total_loaded += loaded
-        elapsed = time.monotonic() - table_start
-        print("%s: loaded %d/%d rows (%.1fs)" % (d1_table, loaded, total, elapsed), flush=True)
 
-    for entry in HOMEPAGE_TABLES:
-        pg_table, d1_table, cols = entry[0], entry[1], entry[2]
-        kwargs = entry[3] if len(entry) > 3 else {}
-        table_start = time.monotonic()
-        loaded, total = load_table(token_box, pg_table, d1_table, cols, cur, **kwargs)
-        total_loaded += loaded
-        elapsed = time.monotonic() - table_start
-        print("%s: loaded %d/%d rows (%.1fs)" % (d1_table, loaded, total, elapsed), flush=True)
-
-    stats = load_site_stats(token_box, cur)
-    print("site_stats: foodbanks=%d donationpoints=%d items=%d meals=%d" % stats, flush=True)
+    if dashboards_only:
+        total_loaded = run_table_list(token_box, DASHBOARD_TABLES, cur)
+    else:
+        total_loaded = run_table_list(token_box, TABLES, cur)
+        total_loaded += run_table_list(token_box, HOMEPAGE_TABLES, cur)
+        stats = load_site_stats(token_box, cur)
+        print("site_stats: foodbanks=%d donationpoints=%d items=%d meals=%d" % stats, flush=True)
 
     cur.close()
     conn.close()
