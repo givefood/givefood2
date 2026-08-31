@@ -39,6 +39,36 @@ export async function getPublishedNeeds(session: Session, limit: number): Promis
   return result.results.map(mapNeedRow);
 }
 
+export interface RssNeedRow {
+  need_id: string;
+  change_text: string;
+  created: string;
+  foodbank_slug: string;
+  foodbank_name: string;
+  foodbank_alt_name: string | null;
+}
+
+// gfwfbn `rss` (givefood/views.py:132-189) -- `FoodbankChange.objects
+// .filter(published=True).exclude(change_text__in=("Nothing","Facebook",
+// "Unknown")).select_related('foodbank').order_by("-created")[:limit]`,
+// optionally further filtered to one food bank. The real joined
+// foodbank.slug/name/alt_name (not a slugify() guess -- unlike
+// getRecentlyUpdated's homepage use, this needs `reverse("wfbn:foodbank",
+// args=[need.foodbank.slug])` and `need.foodbank.full_name()` for real).
+export async function getRecentPublishedNeedsForRss(session: Session, limit: number, foodbankId?: number): Promise<RssNeedRow[]> {
+  const foodbankFilter = foodbankId !== undefined ? "AND fc.foodbank_id = ? " : "";
+  const result = await session
+    .prepare(
+      "SELECT fc.need_id, fc.change_text, fc.created, f.slug AS foodbank_slug, f.name AS foodbank_name, f.alt_name AS foodbank_alt_name " +
+        "FROM foodbankchange fc JOIN foodbank f ON f.id = fc.foodbank_id " +
+        `WHERE fc.published = 1 AND fc.change_text NOT IN ('Unknown', 'Facebook', 'Nothing') ${foodbankFilter}` +
+        "ORDER BY fc.created DESC LIMIT ?",
+    )
+    .bind(...(foodbankId !== undefined ? [foodbankId, limit] : [limit]))
+    .all();
+  return result.results as unknown as RssNeedRow[];
+}
+
 // gfapi1 `api_need` / gfapi2 `need` -- both look up by the `need_id` UUID,
 // accepting either dashed or dashless input.
 export async function getNeedByUuid(session: Session, needId: string): Promise<FoodbankChangeRow | null> {

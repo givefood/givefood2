@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+{% include "includes/debugcomment.njk" %}
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+        <channel>
+                <title>{% if foodbank %}{{ foodbank.full_name }}{% else %}Give Food{% endif %}</title>
+                <description>{{ _("News & donation requests from ") }}{% if foodbank %}{{ foodbank.full_name }}{% else %}{{ _("UK food banks") }}{% endif %}</description>
+                <link>{{ SITE_DOMAIN }}{% if foodbank %}{{ url('wfbn:foodbank', foodbank.slug) }}{% endif %}</link>
+                <atom:link href="{{ self_url }}" rel="self" type="application/rss+xml" />
+                <lastBuildDate>{{ now() }}</lastBuildDate>
+                {% for item in items %}
+                    <item>
+                            <title>{{ item.title }}</title>
+                            <link>{{ item.url }}</link>
+                            <guid isPermaLink="true">{{ item.url }}</guid>
+                            <pubDate>{{ item.date|date("D, d M Y H:i:s O") }}</pubDate>
+                            {% if item.description %}
+                                <description>{{ item.description }}</description>
+                            {% endif %}
+                    </item>
+                {% endfor %}
+
+        </channel>
+</rss>

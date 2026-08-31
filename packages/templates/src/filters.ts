@@ -85,6 +85,7 @@ export function intcomma(value: number | string): string {
 }
 
 const MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const DAY_ABBR = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 // Django's `P` format: 12-hour time, minutes dropped when :00, and the
 // "midnight"/"noon" special cases -- ported verbatim from
@@ -106,16 +107,31 @@ const DATE_FORMAT_TOKENS: Record<string, (d: Date) => string> = {
   j: (d) => String(d.getUTCDate()),
   M: (d) => MONTH_ABBR[d.getUTCMonth()]!,
   P: formatP,
+  // RFC 2822 tokens ("D, d M Y H:i:s O", Django's `|date:"r"`/`{% now "r" %}`
+  // shortcut spelled out) -- Workers run in UTC and Django's timezone.now()
+  // is UTC-aware too, so O is always the fixed +0000 offset, same reasoning
+  // as env.ts's now() global.
+  D: (d) => DAY_ABBR[d.getUTCDay()]!,
+  H: (d) => String(d.getUTCHours()).padStart(2, "0"),
+  i: (d) => String(d.getUTCMinutes()).padStart(2, "0"),
+  s: (d) => String(d.getUTCSeconds()).padStart(2, "0"),
+  O: () => "+0000",
 };
 
+// The actual token substitution, split out from djangoDate below so a
+// caller already holding a real Date (env.ts's `now` global, this
+// package's other Date-producing callers) can format one directly instead
+// of round-tripping through a D1-timestamp-string parse it doesn't need.
+export function formatDjangoDateTokens(date: Date, format: string): string {
+  return format.replace(/[YmdjMPDHisO]/g, (token) => DATE_FORMAT_TOKENS[token]!(date));
+}
+
 // django's `date` filter -- only the tokens actually used by a ported
-// template (Y, m, d, j, M, P) are supported; extend DATE_FORMAT_TOKENS if
-// a future port needs more. `value` is a D1 TEXT timestamp, "YYYY-MM-DD
-// HH:MM:SS[.ffffff]".
+// template are supported; extend DATE_FORMAT_TOKENS if a future port
+// needs more. `value` is a D1 TEXT timestamp, "YYYY-MM-DD HH:MM:SS[.ffffff]".
 export function djangoDate(value: string, format: string): string {
   const iso = `${value.replace(" ", "T")}Z`;
-  const date = new Date(iso);
-  return format.replace(/[YmdjMP]/g, (token) => DATE_FORMAT_TOKENS[token]!(date));
+  return formatDjangoDateTokens(new Date(iso), format);
 }
 
 // django's `floatformat:N` -- fixed N decimal places for display. Only the

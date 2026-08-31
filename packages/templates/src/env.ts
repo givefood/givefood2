@@ -18,6 +18,7 @@ import {
   djangoTitle,
   filesizeformat,
   floatformat,
+  formatDjangoDateTokens,
   friendlyPhone,
   friendlyUrl,
   fullPhone,
@@ -29,23 +30,12 @@ import {
 } from "./filters";
 import { urlForLocale } from "@givefood/urls";
 
-const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-
-function pad2(n: number): string {
-  return n < 10 ? `0${n}` : `${n}`;
-}
-
-// Django's `{% now "r" %}` -- Python's "r" date format, RFC 2822. Workers
-// run in UTC, so the offset is always +0000.
+// Django's `{% now "r" %}` -- Python's "r" date format, RFC 2822 (also
+// used directly by wfbn/rss.xml's `item.date|date:"D, d M Y H:i:s O"`,
+// the same format spelled out instead of the "r" shortcut -- both go
+// through DATE_FORMAT_TOKENS's D/H/i/s/O entries).
 function formatRfc2822(date: Date): string {
-  const day = DAY_NAMES[date.getUTCDay()];
-  const dd = pad2(date.getUTCDate());
-  const month = MONTH_NAMES[date.getUTCMonth()];
-  const hh = pad2(date.getUTCHours());
-  const mi = pad2(date.getUTCMinutes());
-  const ss = pad2(date.getUTCSeconds());
-  return `${day}, ${dd} ${month} ${date.getUTCFullYear()} ${hh}:${mi}:${ss} +0000`;
+  return formatDjangoDateTokens(date, "D, d M Y H:i:s O");
 }
 
 function buildEnvironment(): Environment {

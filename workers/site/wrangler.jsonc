@@ -149,7 +149,9 @@
     // into "required" only in the same change that actually sets it.
     "required": ["GMAP_GEOCODE_KEY", "VAPID_PUBLIC_KEY", "TURNSTILE_SECRET", "POSTMARK_TOKEN", "SUBSCRIBER_SALT"]
     // GOOGLE_OAUTH_CLIENT_SECRET, SESSION_HMAC_KEY -- auth (§3.5)
-    // GMAP_STATIC_KEY, GMAP_PLACES_KEY -- media backfill, queued not inline (§3.7)
+    // GMAP_STATIC_KEY, GMAP_PLACES_KEY -- media backfill, queued not inline
+    // (§3.7) -- this Worker never calls Google directly; see
+    // workers/jobs/wrangler.jsonc for where GMAP_STATIC_KEY actually lives.
     // CF_API_KEY, CF_ZONE_ID -- cache-tag purge (§3.6)
   },
 

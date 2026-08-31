@@ -1,4 +1,5 @@
 import type { Env } from "../../worker-configuration";
+import { backfillMapImage, isMapImageKey } from "../mediaBackfill/mapImage";
 
 // Consumer for the "jobs" queue (binding JOBS_Q) -- admin-triggered and
 // on-miss work, per PLAN.md §3.3's binding map: "article crawl,
@@ -30,13 +31,17 @@ async function dispatch(body: JobMessage, env: Env): Promise<void> {
 // PLAN.md §3.7: on an R2 miss, fetch/generate the object (Google Places
 // photo, Static Maps, s2 favicon, or a Browser Rendering screenshot
 // depending on which route the key came from) and PUT it into MEDIA with
-// the httpMetadata/customMetadata shape §3.7 specifies. Not implemented
-// yet -- this closes the loop structurally so routes/media.ts's
-// JOBS_Q.send() has a real consumer to land on once the fetch/generate
-// logic per media family is built.
+// the httpMetadata/customMetadata shape §3.7 specifies. Only the Static
+// Maps family (map.png) is implemented so far -- photo.jpg/favicon.png/
+// screenshots still throw, same as before, until their own fetch/generate
+// logic is built.
 async function handleMediaBackfill(
   message: { type: "media-backfill"; key: string },
   env: Env,
 ): Promise<void> {
+  if (isMapImageKey(message.key)) {
+    await backfillMapImage(env, message.key);
+    return;
+  }
   throw new Error(`media-backfill: not implemented (key=${message.key})`);
 }

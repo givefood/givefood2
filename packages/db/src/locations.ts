@@ -63,6 +63,15 @@ export async function getLocationsByFoodbankId(session: Session, foodbankId: num
   return sortByName(result.results.map(mapLocationRow));
 }
 
+// workers/jobs' map.png backfill (mediaBackfill/mapImage.ts) only ever
+// needs each location's lat_lng for a marker list -- PLAN.md's hard rule
+// again, see getAllOpenLocationSlugs's own comment. No name-sort needed
+// either (Google draws markers in whatever order the list arrives in).
+export async function getLocationLatLngsByFoodbankId(session: Session, foodbankId: number): Promise<string[]> {
+  const result = await session.prepare("SELECT lat_lng FROM foodbanklocation WHERE foodbank_id = ?").bind(foodbankId).all();
+  return result.results.map((r) => (r as { lat_lng: string }).lat_lng);
+}
+
 // gfwfbn `geojson`'s slug-only branch (WP 3.6): builds its OWN
 // `FoodbankLocation.objects.filter(foodbank__slug = slug)` directly
 // (gfwfbn/views.py:238) rather than calling `foodbank.locations()` above
