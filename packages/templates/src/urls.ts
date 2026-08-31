@@ -22,9 +22,14 @@ const ROUTES: Record<string, string> = {
   "dumps:dump_index": "/dumps/",
   "wfbn:index": "/needs/",
   "wfbn:rss": "/needs/rss.xml",
+  "wfbn:geojson": "/needs/geo.json",
   "wfbn:get_location": "/needs/getlocation/",
   "wfbn-generic:webpush_config": "/needs/webpush/config/",
   human: "/human/",
+  "write:index": "/write/",
+  services: "/services/",
+  news: "/news/",
+  md_index: "/md/",
 };
 
 const PARAMETERISED: Record<string, (...args: string[]) => string> = {
@@ -47,6 +52,9 @@ const PARAMETERISED: Record<string, (...args: string[]) => string> = {
   "wfbn:updates": (slug, action) => `/needs/at/${slug}/updates/${action}/`,
   "wfbn-md:md_foodbank": (slug) => `/md/needs/at/${slug}/`,
   "api2:foodbank": (slug) => `/api/2/foodbank/${slug}/`,
+  "wfbn-generic:foodbank_favicon": (slug) => `/needs/at/${slug}/favicon.png`,
+  country: (countrySlug) => `/${countrySlug}/`,
+  annual_report: (year) => `/${year}/`,
 };
 
 // Route names reached inside Django's i18n_patterns -- `{% url %}` for one
@@ -69,6 +77,7 @@ const PARAMETERISED: Record<string, (...args: string[]) => string> = {
 const I18N_SCOPED = new Set([
   "wfbn:index",
   "wfbn:rss",
+  "wfbn:geojson",
   "wfbn:get_location",
   "wfbn:foodbank",
   "wfbn:foodbank_location",
@@ -81,6 +90,26 @@ const I18N_SCOPED = new Set([
   "wfbn:foodbank_charity",
   "wfbn:foodbank_nearby",
   "wfbn:updates",
+  // Newly exercised by the root homepage (the first non-wfbn,
+  // language-prefixed page built) -- all inside givefood/urls.py's
+  // i18n_patterns block, same as the wfbn:* names above.
+  "index",
+  "about_us",
+  "donate",
+  "news",
+  "country",
+  "annual_report",
+  "frag",
+  // page.njk's shared head/footer calls these on EVERY page, including
+  // the wfbn pages already live on /cy//ga//gd/ -- also inside
+  // i18n_patterns, so also unprefixed-and-wrong there until now. Not
+  // introduced by today's homepage work, just first noticed while
+  // classifying the names it needs.
+  "manifest",
+  "flag",
+  "apps",
+  "colophon",
+  "annual_report_index",
 ]);
 
 function build(name: string, args: string[]): string {

@@ -84,19 +84,38 @@ export function intcomma(value: number | string): string {
   return result;
 }
 
+const MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+// Django's `P` format: 12-hour time, minutes dropped when :00, and the
+// "midnight"/"noon" special cases -- ported verbatim from
+// django.utils.dateformat.DateFormat.f()/P(), not approximated.
+function formatP(d: Date): string {
+  const hours = d.getUTCHours();
+  const minutes = d.getUTCMinutes();
+  if (hours === 0 && minutes === 0) return "midnight";
+  if (hours === 12 && minutes === 0) return "noon";
+  const ampm = hours < 12 ? "a.m." : "p.m.";
+  const h12 = hours % 12 === 0 ? 12 : hours % 12;
+  return minutes === 0 ? `${h12} ${ampm}` : `${h12}:${String(minutes).padStart(2, "0")} ${ampm}`;
+}
+
 const DATE_FORMAT_TOKENS: Record<string, (d: Date) => string> = {
   Y: (d) => String(d.getUTCFullYear()),
   m: (d) => String(d.getUTCMonth() + 1).padStart(2, "0"),
   d: (d) => String(d.getUTCDate()).padStart(2, "0"),
+  j: (d) => String(d.getUTCDate()),
+  M: (d) => MONTH_ABBR[d.getUTCMonth()]!,
+  P: formatP,
 };
 
 // django's `date` filter -- only the tokens actually used by a ported
-// template (Y, m, d) are supported; extend DATE_FORMAT_TOKENS if a future
-// port needs more. `value` is a D1 TEXT timestamp, "YYYY-MM-DD HH:MM:SS[.ffffff]".
+// template (Y, m, d, j, M, P) are supported; extend DATE_FORMAT_TOKENS if
+// a future port needs more. `value` is a D1 TEXT timestamp, "YYYY-MM-DD
+// HH:MM:SS[.ffffff]".
 export function djangoDate(value: string, format: string): string {
   const iso = `${value.replace(" ", "T")}Z`;
   const date = new Date(iso);
-  return format.replace(/[Ymd]/g, (token) => DATE_FORMAT_TOKENS[token]!(date));
+  return format.replace(/[YmdjMP]/g, (token) => DATE_FORMAT_TOKENS[token]!(date));
 }
 
 // django's `floatformat:N` -- fixed N decimal places for display. Only the

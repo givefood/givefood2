@@ -18,6 +18,7 @@ import { api3App } from "./routes/api3";
 import { api1Index, api2Docs, api2Index } from "./routes/apiDocs";
 import { wfbnIndex } from "./routes/wfbn";
 import { wfbnFoodbank } from "./routes/wfbn/foodbank";
+import { publicIndex } from "./routes/public";
 import { notPortedYet } from "./routes/notPortedYet";
 import { render404 } from "./render404";
 
@@ -98,6 +99,13 @@ for (const locale of LOCALES) {
   if (locale === "en") continue;
   app.get(`/${locale}/needs/`, wfbnIndex);
   app.get(`/${locale}/needs/at/:slug/`, wfbnFoodbank);
+}
+
+// givefood `index` (GET /, i18n-patterned same as wfbn:index above).
+app.get("/", publicIndex);
+for (const locale of LOCALES) {
+  if (locale === "en") continue;
+  app.get(`/${locale}/`, publicIndex);
 }
 
 // Everything below is specified in PLAN.md but not yet built. Each returns

@@ -150,3 +150,42 @@ export function changeList(changeText: string): string[] {
 export function excessList(excessChangeText: string | null): string[] {
   return excessChangeText ? excessChangeText.split("\n") : [];
 }
+
+// Django's slugify(), reproduced only as simply as this codebase actually
+// needs it -- same scope note as api1.ts's own copy (PLAN.md R7: a full
+// Unicode-faithful slugify is a much bigger job that matters for the
+// *foodbank* slug used as a primary key elsewhere). Used by the homepage's
+// "recently updated" list, which -- like gfapi1 -- only ever needs to
+// reconstruct a URL fragment from a denormalised name, never to assign a
+// real slug.
+export function slugify(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+// FoodbankArticle.title_captialised() -- Python's string.capwords() (split
+// on whitespace, capitalize() each word, single-space join) followed by an
+// acronym-restoring pass, a trailing-period strip, and whitespace
+// collapse. Ported verbatim from articles.py, not paraphrased.
+const NO_CAP_WORDS = ["UK", "AGM", "CEO", "NI", "GCK", "BBC", "COVID", "MP", "NHS", "ID", "TV", "UN", "FC", "UHT"];
+
+function capwords(value: string): string {
+  return value
+    .trim()
+    .split(/\s+/)
+    .map((word) => (word.length ? word[0]!.toUpperCase() + word.slice(1).toLowerCase() : word))
+    .join(" ");
+}
+
+export function titleCapitalised(title: string): string {
+  let result = capwords(title);
+  for (const word of NO_CAP_WORDS) {
+    const capitalized = word[0]! + word.slice(1).toLowerCase();
+    result = result.replace(new RegExp(`\\b${capitalized}\\b`, "g"), word);
+  }
+  result = result.replace(/\.+$/, "");
+  while (result.includes("  ")) result = result.replace("  ", " ");
+  return result;
+}

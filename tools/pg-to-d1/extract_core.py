@@ -37,6 +37,7 @@ import datetime
 import decimal
 import json
 import os
+import random
 import sys
 import threading
 import time
@@ -71,6 +72,16 @@ MAX_PARAMS_PER_BATCH = 100
 MAX_BYTES_PER_BATCH = 200_000
 CONCURRENCY = 8
 
+# Three consecutive full-run failures, all `socket.gaierror` from
+# getaddrinfo(api.cloudflare.com) -- never an HTTP-level error -- with
+# ad-hoc nslookup/ping against the same host succeeding seconds later each
+# time. That pattern (fails under 8-way concurrent resolution, succeeds
+# solo) points at the resolver path being unable to keep up with concurrent
+# lookups here, not a real outage, so retry network-layer errors with
+# backoff instead of only the existing 401/403 auth-refresh retry.
+MAX_NETWORK_RETRIES = 6
+NETWORK_RETRY_BASE_DELAY = 1.0
+
 # psycopg2 returns uuid columns as plain `str` (dashed) in this environment,
 # not `uuid.UUID` -- confirmed by direct query, not assumed. isinstance()
 # can't tell a UUID string from any other string, so UUID columns are named
@@ -82,6 +93,9 @@ UUID_COLUMNS = {
     "foodbankdonationpoint": {"uuid"},
     "foodbankchange": {"need_id"},
     "parliamentaryconstituency": set(),
+    "foodbankchangeline": set(),
+    "foodbankhit": set(),
+    "foodbankarticle": set(),
 }
 
 # (postgres_table, d1_table, [d1_columns_in_order])
@@ -137,6 +151,31 @@ TABLES = [
         'id', 'name', 'slug', 'country', 'mp', 'mp_party', 'mp_parl_id', 'mp_display_name',
         'email', 'centroid', 'latitude', 'longitude', 'boundary_geojson',
     ]),
+]
+
+# migrations/0003_homepage_data.sql -- the root homepage's extra reads
+# (get_site_stats(), most-viewed, featured articles), added after WP 2.2a's
+# original 5-table scope. Same (pg_table, d1_table, cols) shape as TABLES
+# above, plus an optional trailing kwargs dict for load_table()'s
+# where/select_cols/order_by -- kept separate from TABLES so a plain re-run
+# of the original 5-table copy (main()'s original purpose) isn't silently
+# widened; call load_table() on these explicitly, see main().
+HOMEPAGE_TABLES = [
+    ("givefood_foodbankchangeline", "foodbankchangeline", [
+        'id', 'need_id', 'foodbank_id', 'item', 'type', 'category', 'group_name', 'created',
+    ], {
+        "select_cols": ['id', 'need_id', 'foodbank_id', 'item', 'type', 'category', '"group" AS group_name', 'created'],
+    }),
+    ("givefood_foodbankhit", "foodbankhit", [
+        'foodbank_id', 'day', 'hits',
+    ], {
+        "order_by": "foodbank_id, day",
+    }),
+    ("givefood_foodbankarticle", "foodbankarticle", [
+        'id', 'foodbank_id', 'foodbank_name', 'published_date', 'title', 'url', 'featured',
+    ], {
+        "where": "featured = true",
+    }),
 ]
 
 
@@ -209,7 +248,7 @@ class TokenBox:
             return self._token
 
 
-def d1_query(token_box, sql, params=None, _retried=False):
+def d1_query(token_box, sql, params=None, _retried=False, _network_retries=0):
     url = "https://api.cloudflare.com/client/v4/accounts/%s/d1/database/%s/query" % (
         ACCOUNT_ID, DATABASE_ID,
     )
@@ -222,13 +261,19 @@ def d1_query(token_box, sql, params=None, _retried=False):
         headers={"Authorization": "Bearer %s" % token, "Content-Type": "application/json"},
     )
     try:
-        with urllib.request.urlopen(req) as resp:
+        with urllib.request.urlopen(req, timeout=30) as resp:
             return json.loads(resp.read())
     except urllib.error.HTTPError as e:
         if e.code in (401, 403) and not _retried:
             token_box.refresh()
-            return d1_query(token_box, sql, params, _retried=True)
+            return d1_query(token_box, sql, params, _retried=True, _network_retries=_network_retries)
         raise RuntimeError("D1 API error %s: %s" % (e.code, e.read().decode()))
+    except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
+        if _network_retries >= MAX_NETWORK_RETRIES:
+            raise
+        delay = NETWORK_RETRY_BASE_DELAY * (2 ** _network_retries) + random.uniform(0, 1)
+        time.sleep(delay)
+        return d1_query(token_box, sql, params, _retried=_retried, _network_retries=_network_retries + 1)
 
 
 def make_batches(rows, uuid_flags):
@@ -260,12 +305,22 @@ def make_batches(rows, uuid_flags):
         yield batch
 
 
-def load_table(token_box, pg_table, d1_table, cols, cur):
+def load_table(token_box, pg_table, d1_table, cols, cur, where=None, select_cols=None, order_by="id"):
     uuid_cols = UUID_COLUMNS[d1_table]
     uuid_flags = [c in uuid_cols for c in cols]
     col_list = ", ".join(cols)
+    # select_cols lets a column be aliased on the Postgres side (e.g.
+    # foodbankchangeline's `group` -- a SQL reserved word there too, so the
+    # D1 schema calls it group_name; `SELECT group AS group_name` is what
+    # bridges the two names) without cols (the D1-side INSERT column list)
+    # needing to match Postgres's own naming.
+    select_col_list = ", ".join(select_cols) if select_cols else col_list
 
-    cur.execute("SELECT %s FROM %s ORDER BY id" % (col_list, pg_table))
+    query = "SELECT %s FROM %s" % (select_col_list, pg_table)
+    if where:
+        query += " WHERE %s" % where
+    query += " ORDER BY %s" % order_by
+    cur.execute(query)
     rows = cur.fetchall()
 
     batches = list(make_batches(rows, uuid_flags))
@@ -289,6 +344,40 @@ def load_table(token_box, pg_table, d1_table, cols, cur):
     return loaded, len(rows)
 
 
+# get_site_stats() (givefood/utils/cache.py:81-133) reproduced as one
+# aggregate query rather than copying Foodbank/FoodbankLocation a second
+# time (already fully mirrored by TABLES above) or modelling Order/
+# OrderLine/OrderItem/OrderGroup just for one SUM. `"order"` is Postgres's
+# own reserved word too, hence the quoting.
+SITE_STATS_SQL = """
+SELECT
+  (SELECT COUNT(*) FROM givefood_foodbank) +
+  (SELECT COUNT(*) FROM givefood_foodbank WHERE delivery_address IS NOT NULL AND delivery_address != '') +
+  (SELECT COUNT(*) FROM givefood_foodbanklocation) AS foodbanks,
+  (SELECT COUNT(*) FROM givefood_foodbankdonationpoint) +
+  (SELECT COUNT(*) FROM givefood_foodbank WHERE address_is_administrative = false) +
+  (SELECT COUNT(*) FROM givefood_foodbank WHERE delivery_address IS NOT NULL AND delivery_address != '') +
+  (SELECT COUNT(*) FROM givefood_foodbanklocation WHERE is_donation_point = true) AS donationpoints,
+  (SELECT COUNT(*) FROM givefood_foodbankchangeline) AS items,
+  (SELECT COALESCE(SUM(calories), 0) FROM "givefood_order") AS calories
+"""
+
+
+def load_site_stats(token_box, cur):
+    cur.execute(SITE_STATS_SQL)
+    foodbanks, donationpoints, items, calories = cur.fetchone()
+    meals = int(calories / 500)
+    computed_at = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")
+    sql = (
+        "INSERT OR REPLACE INTO site_stats (id, foodbanks, donationpoints, items, meals, computed_at) "
+        "VALUES (1, ?, ?, ?, ?, ?)"
+    )
+    result = d1_query(token_box, sql, [foodbanks, donationpoints, items, meals, computed_at])
+    if not result.get("success"):
+        raise RuntimeError("site_stats load failed: %s" % result)
+    return foodbanks, donationpoints, items, meals
+
+
 def main():
     import psycopg2  # deferred: only needed for this one-off script, not a repo dependency
 
@@ -309,6 +398,18 @@ def main():
         total_loaded += loaded
         elapsed = time.monotonic() - table_start
         print("%s: loaded %d/%d rows (%.1fs)" % (d1_table, loaded, total, elapsed), flush=True)
+
+    for entry in HOMEPAGE_TABLES:
+        pg_table, d1_table, cols = entry[0], entry[1], entry[2]
+        kwargs = entry[3] if len(entry) > 3 else {}
+        table_start = time.monotonic()
+        loaded, total = load_table(token_box, pg_table, d1_table, cols, cur, **kwargs)
+        total_loaded += loaded
+        elapsed = time.monotonic() - table_start
+        print("%s: loaded %d/%d rows (%.1fs)" % (d1_table, loaded, total, elapsed), flush=True)
+
+    stats = load_site_stats(token_box, cur)
+    print("site_stats: foodbanks=%d donationpoints=%d items=%d meals=%d" % stats, flush=True)
 
     cur.close()
     conn.close()
