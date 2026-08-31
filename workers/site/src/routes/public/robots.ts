@@ -1,5 +1,5 @@
 import type { Context } from "hono";
-import { LOCALES, urlForLocale } from "@givefood/templates";
+import { LOCALES, url, urlForLocale } from "@givefood/templates";
 import type { AppEnv } from "../../types";
 
 // givefood/views.py:819-846 robotstxt() -- givefood/urls.py:51, inside
@@ -13,15 +13,13 @@ import type { AppEnv } from "../../types";
 // Disallow:/Sitemap: lists; this port loops LOCALES (4: en/cy/ga/gd, per
 // PLAN.md §2.7.1), so Disallow: is 10 lines here, not Django's 44.
 //
-// sitemap_places_index and md_sitemap are DELIBERATELY OMITTED from the
-// Sitemap: list for now (leaving it at 4 lines -- one `sitemap` per
-// locale -- not the 9 a straight 4-language recompute of Django's own
-// 2-per-locale-plus-1 shape would give): sitemap_places_index needs the
-// gazetteer `Place` table (Phase 2.5, not yet copied to D1 -- see WP 4.2's
-// own scoping notes) and md_sitemap needs the /md/ markdown mirror (WP
-// 4.3, not yet built). Advertising a Sitemap: URL that 501s is worse than
-// not advertising it -- add both back in the same change that actually
-// builds them, not before.
+// sitemap_places_index is still DELIBERATELY OMITTED from the Sitemap:
+// list: it needs the gazetteer `Place` table (Phase 2.5, not yet copied to
+// D1 -- see WP 4.2's own scoping notes). md_sitemap was omitted for the
+// same "don't advertise a URL that 501s" reason, but WP 4.3 (the /md/
+// markdown mirror) now exists, so it's added back below -- appended once,
+// like Django's own `sitemap_urls.append(md_sitemap_url)`, not per-locale
+// (the /md/ tree is entirely outside i18n_patterns).
 export async function robotsTxt(c: Context<AppEnv>): Promise<Response> {
   const disallowed: string[] = ["/aac/", "/at/*/hit/"];
   const sitemapUrls: string[] = [];
@@ -31,6 +29,7 @@ export async function robotsTxt(c: Context<AppEnv>): Promise<Response> {
     disallowed.push(urlForLocale(locale, "flag"));
     sitemapUrls.push(urlForLocale(locale, "sitemap"));
   }
+  sitemapUrls.push(url("md_sitemap"));
 
   const lines = [
     "User-agent: *",

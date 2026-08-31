@@ -41,6 +41,13 @@ export async function getAllConstituencySlugs(session: Session): Promise<string[
   return result.results.map((r) => (r as { slug: string }).slug);
 }
 
+// sitemap.md's variant of the above -- same narrow-column reasoning, plus
+// `name` for the link text (the XML sitemap has no link text, only <loc>).
+export async function getAllConstituencySlugsWithNames(session: Session): Promise<Array<{ slug: string; name: string }>> {
+  const result = await session.prepare("SELECT slug, name FROM parliamentaryconstituency").all();
+  return result.results as unknown as Array<{ slug: string; name: string }>;
+}
+
 export async function getConstituencyBySlug(session: Session, slug: string): Promise<ConstituencyRow | null> {
   const row = await session.prepare("SELECT * FROM parliamentaryconstituency WHERE slug = ?").bind(slug).first();
   return row ? mapConstituencyRow(row as Record<string, unknown>) : null;

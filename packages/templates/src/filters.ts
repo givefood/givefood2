@@ -125,6 +125,29 @@ export function floatformat(value: number, decimalPlaces: number): string {
   return value.toFixed(decimalPlaces);
 }
 
+// django's `|title` -- Python's str.title() (title-case after ANY
+// non-letter boundary: hyphens, apostrophes, parens, not just spaces),
+// followed by two touch-up regexes (an apostrophe-then-capital gets its
+// capital lowered back, e.g. "Bill'S" -> "Bill's"; a digit-then-capital
+// too, e.g. "3Rd" -> "3rd"). Registered as "django_title", not "title":
+// nunjucks ships a builtin `title` filter that only splits on spaces,
+// same "don't silently shadow a builtin with different semantics"
+// reasoning as djangoSlice/djslice above. ASCII-letter scope only, same
+// simplification PLAN.md R7 already accepts for slugify() -- this
+// codebase's charity names are English/ASCII throughout.
+export function djangoTitle(value: string): string {
+  let titled = "";
+  let prevIsAlpha = false;
+  for (const ch of value) {
+    const isAlpha = /[A-Za-z]/.test(ch);
+    titled += isAlpha ? (prevIsAlpha ? ch.toLowerCase() : ch.toUpperCase()) : ch;
+    prevIsAlpha = isAlpha;
+  }
+  return titled
+    .replace(/([a-z])'([A-Z])/g, (_m, before: string, after: string) => `${before}'${after.toLowerCase()}`)
+    .replace(/(\d)([A-Z])/g, (_m, digit: string, after: string) => `${digit}${after.toLowerCase()}`);
+}
+
 // django's `|slice:"5"` -- Python list-slice syntax (here, just the "first
 // N" form actually used by any ported template so far). Registered as
 // "djslice", not "slice": nunjucks already ships a builtin `slice` filter

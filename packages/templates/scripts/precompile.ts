@@ -12,6 +12,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import nunjucks from "nunjucks";
+import { AutoescapeExtension } from "../src/autoescapeExtension";
 import { BlocktransExtension } from "../src/blocktransExtension";
 import { parsePoFile } from "../src/poParser";
 import { LOCALES, type Locale } from "../src/i18n";
@@ -60,6 +61,9 @@ mkdirSync(localesOutDir, { recursive: true });
 // method runs during compilation, same as every built-in tag.
 const compileEnv = new nunjucks.Environment(null, { autoescape: true });
 compileEnv.addExtension("blocktrans", new BlocktransExtension(nunjucks));
+// {% autoescape %} -- same "needs the full parser at compile time" reasoning
+// as blocktrans above; see autoescapeExtension.ts's module comment.
+compileEnv.addExtension("autoescape", new AutoescapeExtension(nunjucks));
 
 const source: string = nunjucks.precompile(templatesDir, {
   include: [/\.njk$/],

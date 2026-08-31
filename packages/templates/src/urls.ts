@@ -33,6 +33,7 @@ const ROUTES: Record<string, string> = {
   bot: "/bot/",
   register_foodbank: "/register-foodbank/",
   sitemap: "/sitemap.xml",
+  md_sitemap: "/md/sitemap.xml",
 };
 
 const PARAMETERISED: Record<string, (...args: string[]) => string> = {
@@ -65,6 +66,16 @@ const PARAMETERISED: Record<string, (...args: string[]) => string> = {
   "wfbn:constituency": (parlconSlug) => `/needs/in/constituency/${parlconSlug}/`,
   "wfbn-generic:webpush_subscribe": (slug) => `/needs/webpush/subscribe/${slug}/`,
   "wfbn-generic:webpush_unsubscribe": (slug) => `/needs/webpush/unsubscribe/${slug}/`,
+  // WP 4.3 (/md/ mirror) -- gfwfbn/urls/md.py's "wfbn-md" namespace, all
+  // outside i18n_patterns (givefood/urls.py's "Markdown versions" block is
+  // in the untranslated section), so none of these need I18N_SCOPED.
+  "wfbn-md:md_foodbank_locations": (slug) => `/md/needs/at/${slug}/locations/`,
+  "wfbn-md:md_foodbank_location": (slug, locslug) => `/md/needs/at/${slug}/${locslug}/`,
+  "wfbn-md:md_foodbank_donationpoints": (slug) => `/md/needs/at/${slug}/donationpoints/`,
+  "wfbn-md:md_foodbank_donationpoint": (slug, dpslug) => `/md/needs/at/${slug}/donationpoint/${dpslug}/`,
+  "wfbn-md:md_foodbank_news": (slug) => `/md/needs/at/${slug}/news/`,
+  "wfbn-md:md_foodbank_charity": (slug) => `/md/needs/at/${slug}/charity/`,
+  "wfbn-md:md_foodbank_nearby": (slug) => `/md/needs/at/${slug}/nearby/`,
 };
 
 // Route names reached inside Django's i18n_patterns -- `{% url %}` for one

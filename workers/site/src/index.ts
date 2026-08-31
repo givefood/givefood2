@@ -39,6 +39,11 @@ import { manifestJson } from "./routes/public/manifest";
 import { sitemapXml } from "./routes/public/sitemaps";
 import { llmsTxt, securityTxt } from "./routes/public/textFiles";
 import { frag } from "./routes/public/frag";
+import { mdIndex, mdSitemapMd, mdSitemapXml } from "./routes/public/md";
+import { mdFoodbank, mdFoodbankNearby } from "./routes/wfbn/md/foodbank";
+import { mdFoodbankLocation, mdFoodbankLocations } from "./routes/wfbn/md/locations";
+import { mdFoodbankDonationpoint, mdFoodbankDonationpoints } from "./routes/wfbn/md/donationpoints";
+import { mdFoodbankCharity, mdFoodbankNews } from "./routes/wfbn/md/newsCharity";
 import { notPortedYet } from "./routes/notPortedYet";
 import { render404 } from "./render404";
 import { render500 } from "./render500";
@@ -252,6 +257,24 @@ for (const locale of LOCALES) {
   if (locale === "en") continue;
   app.get(`/${locale}/frag/:frag{ip-address|last-updated|need-hits|news}/`, frag);
 }
+
+// WP 4.3: the "/md/" markdown mirror -- givefood/urls.py's "Markdown
+// versions" block, entirely outside i18n_patterns (no locale loop, same
+// as llms.txt/security.txt above). Registered in the same relative order
+// as gfwfbn/urls/md.py itself: every literal-segment sub-page before the
+// generic :locslug catch-all, so news/charity/nearby/etc. aren't captured
+// by it.
+app.get("/md/", mdIndex);
+app.get("/md/sitemap.xml", mdSitemapXml);
+app.get("/md/sitemap.md", mdSitemapMd);
+app.get("/md/needs/at/:slug/", mdFoodbank);
+app.get("/md/needs/at/:slug/locations/", mdFoodbankLocations);
+app.get("/md/needs/at/:slug/donationpoints/", mdFoodbankDonationpoints);
+app.get("/md/needs/at/:slug/donationpoint/:dpslug/", mdFoodbankDonationpoint);
+app.get("/md/needs/at/:slug/news/", mdFoodbankNews);
+app.get("/md/needs/at/:slug/charity/", mdFoodbankCharity);
+app.get("/md/needs/at/:slug/nearby/", mdFoodbankNearby);
+app.get("/md/needs/at/:slug/:locslug/", mdFoodbankLocation);
 
 // Everything below is specified in PLAN.md but not yet built. Each returns
 // 501 so the gap is loud during development. Build order follows PLAN.md

@@ -1,0 +1,34 @@
+{% autoescape false %}# {{ location.name }} - {{ full_name }}
+
+{% if foodbank.is_closed %}**This food bank is closed.**
+
+{% endif %}{% if latest_need_change_text != "Unknown" and latest_need_change_text != "Nothing" and latest_need_change_text != "Facebook" %}## Items needed
+
+{{ latest_need_get_change_text }}
+{% if latest_need_excess_change_text %}
+## Items not needed
+
+{% for item in excess_text_list %}{{ item }}{% if not loop.last %}, {% endif %}{% endfor %}
+{% endif %}{% endif %}
+{% if location.address or location.postcode %}
+## Address
+
+{% if location.address %}{{ location.address }}
+{% endif %}{% if location.postcode %}{{ location.postcode }}{% endif %}
+{% endif %}
+{% if foodbank.delivery_address %}
+## Delivery address
+
+{{ foodbank.delivery_address }}
+{% endif %}
+
+## Contact
+
+- Website: [{{ foodbank.url }}]({{ foodbank.url }})
+{% if foodbank.phone_number %}- Phone: [{{ foodbank.phone_number }}](tel:{{ foodbank.phone_number }})
+{% endif %}- Email: [{{ foodbank.contact_email }}](mailto:{{ foodbank.contact_email }})
+
+## Parent food bank
+
+[{{ full_name }}]({{ url('wfbn-md:md_foodbank', foodbank.slug) }})
+{% endautoescape %}

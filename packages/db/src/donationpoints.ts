@@ -96,6 +96,24 @@ export async function getDonationPointIdByUuid(session: Session, uuid: string, f
   return row ? row.id : null;
 }
 
+// gfwfbn-md `md_foodbank_donationpoint` -- single donation point scoped to
+// its parent food bank's slug, mirroring getFoodbankLocationBySlugs in
+// locations.ts exactly. foodbank_slug is the denormalised column already
+// on this table (see DonationPointRow), so this is a single-table lookup,
+// no join needed to reproduce Django's
+// `get_object_or_404(FoodbankDonationPoint, slug=dpslug, foodbank=foodbank)`.
+export async function getDonationPointBySlugs(
+  session: Session,
+  foodbankSlug: string,
+  donationPointSlug: string,
+): Promise<DonationPointRow | null> {
+  const row = await session
+    .prepare("SELECT * FROM foodbankdonationpoint WHERE slug = ? AND foodbank_slug = ?")
+    .bind(donationPointSlug, foodbankSlug)
+    .first();
+  return row ? mapDonationPointRow(row as Record<string, unknown>) : null;
+}
+
 // gfapi2 `donationpoints` geojson, and the full-detail source for
 // `donationpoint_search`'s surviving donation-point winners (see
 // getOpenDonationPointCoordinates for the cheap candidate-set version

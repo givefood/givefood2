@@ -77,17 +77,19 @@ export interface FeaturedArticleRow {
   featured: boolean;
 }
 
+// Shared SELECT/JOIN behind getFeaturedArticles/getRecentArticles/
+// getArticlesByFoodbankId below -- same row shape/join (FeaturedArticleRow),
+// each function differs only in its WHERE clause.
+const ARTICLE_SELECT =
+  "SELECT a.id, a.foodbank_id, a.foodbank_name, f.slug AS foodbank_slug, a.published_date, a.title, a.url, a.featured " +
+  "FROM foodbankarticle a JOIN foodbank f ON f.id = a.foodbank_id ";
+
 // index()'s `articles` -- FoodbankArticle.select_related('foodbank'),
 // joined here for the real foodbank.slug (favicon/link URLs), not a
 // slugify() of the denormalised name the way recently_updated is.
 export async function getFeaturedArticles(session: Session, limit: number): Promise<FeaturedArticleRow[]> {
   const result = await session
-    .prepare(
-      "SELECT a.id, a.foodbank_id, a.foodbank_name, f.slug AS foodbank_slug, a.published_date, a.title, a.url, a.featured " +
-        "FROM foodbankarticle a JOIN foodbank f ON f.id = a.foodbank_id " +
-        "WHERE a.featured = 1 " +
-        "ORDER BY a.published_date DESC LIMIT ?",
-    )
+    .prepare(`${ARTICLE_SELECT}WHERE a.featured = 1 ORDER BY a.published_date DESC LIMIT ?`)
     .bind(limit)
     .all();
   return result.results.map((r) => coerceBooleans<FeaturedArticleRow>(r as Record<string, unknown>, ["featured"]));
@@ -112,12 +114,21 @@ export async function getFeaturedArticles(session: Session, limit: number): Prom
 // use it -- unmeasured, but moot at the table's current ~168-row size).
 export async function getRecentArticles(session: Session, limit: number): Promise<FeaturedArticleRow[]> {
   const result = await session
-    .prepare(
-      "SELECT a.id, a.foodbank_id, a.foodbank_name, f.slug AS foodbank_slug, a.published_date, a.title, a.url, a.featured " +
-        "FROM foodbankarticle a JOIN foodbank f ON f.id = a.foodbank_id " +
-        "ORDER BY a.published_date DESC LIMIT ?",
-    )
+    .prepare(`${ARTICLE_SELECT}ORDER BY a.published_date DESC LIMIT ?`)
     .bind(limit)
+    .all();
+  return result.results.map((r) => coerceBooleans<FeaturedArticleRow>(r as Record<string, unknown>, ["featured"]));
+}
+
+// Foodbank.articles() (givefood/models/foodbank.py:307-309) -- md_foodbank_news's
+// `foodbank.articles`, same row shape/join as getFeaturedArticles above,
+// scoped to one food bank instead of the featured=1 filter. Same
+// KNOWN DATA-SCOPE GAP as getRecentArticles above -- will be empty or
+// near-empty for most food banks until a fuller article ETL lands.
+export async function getArticlesByFoodbankId(session: Session, foodbankId: number, limit: number): Promise<FeaturedArticleRow[]> {
+  const result = await session
+    .prepare(`${ARTICLE_SELECT}WHERE a.foodbank_id = ? ORDER BY a.published_date DESC LIMIT ?`)
+    .bind(foodbankId, limit)
     .all();
   return result.results.map((r) => coerceBooleans<FeaturedArticleRow>(r as Record<string, unknown>, ["featured"]));
 }

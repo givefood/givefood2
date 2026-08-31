@@ -167,6 +167,15 @@ export function excessList(excessChangeText: string | null): string[] {
   return excessChangeText ? excessChangeText.split("\n") : [];
 }
 
+// FoodbankChange.get_text() (givefood/models/needs.py:216-259, backing
+// get_change_text()/get_excess_text_list()) -- blank lines stripped, rest
+// re-joined. Every /md/ page rendering "Items needed"/"Items not needed"
+// needs this filtered form; changeList()/excessList() above are the raw,
+// unfiltered siblings used elsewhere.
+export function nonEmptyLines(text: string): string[] {
+  return text.split("\n").filter((line) => line.trim().length > 0);
+}
+
 // Django's slugify(), reproduced only as simply as this codebase actually
 // needs it -- same scope note as api1.ts's own copy (PLAN.md R7: a full
 // Unicode-faithful slugify is a much bigger job that matters for the

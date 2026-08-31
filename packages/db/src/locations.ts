@@ -106,6 +106,15 @@ export async function getAllOpenLocationSlugs(session: Session): Promise<Array<{
   return result.results as unknown as Array<{ foodbank_slug: string; slug: string }>;
 }
 
+// sitemap.md's variant of the above -- same narrow-column reasoning, plus
+// `name` for the link text (the XML sitemap has no link text, only <loc>).
+export async function getAllOpenLocationSlugsWithNames(
+  session: Session,
+): Promise<Array<{ foodbank_slug: string; slug: string; name: string }>> {
+  const result = await session.prepare("SELECT foodbank_slug, slug, name FROM foodbanklocation WHERE is_closed = 0").all();
+  return result.results as unknown as Array<{ foodbank_slug: string; slug: string; name: string }>;
+}
+
 // Candidate set for the location branch of `donationpoint_search`
 // (`FoodbankLocation.objects.filter(is_closed=False, is_donation_point=True)`).
 // `is_donation_point = 1` naturally excludes NULL rows under D1's

@@ -1,0 +1,5 @@
+{% autoescape false %}# News - {{ full_name }}
+
+{% for article in articles %}- [{{ article.title_captialised }}]({{ article.url }}) ({{ article.published_date }})
+{% endfor %}
+{% endautoescape %}

@@ -8,12 +8,14 @@
 // PrecompiledLoader -- see that script for how templates/*.njk gets there.
 import nunjucksSlim, { type Environment } from "nunjucks/browser/nunjucks-slim.js";
 import { precompiledTemplates } from "./generated/precompiled";
+import { AutoescapeExtension } from "./autoescapeExtension";
 import { BlocktransExtension } from "./blocktransExtension";
 import { loadCatalogue, translate, type Locale } from "./i18n";
 import {
   commaSeparated,
   djangoDate,
   djangoSlice,
+  djangoTitle,
   filesizeformat,
   floatformat,
   friendlyPhone,
@@ -64,6 +66,7 @@ function buildEnvironment(): Environment {
   // locale -- see blocktransExtension.ts's module comment for why this is
   // a *different* instance of the same class from precompile.ts's.
   env.addExtension("blocktrans", new BlocktransExtension(nunjucksSlim));
+  env.addExtension("autoescape", new AutoescapeExtension(nunjucksSlim));
 
   // Registered under Django's own filter names (custom_tags.py's
   // @register.filter def names), snake_case -- not camelCase, which is
@@ -81,6 +84,7 @@ function buildEnvironment(): Environment {
   env.addFilter("intcomma", intcomma);
   env.addFilter("date", djangoDate);
   env.addFilter("djslice", djangoSlice);
+  env.addFilter("django_title", djangoTitle);
   env.addFilter("truncatechars", truncatechars);
   env.addFilter("linebreaksbr", (value: string) => new nunjucksSlim.runtime.SafeString(linebreaksbr(value)));
   env.addFilter("floatformat", floatformat);
