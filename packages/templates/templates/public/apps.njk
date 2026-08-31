@@ -1,0 +1,40 @@
+{% extends "page.njk" %}
+
+{% block title %}Give Food Apps{% endblock %}
+
+{% block body %}
+
+  <div class="columns is-centered">
+    <div class="column">
+      <a href="{{ url('index') }}" class="logo"><img src="/static/img/logo.svg" alt="Give Food"></a>
+    </div>
+  </div>
+
+
+  <div class="columns is-centered">
+    <div class="column is-two-thirds content apps">
+        <h1>Give Food Apps</h1>
+
+        <p>Join the tens of thousands of people using our unique nationwide database to find food banks to help each week.</p>
+
+        <p>Our quick and easy to use mobile apps are the easiest way to connect with local food banks and contribute to your community.</p>
+
+        <p>Download Give Food on your iPhone or Android device to find what local food banks need and how you can help by donating or volunteering. Receive useful notifications when a food bank requests items or when you are at a donation point such as a supermarket or church.</p>
+
+        {% include "includes/appbadges.njk" %}
+
+        <div class="appscreenshots">
+            <a href="/static/img/appscreenshots/1.png"><img src="/static/img/appscreenshots/1.png" alt="Give Food App Screenshot" loading="lazy"></a>
+            <a href="/static/img/appscreenshots/2.png"><img src="/static/img/appscreenshots/2.png" alt="Give Food App Screenshot" loading="lazy"></a>
+            <a href="/static/img/appscreenshots/3.png"><img src="/static/img/appscreenshots/3.png" alt="Give Food App Screenshot" loading="lazy"></a>
+            <a href="/static/img/appscreenshots/4.png"><img src="/static/img/appscreenshots/4.png" alt="Give Food App Screenshot" loading="lazy"></a>
+        </div>
+
+    </div>
+    <div class="column is-one-third is-hidden-mobile">
+      <img src="/static/img/app.png" alt="Give Food App" loading="lazy">
+    </div>
+
+  </div>
+
+{% endblock %}

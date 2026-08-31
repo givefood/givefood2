@@ -4,7 +4,7 @@ import { buildPageContext, render } from "@givefood/templates";
 import type { AppEnv } from "../types";
 import { dbSession } from "../lib/session";
 import { elapsedMs } from "../middleware/serverTiming";
-import { slugify, titleCapitalised, urlWithRefFoodbank } from "../lib/fields";
+import { ENABLE_WRITE, isoDate, mapArticleRow, slugify } from "../lib/fields";
 
 // givefood/views.py:77-209 index() -- verbatim, not from any wfbn app
 // (see PLAN.md §10.2.2's app boundary note: "givefood" itself, ported for
@@ -34,15 +34,6 @@ const MOST_VIEWED_LIMIT = 8;
 const MOST_VIEWED_DAYS = 7;
 const ARTICLES_LIMIT = 5;
 
-function isoDate(d: Date): string {
-  return d.toISOString().slice(0, 10);
-}
-
-// givefood/const/general.py's ENABLE_WRITE -- a hardcoded constant, not an
-// env flag (grep confirms no other value is ever assigned to it), so
-// there's nothing to read at request time.
-const ENABLE_WRITE = true;
-
 export async function publicIndex(c: Context<AppEnv>): Promise<Response> {
   const session = dbSession(c);
   const locale = c.get("lang") as "en" | "cy" | "ga" | "gd";
@@ -63,12 +54,7 @@ export async function publicIndex(c: Context<AppEnv>): Promise<Response> {
   // exactly, .only('foodbank_name')).
   const recentlyUpdated = recentlyUpdatedRows.map((r) => ({ name: r.foodbank_name, slug: slugify(r.foodbank_name) }));
 
-  const articles = articleRows.map((a) => ({
-    foodbank: { slug: a.foodbank_slug, name: a.foodbank_name },
-    url_with_ref: urlWithRefFoodbank(a.url),
-    title_captialised: titleCapitalised(a.title),
-    published_date: a.published_date,
-  }));
+  const articles = articleRows.map(mapArticleRow);
 
   const geojsonPath = "/needs/geo.json"; // wfbn:geojson, WP 3.6 not built yet
   const mapConfig = JSON.stringify({

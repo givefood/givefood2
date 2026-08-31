@@ -33,9 +33,12 @@ import {
   getFoodbankBySlug,
   getFoodbankLocationBySlugs,
   getFoodbanksByConstituencyId,
+  getFoodbanksByCountry,
   getLocationsByFoodbankIdUnsorted,
   getOpenDonationPointsByConstituencyId,
+  getOpenDonationPointsByCountry,
   getOpenLocationsByConstituencyId,
+  getOpenLocationsByCountry,
   type DonationPointRow,
   type FoodbankLocationRow,
   type FoodbankRow,
@@ -43,12 +46,30 @@ import {
 } from "@givefood/db";
 import { formatFloat, pyRound, replaceBoundaryProperties, setBoundaryPropertyType, toDjangoJsonFormat } from "@givefood/serialise";
 import { fullAddressNullable, fullAddressUnconditional, fullNameLocaleAware } from "./fields";
+import { COUNTRY_MAPPING } from "./countries";
 
 export type GeojsonScope =
   | { kind: "all" }
   | { kind: "foodbank"; slug: string }
   | { kind: "location"; slug: string; locslug: string }
-  | { kind: "constituency"; parlconSlug: string };
+  | { kind: "constituency"; parlconSlug: string }
+  // givefood `country_geojson` (givefood/views.py:285-427) -- a DIFFERENT
+  // Django view from `geojson` above (not one more branch of it), but
+  // structurally close enough to reuse every feature-building helper
+  // below. Two things about it are genuinely NOT "just another scoped
+  // feed" though (verified against a live /england/geo.json response, not
+  // just read off the Python source) -- see buildGeojsonResponse's own
+  // comment on decimalPlaces/includeBoundary for both:
+  //   1. decimal_places is hardcoded 4 (givefood/views.py:318), not the
+  //      6 every OTHER scoped feed (foodbank/location/constituency) uses.
+  //   2. Its `for location in locations:` loop (givefood/views.py:367-392)
+  //      has no `if location.boundary_geojson` branch at all -- every
+  //      location is always a plain "l" point, never an "lb" boundary
+  //      polygon, unlike the scoped feeds above.
+  // "address" IS still included though (givefood/views.py:334/383/411),
+  // same as the other three scoped feeds -- so this scope needs its own
+  // combination, not a fifth reuse of `allItems`.
+  | { kind: "country"; countrySlug: string };
 
 // Every "url" property below is a page path, not an absolute URL (Django's
 // `reverse()` never calls `build_absolute_uri()` in this view) -- but IS
@@ -85,13 +106,13 @@ function pointFeature(typeCode: string, entries: ReadonlyArray<[string, string]>
   return `{"type":"Feature","geometry":{"type":"Point","coordinates":${coords}},"properties":{${props}}}`;
 }
 
-function foodbankFeatures(foodbank: FoodbankRow, locale: string, allItems: boolean, decimalPlaces: number): string[] {
+function foodbankFeatures(foodbank: FoodbankRow, locale: string, includeAddress: boolean, decimalPlaces: number): string[] {
   const fullName = fullNameLocaleAware(foodbank.name, foodbank.alt_name, locale as "en" | "cy" | "ga" | "gd");
   const url = foodbankUrl(locale, foodbank.slug);
   const out: string[] = [];
 
   const mainEntries: Array<[string, string]> = [["name", fullName]];
-  if (!allItems) mainEntries.push(["address", fullAddressUnconditional(foodbank.address, foodbank.postcode)]);
+  if (includeAddress) mainEntries.push(["address", fullAddressUnconditional(foodbank.address, foodbank.postcode)]);
   mainEntries.push(["url", url]);
   out.push(pointFeature("f", mainEntries, foodbank.lat_lng, decimalPlaces));
 
@@ -100,9 +121,14 @@ function foodbankFeatures(foodbank: FoodbankRow, locale: string, allItems: boole
   // raise if it were ever null while delivery_address wasn't -- that
   // pairing is an application-level invariant, not something this view
   // checks). Reproduced the same way: no extra null-guard added here.
+  // (country_geojson's OWN foodbank loop -- givefood/views.py:343 -- checks
+  // `foodbank.delivery_address and foodbank.delivery_lat_lng` explicitly,
+  // unlike this shared view; under the same invariant the two conditions
+  // are equivalent in practice, so this one helper still covers both
+  // call sites without a second, near-duplicate branch.)
   if (foodbank.delivery_address) {
     const deliveryEntries: Array<[string, string]> = [["name", `${fullName} Delivery Address`]];
-    if (!allItems) deliveryEntries.push(["address", foodbank.delivery_address]);
+    if (includeAddress) deliveryEntries.push(["address", foodbank.delivery_address]);
     deliveryEntries.push(["url", url]);
     out.push(pointFeature("f", deliveryEntries, foodbank.delivery_lat_lng as string, decimalPlaces));
   }
@@ -110,14 +136,22 @@ function foodbankFeatures(foodbank: FoodbankRow, locale: string, allItems: boole
   return out;
 }
 
-function locationFeature(location: FoodbankLocationRow, locale: string, allItems: boolean, decimalPlaces: number): string {
+function locationFeature(
+  location: FoodbankLocationRow,
+  locale: string,
+  includeAddress: boolean,
+  includeBoundary: boolean,
+  decimalPlaces: number,
+): string {
   const url = foodbankLocationUrl(locale, location.foodbank_slug, location.slug);
 
-  // A boundary only renders as its own polygon ("lb") on a SCOPED feed --
-  // the all-items feed always uses the plain point, even for a location
-  // that has a boundary (gfwfbn/views.py:288: `if location.boundary_geojson
-  // and not all_items`).
-  if (location.boundary_geojson && !allItems) {
+  // A boundary only renders as its own polygon ("lb") on a feed that opts
+  // in via `includeBoundary` -- the all-items feed (gfwfbn/views.py:288:
+  // `if location.boundary_geojson and not all_items`) and country_geojson
+  // (givefood/views.py:367-392, which has no boundary branch AT ALL --
+  // every location is always a plain point there) both pass false;
+  // foodbank/location/constituency pass true.
+  if (location.boundary_geojson && includeBoundary) {
     return replaceBoundaryProperties(location.boundary_geojson, [
       ["type", "lb"],
       ["name", location.name],
@@ -130,17 +164,17 @@ function locationFeature(location: FoodbankLocationRow, locale: string, allItems
     ["name", location.name],
     ["foodbank", location.foodbank_name],
   ];
-  if (!allItems) entries.push(["address", fullAddressNullable(location.address, location.postcode)]);
+  if (includeAddress) entries.push(["address", fullAddressNullable(location.address, location.postcode)]);
   entries.push(["url", url]);
   return pointFeature("l", entries, location.lat_lng, decimalPlaces);
 }
 
-function donationPointFeature(dp: DonationPointRow, locale: string, allItems: boolean, decimalPlaces: number): string {
+function donationPointFeature(dp: DonationPointRow, locale: string, includeAddress: boolean, decimalPlaces: number): string {
   const entries: Array<[string, string]> = [
     ["name", dp.name],
     ["foodbank", dp.foodbank_name],
   ];
-  if (!allItems) entries.push(["address", fullAddressUnconditional(dp.address, dp.postcode)]);
+  if (includeAddress) entries.push(["address", fullAddressUnconditional(dp.address, dp.postcode)]);
   entries.push(["url", foodbankDonationPointUrl(locale, dp.foodbank_slug, dp.slug)]);
   return pointFeature("d", entries, dp.lat_lng, decimalPlaces);
 }
@@ -151,7 +185,18 @@ function donationPointFeature(dp: DonationPointRow, locale: string, allItems: bo
 // as the three `get_object_or_404` calls in the Python source.
 export async function buildGeojsonResponse(session: Session, locale: string, scope: GeojsonScope): Promise<string | null> {
   const allItems = scope.kind === "all";
-  const decimalPlaces = allItems ? 4 : 6;
+  // country_geojson hardcodes 4 decimal places (givefood/views.py:318),
+  // the same as the all-items feed -- everything else (foodbank/location/
+  // constituency) uses 6. See the GeojsonScope "country" comment above.
+  const decimalPlaces = allItems || scope.kind === "country" ? 4 : 6;
+  // "address" is stripped ONLY on the all-items feed -- country_geojson
+  // keeps it, same as the other three scoped feeds.
+  const includeAddress = !allItems;
+  // A location's boundary_geojson only ever renders as its own "lb"
+  // polygon on foodbank/location/constituency -- never on all-items, and
+  // never on country_geojson either (its location loop has no boundary
+  // branch at all). See the GeojsonScope "country" comment above.
+  const includeBoundary = !allItems && scope.kind !== "country";
 
   let foodbanks: FoodbankRow[] = [];
   let locations: FoodbankLocationRow[] = [];
@@ -163,6 +208,21 @@ export async function buildGeojsonResponse(session: Session, locale: string, sco
       getAllOpenFoodbanks(session),
       getAllOpenLocations(session),
       getAllOpenDonationPoints(session),
+    ]);
+  } else if (scope.kind === "country") {
+    // Routing constrains countrySlug to the 4 real values (see
+    // index.ts's `:countrySlug{scotland|england|wales|northern-ireland}`
+    // route param), so this is never undefined in practice -- but this
+    // function has no route-layer guarantee of its own to lean on, so it
+    // still 404s (returns null) rather than querying with `country =
+    // undefined`, same defensiveness as the three get_object_or_404-backed
+    // branches below.
+    const countryName = COUNTRY_MAPPING[scope.countrySlug];
+    if (!countryName) return null;
+    [foodbanks, locations, donationpoints] = await Promise.all([
+      getFoodbanksByCountry(session, countryName),
+      getOpenLocationsByCountry(session, countryName),
+      getOpenDonationPointsByCountry(session, countryName),
     ]);
   } else if (scope.kind === "foodbank") {
     const foodbank = await getFoodbankBySlug(session, scope.slug);
@@ -206,9 +266,9 @@ export async function buildGeojsonResponse(session: Session, locale: string, sco
   // The constituency boundary is pushed FIRST, matching the view's code
   // order (the `if parlcon_slug:` block runs before the food bank loop).
   if (boundaryFeature) features.push(boundaryFeature);
-  for (const foodbank of foodbanks) features.push(...foodbankFeatures(foodbank, locale, allItems, decimalPlaces));
-  for (const location of locations) features.push(locationFeature(location, locale, allItems, decimalPlaces));
-  for (const dp of donationpoints) features.push(donationPointFeature(dp, locale, allItems, decimalPlaces));
+  for (const foodbank of foodbanks) features.push(...foodbankFeatures(foodbank, locale, includeAddress, decimalPlaces));
+  for (const location of locations) features.push(locationFeature(location, locale, includeAddress, includeBoundary, decimalPlaces));
+  for (const dp of donationpoints) features.push(donationPointFeature(dp, locale, includeAddress, decimalPlaces));
 
   const body = `{"type":"FeatureCollection","features":[${features.join(",")}]}`;
   return toDjangoJsonFormat(body);

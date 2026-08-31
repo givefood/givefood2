@@ -1,0 +1,122 @@
+{% extends "page.njk" %}
+
+{% block title %}{{ _("About us") }} - Give Food{% endblock %}
+
+{% block head %}
+    <link rel="stylesheet" href="/static/css/about_us.css?v={{ version }}">
+    <meta name="description" content="Give Food a UK charity uses data to highlight local and structural food insecurity then provides tools to help alleviate it.">
+{% endblock %}
+
+{% block body %}
+
+    <div class="columns is-centered">
+        <div class="column is-two-thirds">
+            <a href="{{ url('index') }}" class="logo"><img src="/static/img/logo.svg" alt="Give Food"></a>
+            {% include "includes/langswitcher.njk" %}
+        </div>
+    </div>
+
+    <div class="columns is-centered">
+        <div class="column is-one-third content">
+            <h1>{{ _("About us") }}</h1>
+
+            {% blocktrans %}
+                <p>Give Food is a UK charity that uses data to highlight local and structural food insecurity, then provides tools to help alleviate it.</p>
+
+                <p>We run the only <a href="/needs/">national public database of food banks</a>, tracking in realtime what they are requesting to have donated.</p>
+
+                <p>Working with a wide variety of public and private organisations, including many other charities, we share our data with millions of users each year, helping people learn about and engage with food poverty causes.</p>
+
+                <p>We became a <a href="https://register-of-charities.charitycommission.gov.uk/en/charity-search/-/charity-details/5147019">charity</a> in February 2020, just weeks before the UK entered COVID-19 lockdowns, and since then we've worked with hundreds of local food insecurity alleviation organisations delivering hundreds of tonnes of vitally needed supplies.</p>
+
+                <p>For example, during the pandemic we delivered <a href="/2020/#ppe-supplies">1.2m items of PPE</a> to help keep food banks from Penzance to Lerwick as safe as possible whilst continuing to support their communities.</p>
+
+                <p>We help the public act on food insecurity by using our data to show which food banks are in their parliamentary constituency, and provide a <a href="/write/">tool to easily email their Member of Parliament</a> asking what action they are taking to remedy it.</p>
+
+                <p>Our operations are open source and transparent, with almost all of our current and historical <a href="https://github.com/givefood/givefood">code</a> and <a href="/api/">data</a> published, plus <a href="https://register-of-charities.charitycommission.gov.uk/charity-search/-/charity-details/5147019/accounts-and-annual-returns">accounts</a> and <a href="/annual-reports/">annual reports</a> available to view.</p>
+
+                <p>Please don't hesitate to contact us with any suggestions, comments, criticism or encouragement.</p>
+
+                <p>
+                    <em>The Give Food Trustees</em>
+                </p>
+                <p>
+                    <a href="mailto:mail@givefood.org.uk">mail@givefood.org.uk</a>
+                </p>
+
+            {% endblocktrans %}
+        </div>
+        <div class="column is-one-third">
+
+            <dl class="timeline">
+                <div class="timeline-item">
+                    <dt>{{ _("Apr") }} 2018</dt>
+                    <dd>{{ _("First test grocery deliveries to foodbanks") }}</dd>
+                </div>
+                <div class="timeline-item">
+                    <dt>{{ _("Jun") }} 2019</dt>
+                    <dd>{{ _("Formed Give Food") }}</dd>
+                </div>
+                 <div class="timeline-item">
+                    <dt>{{ _("Jan") }} 2020</dt>
+                    <dd>{% blocktrans %}Released first <a href="/">UK public database of food banks</a>{% endblocktrans %}</dd>
+                </div>
+                <div class="timeline-item">
+                    <dt>{{ _("Feb") }} 2020</dt>
+                    <dd>{% blocktrans %}Became a <a href="https://register-of-charities.charitycommission.gov.uk/en/charity-search/-/charity-details/5147019">registered charity</a>{% endblocktrans %}</dd>
+                </div>
+                <div class="timeline-item">
+                    <dt>{{ _("Dec") }} 2020</dt>
+                    <dd>{% blocktrans %}Open sourced <a href="https://github.com/givefood/">much of our code and versioned data</a>{% endblocktrans %}</dd>
+                </div>
+                <div class="timeline-item">
+                    <dt>{{ _("Oct") }} 2021</dt>
+                    <dd>{{ _("Complete redesign of our website") }}</dd>
+                </div>
+                <div class="timeline-item">
+                    <dt>{{ _("Feb") }} 2022</dt>
+                    <dd>{% blocktrans %}Released our tool to allow the public to easily <a href="/write/">email their MP about food insecurity</a>{% endblocktrans %}</dd>
+                </div>
+                <div class="timeline-item">
+                    <dt>{{ _("Nov") }} 2022</dt>
+                    <dd>{{ _("Started monitoring foodbank item excess in addition to shortages") }}</dd>
+                </div>
+                <div class="timeline-item">
+                    <dt>{{ _("May") }} 2023</dt>
+                    <dd>{% blocktrans %}Selected to be part of British Library's <a href="https://www.webarchive.org.uk/">UK Web Archive</a>{% endblocktrans %}</dd>
+                </div>
+                <div class="timeline-item">
+                    <dt>{{ _("Nov") }} 2023</dt>
+                    <dd>{{ _("First used AI to augment our data processing") }}</dd>
+                </div>
+                <div class="timeline-item">
+                    <dt>{{ _("Mar") }} 2024</dt>
+                    <dd>{{ _("Added food bank donation points to our data") }}</dd>
+                </div>
+                <div class="timeline-item">
+                    <dt>{{ _("May") }} 2024</dt>
+                    <dd>{% blocktrans %}Rebuilt our email your MP tool to contact parlimentary candidates for the <a href="/2024/#general-election">UK general election</a>{% endblocktrans %}</dd>
+                </div>
+                <div class="timeline-item">
+                    <dt>{{ _("Sep") }} 2024</dt>
+                    <dd>{% blocktrans %}Launched our site in <a href="/cy/">Welsh</a> and <a href="/gd/">Scots Gaelic</a>{% endblocktrans %}</dd>
+                </div>
+                <div class="timeline-item">
+                    <dt>{{ _("Jun") }} 2025</dt>
+                    <dd>{{ _("Data now includes charity financial information") }}</dd>
+                </div>
+                <div class="timeline-item">
+                    <dt>{{ _("Nov") }} 2025</dt>
+                    <dd>{% blocktrans %}Released <a href="/apps/">mobile apps</a>{% endblocktrans %}</dd>
+                </div>
+                <div class="timeline-item">
+                    <dt>{{ _("Dec") }} 2025</dt>
+                    <dd>{{ _("Website now available in 20 languages") }}</dd>
+                </div>
+            </dl>
+
+        </div>
+    </div>
+
+
+{% endblock %}

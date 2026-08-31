@@ -92,3 +92,85 @@ export async function getFeaturedArticles(session: Session, limit: number): Prom
     .all();
   return result.results.map((r) => coerceBooleans<FeaturedArticleRow>(r as Record<string, unknown>, ["featured"]));
 }
+
+// news()'s `articles` (givefood/views.py:582-590) --
+// FoodbankArticle.select_related('foodbank').order_by('-published_date')[:100],
+// deliberately WITHOUT the `featured = 1` filter getFeaturedArticles() above
+// applies -- the /news/ page shows every recent article, not just featured
+// ones. Same row shape/join as getFeaturedArticles(), so it reuses
+// FeaturedArticleRow rather than a near-duplicate interface.
+//
+// KNOWN DATA-SCOPE GAP: 0003_homepage_data.sql's own comment says the D1
+// `foodbankarticle` table was seeded with featured=true rows ONLY (168 of
+// 17,194 in production) -- "the homepage only ever reads the 5 most recent
+// featured articles; copying the other 17k for a query that never runs
+// isn't worth it. Revisit if a future /news/ page needs the rest." That
+// future page is this one: until a fuller extraction lands, this query is
+// correct but can only ever return the featured subset already present in
+// D1, not a true "last 100 articles" (also note `article_published_idx` is
+// a partial index `WHERE featured = 1`, so this unfiltered query doesn't
+// use it -- unmeasured, but moot at the table's current ~168-row size).
+export async function getRecentArticles(session: Session, limit: number): Promise<FeaturedArticleRow[]> {
+  const result = await session
+    .prepare(
+      "SELECT a.id, a.foodbank_id, a.foodbank_name, f.slug AS foodbank_slug, a.published_date, a.title, a.url, a.featured " +
+        "FROM foodbankarticle a JOIN foodbank f ON f.id = a.foodbank_id " +
+        "ORDER BY a.published_date DESC LIMIT ?",
+    )
+    .bind(limit)
+    .all();
+  return result.results.map((r) => coerceBooleans<FeaturedArticleRow>(r as Record<string, unknown>, ["featured"]));
+}
+
+// givefood `country()` (givefood/views.py:213-281) -- the country-scoped
+// twin of index()'s `recently_updated` above: same exclusion list and
+// `published = 1` filter, but additionally joined to `foodbank` to filter
+// by the denormalised `country` column (Django's
+// `foodbank__country=country_name`), something the homepage's own
+// unscoped query never needs. The view over-fetches (LIMIT 50) and
+// deduplicates by foodbank_name in Python, keeping the first 10 unique
+// names; that fetch-then-dedupe step is the caller's job (D1 has no
+// simple "distinct on, keep original order" primitive), so this function
+// just returns the raw (still possibly-duplicate) top `limit` rows, same
+// contract as the Python queryset before its dedup loop runs.
+export async function getRecentlyUpdatedByCountry(
+  session: Session,
+  countryName: string,
+  limit: number,
+): Promise<RecentlyUpdatedRow[]> {
+  const result = await session
+    .prepare(
+      "SELECT fc.foodbank_name FROM foodbankchange fc " +
+        "JOIN foodbank f ON f.id = fc.foodbank_id " +
+        "WHERE fc.published = 1 AND fc.change_text NOT IN ('Unknown', 'Facebook', 'Nothing') " +
+        "AND fc.foodbank_name IS NOT NULL AND f.country = ? " +
+        "ORDER BY fc.created DESC LIMIT ?",
+    )
+    .bind(countryName, limit)
+    .all();
+  return result.results as unknown as RecentlyUpdatedRow[];
+}
+
+// givefood `country()` (givefood/views.py:213-281) -- the country-scoped
+// twin of index()'s `most_viewed` above (same trailing-7-day hit window),
+// filtered by the denormalised `country` column the same way
+// getRecentlyUpdatedByCountry is.
+export async function getMostViewedByCountry(
+  session: Session,
+  sinceDay: string,
+  untilDay: string,
+  countryName: string,
+  limit: number,
+): Promise<MostViewedRow[]> {
+  const result = await session
+    .prepare(
+      "SELECT f.name, f.slug FROM foodbankhit h " +
+        "JOIN foodbank f ON f.id = h.foodbank_id " +
+        "WHERE h.day >= ? AND h.day <= ? AND f.country = ? " +
+        "GROUP BY h.foodbank_id " +
+        "ORDER BY SUM(h.hits) DESC LIMIT ?",
+    )
+    .bind(sinceDay, untilDay, countryName, limit)
+    .all();
+  return result.results as unknown as MostViewedRow[];
+}

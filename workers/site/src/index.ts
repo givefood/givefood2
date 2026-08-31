@@ -26,8 +26,17 @@ import { wfbnWebpushConfig, wfbnWebpushSubscribe, wfbnWebpushUnsubscribe } from 
 import { wfbnMobsub, wfbnDeleteMobsub } from "./routes/wfbn/mobsub";
 import { humanRelay } from "./routes/human";
 import { publicIndex } from "./routes/public";
+import { publicAboutUs, publicApps, publicBot } from "./routes/public/contentPages";
+import { publicColophon } from "./routes/public/colophon";
+import { publicServices } from "./routes/public/services";
+import { publicPrivacy } from "./routes/public/privacy";
+import { publicDonate } from "./routes/public/donate";
+import { publicNews } from "./routes/public/news";
+import { publicCountry, publicCountryGeojson } from "./routes/public/country";
+import { annualReport, annualReportIndex } from "./routes/public/annualReport";
 import { notPortedYet } from "./routes/notPortedYet";
 import { render404 } from "./render404";
+import { render500 } from "./render500";
 
 // gfapi2 (WP 2.4) split across 5 files by concern during the build; every
 // "self"/"urls" field each one emits is hardcoded to /api/2/... regardless
@@ -157,6 +166,50 @@ for (const locale of LOCALES) {
   app.post(`/${locale}/human/`, humanRelay);
 }
 
+// WP 4.1: the givefood root app's content pages -- all i18n-patterned
+// (givefood/urls.py's "Translated pages" block) except services/privacy,
+// which sit in the "Untranslated pages" block and so get no locale loop.
+app.get("/about-us/", publicAboutUs);
+app.get("/apps/", publicApps);
+app.get("/bot/", publicBot);
+app.get("/colophon/", publicColophon);
+app.get("/donate/", publicDonate);
+app.get("/news/", publicNews);
+app.get("/services/", publicServices);
+app.get("/privacy/", publicPrivacy);
+app.get("/annual-reports/", annualReportIndex);
+for (const locale of LOCALES) {
+  if (locale === "en") continue;
+  app.get(`/${locale}/about-us/`, publicAboutUs);
+  app.get(`/${locale}/apps/`, publicApps);
+  app.get(`/${locale}/bot/`, publicBot);
+  app.get(`/${locale}/colophon/`, publicColophon);
+  app.get(`/${locale}/donate/`, publicDonate);
+  app.get(`/${locale}/news/`, publicNews);
+  app.get(`/${locale}/annual-reports/`, annualReportIndex);
+}
+
+// givefood `country`/`country_geojson` and `annual_report` -- both single
+// dynamic path segments off the root, registered AFTER every static
+// single-segment page above (matching givefood/urls.py's own comment,
+// "Country pages -- must be before generic slug patterns", i.e. relative
+// order matters in Django's sequential regex matching; Hono's router
+// prioritises static segments over param ones at the same tree level
+// regardless of order, but this keeps the two in visible agreement).
+// :year is regex-constrained to the same fixed year alternation Django's
+// own re_path uses -- "the only guard against template-path injection" in
+// the original app; annualReport()'s own template lookup is a second,
+// belt-and-braces guard.
+app.get("/:countrySlug{scotland|england|wales|northern-ireland}/", publicCountry);
+app.get("/:countrySlug{scotland|england|wales|northern-ireland}/geo.json", publicCountryGeojson);
+app.get("/:year{2019|2020|2021|2022|2023|2024|2025}/", annualReport);
+for (const locale of LOCALES) {
+  if (locale === "en") continue;
+  app.get(`/${locale}/:countrySlug{scotland|england|wales|northern-ireland}/`, publicCountry);
+  app.get(`/${locale}/:countrySlug{scotland|england|wales|northern-ireland}/geo.json`, publicCountryGeojson);
+  app.get(`/${locale}/:year{2019|2020|2021|2022|2023|2024|2025}/`, annualReport);
+}
+
 // Everything below is specified in PLAN.md but not yet built. Each returns
 // 501 so the gap is loud during development. Build order follows PLAN.md
 // §10's phases: wfbn (translated pages) and the APIs next, admin last.
@@ -189,6 +242,14 @@ app.notFound(async (c) => {
   }
 
   return c.html(await render404(c), 404);
+});
+
+// Django's default 500.html (DEBUG=False) -- no equivalent existed here
+// before WP 4.1 (an uncaught exception previously produced Hono's own bare
+// default error response).
+app.onError(async (err, c) => {
+  console.error(err);
+  return c.html(await render500(c), 500);
 });
 
 export default app;

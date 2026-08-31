@@ -131,6 +131,20 @@ export async function getOpenDonationPointsByConstituencyId(
   return result.results.map(mapDonationPointRow);
 }
 
+// givefood `country_geojson` (givefood/views.py:285-427) -- the
+// donation-point half of a country-scoped feed, same shape as
+// `getOpenDonationPointsByConstituencyId` above
+// (`FoodbankDonationPoint.objects.filter(country = country_name,
+// is_closed=False)`), just filtered by the denormalised `country` column
+// instead of a constituency id.
+export async function getOpenDonationPointsByCountry(session: Session, countryName: string): Promise<DonationPointRow[]> {
+  const result = await session
+    .prepare("SELECT * FROM foodbankdonationpoint WHERE country = ? AND is_closed = 0")
+    .bind(countryName)
+    .all();
+  return result.results.map(mapDonationPointRow);
+}
+
 // Full rows for a small, already-ranked set of donation-point ids -- same
 // order-preservation reasoning as `getFoodbanksByIds`/`getLocationsByIds`.
 export async function getDonationPointsByIds(session: Session, ids: readonly number[]): Promise<DonationPointRow[]> {

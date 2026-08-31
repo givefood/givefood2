@@ -228,3 +228,16 @@ export async function getOpenFoodbanksWithDeliveryAddress(session: Session): Pro
     .all();
   return result.results.map(mapFoodbankRow);
 }
+
+// givefood `country_geojson` (givefood/views.py:285-427) -- the food-bank
+// half of a country-scoped feed, same shape as
+// `getFoodbanksByConstituencyId` above (`Foodbank.objects.filter(country =
+// country_name, is_closed=False)`), just filtered by the denormalised
+// `country` column instead of a constituency id.
+export async function getFoodbanksByCountry(session: Session, countryName: string): Promise<FoodbankRow[]> {
+  const result = await session
+    .prepare("SELECT * FROM foodbank WHERE country = ? AND is_closed = 0")
+    .bind(countryName)
+    .all();
+  return result.results.map(mapFoodbankRow);
+}

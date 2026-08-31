@@ -30,6 +30,8 @@ const ROUTES: Record<string, string> = {
   services: "/services/",
   news: "/news/",
   md_index: "/md/",
+  bot: "/bot/",
+  register_foodbank: "/register-foodbank/",
 };
 
 const PARAMETERISED: Record<string, (...args: string[]) => string> = {
@@ -54,6 +56,7 @@ const PARAMETERISED: Record<string, (...args: string[]) => string> = {
   "api2:foodbank": (slug) => `/api/2/foodbank/${slug}/`,
   "wfbn-generic:foodbank_favicon": (slug) => `/needs/at/${slug}/favicon.png`,
   country: (countrySlug) => `/${countrySlug}/`,
+  country_geojson: (countrySlug) => `/${countrySlug}/geo.json`,
   annual_report: (year) => `/${year}/`,
   "wfbn:foodbank_geojson": (slug) => `/needs/at/${slug}/geo.json`,
   "wfbn:foodbank_location_geojson": (slug, locslug) => `/needs/at/${slug}/${locslug}/geo.json`,
@@ -125,6 +128,10 @@ const I18N_SCOPED = new Set([
   // that template was first ported -- silently dropping the locale prefix
   // on every cy/ga/gd foodbank page's subscribe form action.
   "human",
+  // WP 4.1 (content pages): all three inside the same i18n_patterns block.
+  "bot",
+  "register_foodbank",
+  "country_geojson",
 ]);
 
 function build(name: string, args: string[]): string {

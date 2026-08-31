@@ -1,0 +1,33 @@
+{% extends "page.njk" %}
+
+{% block title %}{{ _("News") }} - Give Food{% endblock %}
+
+{% block body %}
+
+  <div class="columns is-centered">
+    <div class="column is-two-thirds">
+      <a href="{{ url('index') }}" class="logo"><img src="/static/img/logo.svg" alt="Give Food"></a>
+      {% include "includes/langswitcher.njk" %}
+    </div>
+  </div>
+
+  <div class="columns is-centered">
+    <div class="column is-two-thirds news-page">
+
+      <h1>{{ _("News") }}</h1>
+      {#- Django's own include is `{% include 'public/frags/news.html' with
+         show_time=True %}` -- Nunjucks's {% include %} has no `with` clause
+         (see api2/_macros.njk's module comment, which turned two similar
+         cases into macros instead). A macro isn't worth it for a single
+         boolean immediately consumed by the very next tag: {% set %} at
+         template top level lands in the same context object `{% include %}`
+         hands the partial (nunjucks's compileInclude calls
+         `context.getVariables()`, not just the current frame), and nothing
+         follows this include in the block for the value to leak into. #}
+      {% set show_time = true %}
+      {% include "public/frags/news.njk" %}
+
+    </div>
+  </div>
+
+{% endblock %}

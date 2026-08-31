@@ -195,3 +195,35 @@ export function titleCapitalised(title: string): string {
   while (result.includes("  ")) result = result.replace("  ", " ");
   return result;
 }
+
+// "YYYY-MM-DD" -- the "most viewed this week" day-range boundaries every
+// hits-based query (public.ts, wfbn/country.ts) needs, shared rather than
+// redefined per file.
+export function isoDate(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+// givefood/const/general.py's ENABLE_WRITE -- a hardcoded constant, not an
+// env flag (grep confirms no other value is ever assigned to it), so
+// there's nothing to read at request time. Shared rather than redefined
+// per file that needs the "Write to your MP" link gate.
+export const ENABLE_WRITE = true;
+
+export interface ArticleTemplateRow {
+  foodbank: { slug: string; name: string | null };
+  url_with_ref: string;
+  title_captialised: string;
+  published_date: string;
+}
+
+// FoodbankArticle -> the shape public/frags/news.njk actually reads --
+// shared by public.ts's featured-articles section and news.ts's full
+// listing, since both feed the same frag template.
+export function mapArticleRow(a: { foodbank_slug: string; foodbank_name: string | null; url: string; title: string; published_date: string }): ArticleTemplateRow {
+  return {
+    foodbank: { slug: a.foodbank_slug, name: a.foodbank_name },
+    url_with_ref: urlWithRefFoodbank(a.url),
+    title_captialised: titleCapitalised(a.title),
+    published_date: a.published_date,
+  };
+}
