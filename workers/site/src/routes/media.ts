@@ -7,6 +7,13 @@ import type { AppEnv } from "../types";
 // ship": keyed by URL path (not place_id), so serving a request is a single
 // env.MEDIA.get() with no D1 dependency and no lookup.
 //
+// favicon.png/donationpoint favicon.png are NOT here -- they don't go
+// through R2 at all. Google's favicon service (unlike Static Maps/Places/
+// Browser Rendering) is free and keyless, so there's no billed-API-call
+// reason to keep it out of the request path; routes/wfbn/favicon.ts fetches
+// live and caches the response with the Workers Cache API instead. See
+// that file's own comment for the full reasoning.
+//
 // NOTE: registration order matters. The two-segment location route is the
 // most general and MUST come after the donationpoint route -- exactly as in
 // gfwfbn/urls/generic.py:12-17 -- or /at/:slug/donationpoint/:dp/photo.jpg
@@ -14,10 +21,8 @@ import type { AppEnv } from "../types";
 export const mediaApp = new Hono<AppEnv>();
 
 mediaApp.get("/at/:slug/photo.jpg", serveMedia);
-mediaApp.get("/at/:slug/favicon.png", serveMedia);
 mediaApp.get("/at/:slug/screenshots/:page{.+\\.png}", serveMedia);
 mediaApp.get("/at/:slug/donationpoint/:dp/photo.jpg", serveMedia);
-mediaApp.get("/at/:slug/donationpoint/:dp/favicon.png", serveMedia);
 mediaApp.get("/at/:slug/:loc/photo.jpg", serveMedia);
 
 // Map routes are inside i18n_patterns in Django (one URL, not per-language,

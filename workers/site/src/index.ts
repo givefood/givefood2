@@ -28,6 +28,7 @@ import { wfbnConstituencyGeojson, wfbnFoodbankGeojson, wfbnFoodbankLocationGeojs
 import { wfbnConstituencies, wfbnConstituency, wfbnMpPhotoRedirect } from "./routes/wfbn/constituencies";
 import { wfbnFoodbankUpdates } from "./routes/wfbn/updates";
 import { wfbnFoodbankHit } from "./routes/wfbn/hit";
+import { wfbnFoodbankDonationpointFavicon, wfbnFoodbankFavicon } from "./routes/wfbn/favicon";
 import { wfbnWebpushConfig, wfbnWebpushSubscribe, wfbnWebpushUnsubscribe } from "./routes/wfbn/webpush";
 import { wfbnMobsub, wfbnDeleteMobsub } from "./routes/wfbn/mobsub";
 import { humanRelay } from "./routes/human";
@@ -208,6 +209,8 @@ for (const locale of LOCALES) {
 // method) -- app.all() reproduces that, where app.post() would make Hono
 // itself 404 a non-POST request instead.
 app.post("/needs/at/:slug/hit/", wfbnFoodbankHit);
+app.get("/needs/at/:slug/favicon.png", wfbnFoodbankFavicon);
+app.get("/needs/at/:slug/donationpoint/:dpslug/favicon.png", wfbnFoodbankDonationpointFavicon);
 app.get("/needs/webpush/config/", wfbnWebpushConfig);
 app.all("/needs/webpush/subscribe/:slug/", wfbnWebpushSubscribe);
 app.all("/needs/webpush/unsubscribe/:slug/", wfbnWebpushUnsubscribe);
