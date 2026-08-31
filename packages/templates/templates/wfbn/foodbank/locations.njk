@@ -1,0 +1,118 @@
+{% extends "page.njk" %}
+
+{% block head %}
+  <link rel="stylesheet" href="/static/css/wfbn.css?v={{ version }}">
+  <link rel="alternate" type="text/markdown" href="{{ url('wfbn-md:md_foodbank_locations', foodbank.slug) }}">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:site" content="@GiveFoodCharity">
+  <meta property="og:title" content="{{ full_name }}">
+  <meta property="og:description" content="Find what {{ full_name }} is requesting to have donated">
+  <meta name="description" content="Find what {{ full_name }} is requesting to have donated">
+  <meta property="og:image" content="https://www.givefood.org.uk{{ url('wfbn:foodbank_map', foodbank.slug) }}">
+  <meta property="og:image:alt" content="Map of {{ full_name }}">
+  <meta name="geo.placename" content="{{ full_name }}">
+  <meta name="geo.position" content="{{ foodbank.lat_lng }}">
+  <meta property="place:location:latitude" content="{{ latt }}">
+  <meta property="place:location:longitude" content="{{ long }}">
+  {% if foodbank.is_closed %}
+    <meta name="robots" content="noindex">
+  {% endif %}
+{% endblock %}
+
+{% block title %}{% blocktrans %}Locations{% endblocktrans %} - {{ full_name }} - Give Food{% endblock %}
+
+{% block body %}
+
+  <div class="columns">
+    <div class="column">
+
+      <div class="columns">
+
+        <div class="column">
+          <a href="{{ url('index') }}" class="logo"><img src="/static/img/logo.svg" alt="Give Food"></a>
+          {% include "includes/langswitcher.njk" %}
+        </div>
+
+      </div>
+
+      <nav class="breadcrumb has-arrow-separator" aria-label="breadcrumbs">
+            <ul>
+                <li><a href="{{ url('index') }}">{% blocktrans %}Home{% endblocktrans %}</a></li>
+                <li><a href="{{ url('wfbn:foodbank', foodbank.slug) }}">{{ full_name }}</a></li>
+                <li class="is-active"><a href="#" aria-current="page">{% blocktrans %}Locations{% endblocktrans %}</a></li>
+            </ul>
+      </nav>
+
+      {% set prefix = _("Locations") %}
+      {% include "wfbn/foodbank/includes/pagetitle.njk" %}
+
+      <div class="columns">
+
+          <div class="column is-2 menu-col">
+            {% include "wfbn/foodbank/includes/menu.njk" %}
+          </div>
+
+          <div class="column locations">
+
+            <a href="{{ url('wfbn:foodbank', foodbank.slug) }}">
+              {% if foodbank.address_is_administrative %}
+                {% blocktrans %}Administrative{% endblocktrans %}
+              {% else %}
+                {% blocktrans %}Main{% endblocktrans %}
+              {% endif %}
+            </a>
+            <address>
+              {{ foodbank.address|linebreaksbr }}<br>
+              {{ foodbank.postcode }}
+            </address>
+
+            {% if foodbank.delivery_address %}
+              <a href="{{ url('wfbn:foodbank', foodbank.slug) }}">{% blocktrans %}Delivery{% endblocktrans %}</a>
+              <address>
+                {{ foodbank.delivery_address|linebreaksbr }}
+              </address>
+            {% endif %}
+
+            {% for location in locations %}
+              <div style="clear:both">
+                {% if location.place_has_photo and not location.boundary_geojson %}
+                  <a href="{{ url('wfbn:foodbank_location', foodbank.slug, location.slug) }}">
+                    <picture>
+                      <source srcset="https://www.givefood.org.uk/cdn-cgi/image/width=150,format=avif{{ url('wfbn-generic:foodbank_location_photo', foodbank.slug, location.slug) }} 150w, https://www.givefood.org.uk/cdn-cgi/image/width=300,format=avif{{ url('wfbn-generic:foodbank_location_photo', foodbank.slug, location.slug) }} 300w" type="image/avif" sizes="150px">
+                      <source srcset="https://www.givefood.org.uk/cdn-cgi/image/width=150,format=webp{{ url('wfbn-generic:foodbank_location_photo', foodbank.slug, location.slug) }} 150w, https://www.givefood.org.uk/cdn-cgi/image/width=300,format=webp{{ url('wfbn-generic:foodbank_location_photo', foodbank.slug, location.slug) }} 300w" type="image/webp" sizes="150px">
+                      <img src="https://www.givefood.org.uk/cdn-cgi/image/width=300{{ url('wfbn-generic:foodbank_location_photo', foodbank.slug, location.slug) }}" alt="{{ location.name }}" loading="lazy" class="placephoto {% if language_direction == 'ltr' %}is-pulled-right{% else %}is-pulled-left{% endif %}" style="width:150px;clear:left">
+                    </picture>
+                  </a>
+                {% endif %}
+                {# Django's boundary_geojson branch (a map-thumbnail image) is omitted: wfbn:foodbank_location_map_size has no url() entry or handler in this port yet #}
+                <a href="{{ url('wfbn:foodbank_location', foodbank.slug, location.slug) }}">{{ location.name }}</a>
+                {% if location.address or location.postcode %}
+                  <address>
+                    {% if location.address %}{{ location.address|linebreaksbr }}{% endif %}{% if location.address and location.postcode %}<br>{% endif %}{% if location.postcode %}{{ location.postcode }}{% endif %}
+                  </address>
+                {% endif %}
+              </div>
+            {% endfor %}
+
+          </div>
+
+          <div class="column is-6">
+            <div id="map" class="mainmap"></div>
+            {% set show_service_area = true %}{% include "includes/maplegend.njk" %}
+            {% include "includes/serviceareadisclaimer.njk" %}
+          </div>
+
+      </div>
+
+    </div>
+  </div>
+
+{% endblock %}
+
+{% block script %}
+
+  {% include "includes/mapconfig.njk" %}
+  <script src="/static/js/wfbn.js?v={{ version }}" defer onload="init()"></script>
+  {% set slug = foodbank.slug %}{% include "wfbn/includes/hit.njk" %}
+
+{% endblock %}

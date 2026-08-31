@@ -11,7 +11,9 @@ const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "Ju
 // token table (packages/templates/src/filters.ts) only covers Y/m/d/j/M/P,
 // not S/F, so this single call site formats it directly rather than
 // extending a shared filter for one use.
-function formatCharityRegDate(value: string): string {
+// Exported so the HTML twin (../newsCharity.ts) can reuse this exact logic
+// rather than reimplementing it.
+export function formatCharityRegDate(value: string): string {
   const date = new Date(`${value.replace(" ", "T")}Z`);
   const day = date.getUTCDate();
   const suffix = day % 10 === 1 && day !== 11 ? "st" : day % 10 === 2 && day !== 12 ? "nd" : day % 10 === 3 && day !== 13 ? "rd" : "th";
@@ -26,7 +28,7 @@ function formatCharityRegDate(value: string): string {
 // terminator needs stripping first -- charity_purpose is only ever passed
 // here when truthy (see the call site), so the empty-string case never
 // reaches this function.
-function pythonSplitlines(text: string): string[] {
+export function pythonSplitlines(text: string): string[] {
   return text.replace(/\r\n$|\r$|\n$/, "").split(/\r\n|\r|\n/);
 }
 
@@ -36,7 +38,7 @@ function pythonSplitlines(text: string): string[] {
 // separate third-party aggregator this one /md/ template links to. No
 // Isle of Man branch -- Django's own method has none either, and it's
 // moot here since CHARITY_DETAIL_COUNTRIES already excludes that country.
-function openCharitiesUrl(charityNumber: string | null, country: string): string | null {
+export function openCharitiesUrl(charityNumber: string | null, country: string): string | null {
   if (!charityNumber) return null;
   if (country === "Scotland") return `https://opencharities.uk/sc/${charityNumber}`;
   if (country === "Northern Ireland") return `https://opencharities.uk/ni/${charityNumber.replace(/NIC/g, "")}`;

@@ -1,0 +1,155 @@
+{% extends "page.njk" %}
+
+{% block head %}
+  <link rel="stylesheet" href="/static/css/wfbn.css?v={{ version }}">
+  <link rel="alternate" type="text/markdown" href="{{ url('wfbn-md:md_foodbank_donationpoint', foodbank.slug, donationpoint.slug) }}">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:site" content="@GiveFoodCharity">
+  <meta property="og:title" content="{{ donationpoint.name }}, {{ full_name }}">
+  {# Django's own donationpoint.html has a bug here: `{{ foodbank }}` (bare
+     __str__, i.e. just the name) and `{{ location }}`, a var this view
+     never sets -- preserved verbatim (both resolve to the same empty-ish
+     text here as they do there) rather than silently fixed. #}
+  <meta property="og:description" content="Find what {{ foodbank.name }} food bank in {{ location }} is requesting to have donated">
+  <meta name="description" content="Find what {{ foodbank.name }} food bank in {{ location }} is requesting to have donated">
+  <meta name="geo.placename" content="{{ donationpoint.name }} - {{ full_name }}">
+  <meta name="geo.position" content="{{ donationpoint.lat_lng }}">
+  <meta property="place:location:latitude" content="{{ donationpoint.latitude }}">
+  <meta property="place:location:longitude" content="{{ donationpoint.longitude }}">
+  {% if donationpoint.place_has_photo %}
+    <meta property="og:image" content="https://www.givefood.org.uk{{ url('wfbn-generic:foodbank_donationpoint_photo', foodbank.slug, donationpoint.slug) }}">
+    <meta property="og:image:alt" content="{{ donationpoint.name }} - {{ full_name }}">
+  {% endif %}
+  {% if foodbank.is_closed %}
+    <meta name="robots" content="noindex">
+  {% endif %}
+  <script type="application/ld+json">
+  {{ donationpoint.schema_org_str|safe }}
+  </script>
+{% endblock %}
+
+{% block title %}{{ donationpoint.name }} - {{ full_name }} - Give Food{% endblock %}
+
+{% block body %}
+
+  <div class="columns">
+    <div class="column">
+
+      <div class="columns">
+        <div class="column">
+          <a href="{{ url('index') }}" class="logo"><img src="/static/img/logo.svg" alt="Give Food"></a>
+          {% include "includes/langswitcher.njk" %}
+        </div>
+      </div>
+
+      <nav class="breadcrumb has-arrow-separator" aria-label="breadcrumbs">
+        <ul>
+          <li><a href="{{ url('index') }}">{% blocktrans %}Home{% endblocktrans %}</a></li>
+          <li><a href="{{ url('wfbn:foodbank', foodbank.slug) }}">{{ full_name }}</a></li>
+          <li><a href="{{ url('wfbn:foodbank_donationpoints', foodbank.slug) }}">{% blocktrans %}Donation points{% endblocktrans %}</a></li>
+          <li class="is-active"><a href="#" aria-current="page">{{ donationpoint.name }}</a></li>
+        </ul>
+      </nav>
+
+      {% set prefix = donationpoint.name %}
+      {% include "wfbn/foodbank/includes/pagetitle.njk" %}
+
+      <div class="columns">
+
+          <div class="column is-2 menu-col">
+            {% include "wfbn/foodbank/includes/menu.njk" %}
+          </div>
+
+          <div class="column">
+
+            {% if foodbank.is_closed %}
+              <p class="tag is-danger is-large">{% blocktrans %}This food bank is closed{% endblocktrans %}</p>
+            {% endif %}
+
+            <p>{{ donationpoint.name }} {% set foodbank_url = url('wfbn:foodbank', foodbank.slug) %}{% blocktrans with foodbank_url=foodbank_url foodbank_name=full_name %}is a donation point for <a href="{{ foodbank_url }}">{{ foodbank_name }}</a>{% endblocktrans %}. {% if has_need %}{% blocktrans %}Here they are requesting to have donated...{% endblocktrans %}{% endif %}</p>
+
+            {% if has_need %}
+
+              <p class="needs">
+                {% set need_text = foodbank.latest_need_get_change_text %}{% include "wfbn/includes/need_text.njk" %}
+              </p>
+              {% if foodbank.latest_need_excess_text %}
+                <p>{% blocktrans %}They don't need any more{% endblocktrans %} {% for item in excess_text_list %}{{ item }}{% if not loop.last %}, {% endif %}{% endfor %}.</p>
+              {% endif %}
+
+            {% endif %}
+
+            {% if donationpoint.opening_hours %}
+              <p data-include="{{ openinghours_url }}" data-update="3600"></p>
+            {% endif %}
+
+            {% if donationpoint.notes %}
+              <p>📝 {{ donationpoint.notes|linebreaksbr }}</p>
+            {% endif %}
+
+            {% if donationpoint.in_store_only %}
+              <p>
+                ⚠️ {% blocktrans %}Only accepts in-store purchases as donations{% endblocktrans %}
+                <br><small class="is-size-7">{% blocktrans %}Although, sometimes you can add items marked as not from the store. Best to check.{% endblocktrans %}</small>
+              </p>
+            {% endif %}
+
+            {% if donationpoint.wheelchair_accessible %}
+              <p>♿ {% blocktrans %}Wheelchair accessible{% endblocktrans %}</p>
+            {% endif %}
+
+            {% if has_need %}
+              {% include "wfbn/foodbank/includes/subscribe.njk" %}
+            {% endif %}
+
+          </div>
+
+          <div class="column">
+
+            {% include "wfbn/foodbank/includes/ctas.njk" %}
+
+            {% if donationpoint.place_has_photo %}
+              <div>
+                <picture>
+                  <source srcset="https://www.givefood.org.uk/cdn-cgi/image/format=avif,width=540{{ url('wfbn-generic:foodbank_donationpoint_photo', foodbank.slug, donationpoint.slug) }} 540w, https://www.givefood.org.uk/cdn-cgi/image/format=avif,width=1080{{ url('wfbn-generic:foodbank_donationpoint_photo', foodbank.slug, donationpoint.slug) }} 1080w" type="image/avif" sizes="(max-width: 540px) 540px, 1080px">
+                  <source srcset="https://www.givefood.org.uk/cdn-cgi/image/format=webp,width=540{{ url('wfbn-generic:foodbank_donationpoint_photo', foodbank.slug, donationpoint.slug) }} 540w, https://www.givefood.org.uk/cdn-cgi/image/format=webp,width=1080{{ url('wfbn-generic:foodbank_donationpoint_photo', foodbank.slug, donationpoint.slug) }} 1080w" type="image/webp" sizes="(max-width: 540px) 540px, 1080px">
+                  <img src="https://www.givefood.org.uk/cdn-cgi/image/format=auto{{ url('wfbn-generic:foodbank_donationpoint_photo', foodbank.slug, donationpoint.slug) }}" alt="{{ donationpoint.name }}" loading="lazy" class="placephoto">
+                </picture>
+              </div>
+            {% endif %}
+
+            <div id="map" class="sidemap"></div>
+            {% set show_service_area = true %}{% include "includes/maplegend.njk" %}
+
+            <a href="https://www.google.com/maps?saddr=My+Location&daddr={{ donationpoint.lat_lng }}" class="{% if language_direction == 'ltr' %}is-pulled-right{% else %}is-pulled-left{% endif %} button is-info is-small is-light directions-btn">{% blocktrans %}Directions{% endblocktrans %}</a>
+            <address>
+              {{ donationpoint.address|linebreaksbr }}<br>
+              {{ donationpoint.postcode }}<br>
+              {% set country = donationpoint.country %}{% include "includes/country.njk" %}
+            </address>
+            <div class="pluscode">
+              <a href="https://www.google.co.uk/maps/place/{{ donationpoint.plus_code_global|urlencode }}/" class="pluscode">{{ donationpoint.plus_code_global }}</a>
+            </div>
+
+            <div class="contacts">
+              {% if donationpoint.url %}
+                <a href="{{ donationpoint.url_with_ref }}" class="website">{{ donationpoint.url|friendly_url|truncatechars(40) }}</a>
+              {% endif %}
+              {% if donationpoint.phone_number %}
+                <a href="tel:{{ donationpoint.phone_number|full_phone }}" class="phone">{{ donationpoint.phone_number|friendly_phone }}</a>
+              {% endif %}
+            </div>
+
+          </div>
+      </div>
+
+    </div>
+  </div>
+
+{% endblock %}
+
+{% block script %}
+  {% include "includes/mapconfig.njk" %}
+  <script src="/static/js/wfbn.js?v={{ version }}" defer onload="init()"></script>
+  {% set slug = foodbank.slug %}{% include "wfbn/includes/hit.njk" %}
+{% endblock %}

@@ -19,6 +19,9 @@ import { api1Index, api2Docs, api2Index } from "./routes/apiDocs";
 import { wfbnIndex } from "./routes/wfbn";
 import { wfbnFoodbank } from "./routes/wfbn/foodbank";
 import { wfbnFoodbankNearby } from "./routes/wfbn/nearby";
+import { wfbnFoodbankDonationpoints, wfbnFoodbankLocations } from "./routes/wfbn/locations";
+import { wfbnFoodbankDonationpoint, wfbnFoodbankDonationpointOpeninghours, wfbnFoodbankLocation } from "./routes/wfbn/locationDetail";
+import { wfbnFoodbankCharity, wfbnFoodbankNews } from "./routes/wfbn/newsCharity";
 import { wfbnConstituencyGeojson, wfbnFoodbankGeojson, wfbnFoodbankLocationGeojson, wfbnGeojson } from "./routes/wfbn/geojson";
 import { wfbnFoodbankUpdates } from "./routes/wfbn/updates";
 import { wfbnFoodbankHit } from "./routes/wfbn/hit";
@@ -122,10 +125,24 @@ app.route("/api", notPortedYet("gfapi3 docs page"));
 app.get("/needs/", wfbnIndex);
 app.get("/needs/at/:slug/", wfbnFoodbank);
 app.get("/needs/at/:slug/nearby/", wfbnFoodbankNearby);
+app.get("/needs/at/:slug/locations/", wfbnFoodbankLocations);
+app.get("/needs/at/:slug/donationpoints/", wfbnFoodbankDonationpoints);
+app.get("/needs/at/:slug/donationpoint/:dpslug/", wfbnFoodbankDonationpoint);
+app.get("/needs/at/:slug/donationpoint/:dpslug/openinghours/", wfbnFoodbankDonationpointOpeninghours);
+app.get("/needs/at/:slug/news/", wfbnFoodbankNews);
+app.get("/needs/at/:slug/charity/", wfbnFoodbankCharity);
 app.get("/needs/geo.json", wfbnGeojson);
 app.get("/needs/at/:slug/geo.json", wfbnFoodbankGeojson);
 app.get("/needs/at/:slug/:locslug/geo.json", wfbnFoodbankLocationGeojson);
 app.get("/needs/in/constituency/:parlconSlug/geo.json", wfbnConstituencyGeojson);
+// :locslug is a generic catch-all at the same path depth as every literal
+// sibling above (locations/, donationpoints/, news/, charity/, nearby/,
+// updates/:action/) -- Hono's router prefers a literal segment over a
+// :param one at the same tree level regardless of registration order
+// (already relied on by those existing routes), so this must still be
+// registered after them for the same reason gfwfbn/urls/i18n.py lists
+// foodbank_location dead last.
+app.get("/needs/at/:slug/:locslug/", wfbnFoodbankLocation);
 // Django's `updates` view has no method-restricting decorator (only
 // @csrf_exempt) -- reachable via GET (render a page) or POST (the actions
 // themselves, including the RFC 8058 bare-200 one-click unsubscribe case
@@ -138,12 +155,19 @@ for (const locale of LOCALES) {
   app.get(`/${locale}/needs/`, wfbnIndex);
   app.get(`/${locale}/needs/at/:slug/`, wfbnFoodbank);
   app.get(`/${locale}/needs/at/:slug/nearby/`, wfbnFoodbankNearby);
+  app.get(`/${locale}/needs/at/:slug/locations/`, wfbnFoodbankLocations);
+  app.get(`/${locale}/needs/at/:slug/donationpoints/`, wfbnFoodbankDonationpoints);
+  app.get(`/${locale}/needs/at/:slug/donationpoint/:dpslug/`, wfbnFoodbankDonationpoint);
+  app.get(`/${locale}/needs/at/:slug/donationpoint/:dpslug/openinghours/`, wfbnFoodbankDonationpointOpeninghours);
+  app.get(`/${locale}/needs/at/:slug/news/`, wfbnFoodbankNews);
+  app.get(`/${locale}/needs/at/:slug/charity/`, wfbnFoodbankCharity);
   app.get(`/${locale}/needs/geo.json`, wfbnGeojson);
   app.get(`/${locale}/needs/at/:slug/geo.json`, wfbnFoodbankGeojson);
   app.get(`/${locale}/needs/at/:slug/:locslug/geo.json`, wfbnFoodbankLocationGeojson);
   app.get(`/${locale}/needs/in/constituency/:parlconSlug/geo.json`, wfbnConstituencyGeojson);
   app.get(`/${locale}/needs/at/:slug/updates/:action{subscribe|confirm|unsubscribe}/`, wfbnFoodbankUpdates);
   app.post(`/${locale}/needs/at/:slug/updates/:action{subscribe|confirm|unsubscribe}/`, wfbnFoodbankUpdates);
+  app.get(`/${locale}/needs/at/:slug/:locslug/`, wfbnFoodbankLocation);
 }
 
 // gfwfbn `wfbn-generic` -- registered before i18n_patterns in

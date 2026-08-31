@@ -1,5 +1,5 @@
-import { toDashedUuid, type FoodbankWithLatestNeed } from "@givefood/db";
-import { charityRegisterUrl, fsaUrl } from "./fields";
+import { toDashedUuid, type DonationPointRow, type FoodbankLocationRow, type FoodbankWithLatestNeed } from "@givefood/db";
+import { charityRegisterUrl, emailOrFoodbankEmail, fsaUrl, phoneOrFoodbankPhone } from "./fields";
 
 // givefood/const/general.py -- verbatim.
 const TRUSSELL_TRUST_SCHEMA = {
@@ -37,26 +37,36 @@ const IFAN_SCHEMA = {
 
 const SITE_DOMAIN = "https://www.givefood.org.uk";
 
+// givefood/const/general.py's TRUSSELL_TRUST_SCHEMA/IFAN_SCHEMA lookup,
+// shared by Foodbank/FoodbankLocation's own memberOf (DonationPoint has no
+// memberOf field at all).
+function memberOfForNetwork(network: string | null): unknown {
+  if (network === "Trussell") return TRUSSELL_TRUST_SCHEMA;
+  if (network === "IFAN") return IFAN_SCHEMA;
+  return {};
+}
+
+// FoodbankChange's `seeks` block -- identical computation duplicated
+// across all three schema_org() ports below (Foodbank/FoodbankLocation/
+// FoodbankDonationPoint all seek the same latest_need).
+function computeSeeks(changeText: string): unknown[] {
+  if (changeText === "Nothing" || changeText === "Unknown" || changeText === "Facebook") return [];
+  return changeText.split("\n").map((need) => ({ "@type": "Demand", itemOffered: { "@type": "Product", name: need } }));
+}
+
 // Foodbank.schema_org() -- givefood/models/foodbank.py:179-256. Tolerant
 // parity, not byte-exact: this isn't a Phase 2 API surface, and Python's
 // `json.dumps(..., sort_keys=True)` output can't be matched byte-for-byte
 // by JSON.stringify without a custom serialiser -- not worth building for
 // a field search engines read, not golden-tested.
-export function buildFoodbankSchemaOrg(foodbank: FoodbankWithLatestNeed, fullName: string): Record<string, unknown> {
+//
+// `asSubProperty` mirrors the Python method's own `as_sub_property` arg
+// (@context/seeks dropped) -- FoodbankLocation/FoodbankDonationPoint's own
+// schema_org() nest a `parentOrganization` built this way.
+export function buildFoodbankSchemaOrg(foodbank: FoodbankWithLatestNeed, fullName: string, asSubProperty = false): Record<string, unknown> {
   const [latStr, lngStr] = foodbank.lat_lng.split(",");
   const changeText = foodbank.latestNeed?.change_text ?? "Nothing";
-
-  const seeks =
-    changeText !== "Nothing" && changeText !== "Unknown" && changeText !== "Facebook"
-      ? changeText.split("\n").map((need) => ({
-          "@type": "Demand",
-          itemOffered: { "@type": "Product", name: need },
-        }))
-      : [];
-
-  let memberOf: unknown = {};
-  if (foodbank.network === "Trussell") memberOf = TRUSSELL_TRUST_SCHEMA;
-  if (foodbank.network === "IFAN") memberOf = IFAN_SCHEMA;
+  const seeks = computeSeeks(changeText);
 
   const address: Record<string, unknown> = {
     "@type": "PostalAddress",
@@ -81,7 +91,7 @@ export function buildFoodbankSchemaOrg(foodbank: FoodbankWithLatestNeed, fullNam
   if (foodbank.facebook_page) sameAs.push(`https://www.facebook.com/${foodbank.facebook_page}`);
 
   const schema: Record<string, unknown> = {
-    "@context": "https://schema.org",
+    ...(asSubProperty ? {} : { "@context": "https://schema.org" }),
     "@type": "NGO",
     "@id": `${SITE_DOMAIN}/needs/at/${foodbank.slug}/`,
     additionalType: "https://www.wikidata.org/wiki/Q113603",
@@ -96,17 +106,106 @@ export function buildFoodbankSchemaOrg(foodbank: FoodbankWithLatestNeed, fullNam
       geo: { "@type": "GeoCoordinates", latitude: Number(latStr), longitude: Number(lngStr) },
     },
     identifier: foodbank.charity_number,
-    memberOf,
+    memberOf: memberOfForNetwork(foodbank.network),
     sameAs,
   };
   if (foodbank.parliamentary_constituency_name) {
     schema.areaServed = { "@type": "AdministrativeArea", name: foodbank.parliamentary_constituency_name };
   }
-  if (seeks.length > 0) schema.seeks = seeks;
+  if (!asSubProperty && seeks.length > 0) schema.seeks = seeks;
 
   return schema;
 }
 
 export function schemaOrgStr(foodbank: FoodbankWithLatestNeed, fullName: string): string {
   return JSON.stringify(buildFoodbankSchemaOrg(foodbank, fullName), null, 2);
+}
+
+// FoodbankLocation.schema_org() -- givefood/models/foodbank.py:822-887.
+// `locationFullName` is `"{location.name}, {foodbank full name}"`
+// (FoodbankLocation.full_name()).
+export function buildLocationSchemaOrg(
+  location: FoodbankLocationRow,
+  foodbank: FoodbankWithLatestNeed,
+  fullName: string,
+  locationFullName: string,
+): Record<string, unknown> {
+  const changeText = foodbank.latestNeed?.change_text ?? "Nothing";
+  const seeks = computeSeeks(changeText);
+  // location.latitude/.longitude are nullable in production (lat_lng is
+  // not) -- same reasoning as buildFoodbankSchemaOrg above.
+  const [locationLatStr, locationLngStr] = location.lat_lng.split(",");
+
+  const schema: Record<string, unknown> = {
+    "@context": "https://schema.org",
+    "@type": "NGO",
+    "@id": `${SITE_DOMAIN}/needs/at/${location.foodbank_slug}/${location.slug}/`,
+    name: locationFullName,
+    url: foodbank.url,
+    email: emailOrFoodbankEmail(location.email, location.foodbank_email),
+    telephone: phoneOrFoodbankPhone(location.phone_number, location.foodbank_phone_number),
+    location: {
+      "@type": "Place",
+      geo: { "@type": "GeoCoordinates", latitude: Number(locationLatStr), longitude: Number(locationLngStr) },
+    },
+    identifier: foodbank.charity_number,
+    memberOf: memberOfForNetwork(location.foodbank_network),
+    parentOrganization: buildFoodbankSchemaOrg(foodbank, fullName, true),
+  };
+  if (location.address || location.postcode) {
+    const address: Record<string, unknown> = { "@type": "PostalAddress", addressCountry: location.country };
+    if (location.postcode) address.postalCode = location.postcode;
+    if (location.address) address.streetAddress = location.address;
+    if (location.district) address.addressLocality = location.district;
+    schema.address = address;
+  }
+  if (seeks.length > 0) schema.seeks = seeks;
+
+  return schema;
+}
+
+export function locationSchemaOrgStr(location: FoodbankLocationRow, foodbank: FoodbankWithLatestNeed, fullName: string, locationFullName: string): string {
+  return JSON.stringify(buildLocationSchemaOrg(location, foodbank, fullName, locationFullName), null, 2);
+}
+
+// FoodbankDonationPoint.schema_org() -- givefood/models/foodbank.py:1064-1148.
+// Tolerant parity extends to `openingHoursSpecification` too: this omits
+// it rather than re-parsing `opening_hours` a second time for a JSON-LD
+// field, not golden-tested output either.
+export function buildDonationPointSchemaOrg(donationpoint: DonationPointRow, foodbank: FoodbankWithLatestNeed, fullName: string): Record<string, unknown> {
+  const changeText = foodbank.latestNeed?.change_text ?? "Nothing";
+  const seeks = computeSeeks(changeText);
+  // donationpoint.latitude/.longitude are nullable in production (lat_lng
+  // is not) -- same reasoning as buildFoodbankSchemaOrg above.
+  const [dpLatStr, dpLngStr] = donationpoint.lat_lng.split(",");
+
+  const address: Record<string, unknown> = {
+    "@type": "PostalAddress",
+    postalCode: donationpoint.postcode,
+    addressCountry: donationpoint.country,
+    streetAddress: donationpoint.address,
+  };
+  if (donationpoint.district) address.addressLocality = donationpoint.district;
+
+  const schema: Record<string, unknown> = {
+    "@context": "https://schema.org",
+    "@type": "Place",
+    name: donationpoint.name,
+    url: donationpoint.url,
+    telephone: donationpoint.phone_number,
+    isAccessibleForFree: donationpoint.wheelchair_accessible,
+    address,
+    location: {
+      "@type": "Place",
+      geo: { "@type": "GeoCoordinates", latitude: Number(dpLatStr), longitude: Number(dpLngStr) },
+    },
+    parentOrganization: buildFoodbankSchemaOrg(foodbank, fullName, true),
+  };
+  if (seeks.length > 0) schema.seeks = seeks;
+
+  return schema;
+}
+
+export function donationPointSchemaOrgStr(donationpoint: DonationPointRow, foodbank: FoodbankWithLatestNeed, fullName: string): string {
+  return JSON.stringify(buildDonationPointSchemaOrg(donationpoint, foodbank, fullName), null, 2);
 }
