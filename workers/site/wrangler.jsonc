@@ -132,24 +132,22 @@
   "secrets": {
     // GMAP_GEOCODE_KEY: lib/geocode.ts (the four */search/?address=
     // endpoints, WP 2.4 follow-up). Set 2026-08-30.
-    "required": ["GMAP_GEOCODE_KEY"]
-    // "required" is enforced for real by `wrangler deploy` (not just
-    // `wrangler dev`) -- confirmed the hard way: adding the four names
-    // below here on 2026-08-31 before actually running `wrangler secret
-    // put` for any of them made Cloudflare Workers Builds fail outright
-    // ("The following required secrets have not been set"), blocking
-    // every deploy from main until reverted. `wrangler deploy --dry-run`
-    // does NOT perform this check, so it looked safe locally -- it isn't.
-    // Move a name into "required" in the SAME change that actually sets
-    // it with `wrangler secret put NAME`, never before.
-    //
     // VAPID_PUBLIC_KEY: routes/wfbn/webpush.ts's wfbnWebpushConfig.
     // TURNSTILE_SECRET: routes/wfbn/updates.ts's subscribe action (siteverify).
-    // POSTMARK_TOKEN: routes/wfbn/updates.ts's confirm/confirmed email sends
-    // -- degrades gracefully (logs and skips) if unset.
-    // SUBSCRIBER_SALT: routes/wfbn/updates.ts's sub_key/unsub_key generation
-    // -- also degrades gracefully (empty-string fallback, format-consistency
-    // only, see PLAN.md risk N1). All four added by WP 3.7, not yet set.
+    // POSTMARK_TOKEN: routes/wfbn/updates.ts's confirm/confirmed email sends.
+    // SUBSCRIBER_SALT: routes/wfbn/updates.ts's sub_key/unsub_key generation.
+    // All four added by WP 3.7, set 2026-08-31 (confirmed via `wrangler
+    // secret list`) -- safe to list as required now.
+    //
+    // "required" is enforced for real by `wrangler deploy` (not just
+    // `wrangler dev`) -- confirmed the hard way earlier the same day:
+    // listing a name here before actually running `wrangler secret put`
+    // for it made Cloudflare Workers Builds fail outright ("The following
+    // required secrets have not been set"), blocking every deploy from
+    // main until reverted. `wrangler deploy --dry-run` does NOT perform
+    // this check, so it looks safe locally when it isn't. Move a name
+    // into "required" only in the same change that actually sets it.
+    "required": ["GMAP_GEOCODE_KEY", "VAPID_PUBLIC_KEY", "TURNSTILE_SECRET", "POSTMARK_TOKEN", "SUBSCRIBER_SALT"]
     // GOOGLE_OAUTH_CLIENT_SECRET, SESSION_HMAC_KEY -- auth (§3.5)
     // GMAP_STATIC_KEY, GMAP_PLACES_KEY -- media backfill, queued not inline (§3.7)
     // CF_API_KEY, CF_ZONE_ID -- cache-tag purge (§3.6)
