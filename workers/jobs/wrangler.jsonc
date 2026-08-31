@@ -64,6 +64,11 @@
   },
 
   "browser": { "binding": "BROWSER" },
+  // Same DATA KV namespace as workers/site (§3.3's binding map: "Slug-
+  // redirect map, site stats, /frag/ payloads, all-foodbanks/all-locations
+  // blobs") -- this Worker is the writer for the /frag/ payloads WP 4.4
+  // adds (fragRefresh, */5 cron); workers/site only ever reads them.
+  "kv_namespaces": [{ "binding": "DATA", "id": "c7dbe1c5cbe542efb91364675e081944" }],
   "d1_databases": [
     // Same database as workers/site -- see the comment there, including the
     // read-replication / Sessions API requirement (confirmed 2026-08-30).

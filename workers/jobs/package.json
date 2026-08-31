@@ -8,6 +8,9 @@
     "types": "wrangler types",
     "typecheck": "tsc --noEmit"
   },
+  "dependencies": {
+    "@givefood/db": "workspace:*"
+  },
   "devDependencies": {
     "typescript": "^7.0.2",
     "wrangler": "^4.127.1",

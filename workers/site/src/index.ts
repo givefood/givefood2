@@ -38,6 +38,7 @@ import { robotsTxt } from "./routes/public/robots";
 import { manifestJson } from "./routes/public/manifest";
 import { sitemapXml } from "./routes/public/sitemaps";
 import { llmsTxt, securityTxt } from "./routes/public/textFiles";
+import { frag } from "./routes/public/frag";
 import { notPortedYet } from "./routes/notPortedYet";
 import { render404 } from "./render404";
 import { render500 } from "./render500";
@@ -240,6 +241,17 @@ for (const locale of LOCALES) {
 // 100% static.
 app.get("/llms.txt", llmsTxt);
 app.get("/.well-known/security.txt", securityTxt);
+
+// WP 4.4: givefood/urls.py:27, inside i18n_patterns. :frag is
+// regex-constrained to the exact 4-value whitelist -- Django's own
+// `if frag not in allowed_frags: raise Http404()` becomes a plain 404 for
+// any other value via this route simply not matching, same convention as
+// every other constrained path segment in this file.
+app.get("/frag/:frag{ip-address|last-updated|need-hits|news}/", frag);
+for (const locale of LOCALES) {
+  if (locale === "en") continue;
+  app.get(`/${locale}/frag/:frag{ip-address|last-updated|need-hits|news}/`, frag);
+}
 
 // Everything below is specified in PLAN.md but not yet built. Each returns
 // 501 so the gap is loud during development. Build order follows PLAN.md

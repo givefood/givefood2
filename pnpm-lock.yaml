@@ -63,6 +63,10 @@ importers:
         version: 7.0.2
 
   workers/jobs:
+    dependencies:
+      '@givefood/db':
+        specifier: workspace:*
+        version: link:../../packages/db
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^5.20260830.1

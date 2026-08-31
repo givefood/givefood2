@@ -4,6 +4,7 @@
 
 export interface Env {
   DB: D1Database;
+  DATA: KVNamespace;
   MEDIA: R2Bucket;
   GEO: R2Bucket;
   DUMPS: R2Bucket;

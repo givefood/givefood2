@@ -1,3 +1,5 @@
+import { translate } from "@givefood/templates";
+
 // Port of django.utils.timesince.timesince() (English locale only, the
 // only locale the JSON API ever serves -- see resolveLanguage.ts). Read
 // directly from the installed Django source (django/utils/timesince.py) to
@@ -88,4 +90,38 @@ export function timesince(dateInput: string | Date, now: Date = new Date()): str
   }
 
   return result.join(", ");
+}
+
+// givefood/views.py's frag() "last-updated" branch:
+//   timesince_text = timesince(Foodbank.objects.latest("modified").modified)
+//   if timesince_text == "0 %s" % (_("minutes")):
+//       frag_text = _("Under a minute ago")
+//   else:
+//       frag_text = "%s %s" % (timesince_text, _("ago"))
+//
+// Reuses the API's own timesince() above for the actual calendar math
+// (same algorithm, not a second implementation) and wraps it with the
+// two words this app's own .po catalogues DO carry translations for
+// ("ago" / "Under a minute ago" -- both explicit _() calls in the Django
+// view). The comparison against the literal English "0 minutes" is safe
+// regardless of locale: timesince() itself is English-only by design (see
+// its own header comment), so this never exposes an untranslated unit
+// word to the page -- only the two wrapper words below are ever rendered,
+// and those ARE properly localised.
+//
+// TRANSLATION GAP, documented not silently dropped: the unit words inside
+// timesince()'s own output ("hour", "day", "week"...) are NOT in this
+// app's catalogues -- Django's timesince() pulls those from Django's own
+// bundled core translations, which were never part of what got extracted
+// into packages/templates/locale/*/django.po. They render in English on
+// every locale until/unless that catalogue gap is closed separately (out
+// of scope for WP 4.4 -- a Django-core-translations import, not an app
+// string). PLAN.md's own §10.4 also notes this field's "parity assertion
+// is shape-only" -- the text is inherently time-varying between the
+// moment two implementations compute it, so byte parity was never
+// realistic regardless of translation completeness.
+export function timesinceAgo(modifiedIso: string, now: Date, catalogue: Record<string, string>): string {
+  const raw = timesince(modifiedIso, now);
+  if (raw === "0 minutes") return translate(catalogue, "Under a minute ago");
+  return `${raw} ${translate(catalogue, "ago")}`;
 }
