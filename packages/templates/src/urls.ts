@@ -32,6 +32,7 @@ const ROUTES: Record<string, string> = {
   md_index: "/md/",
   bot: "/bot/",
   register_foodbank: "/register-foodbank/",
+  sitemap: "/sitemap.xml",
 };
 
 const PARAMETERISED: Record<string, (...args: string[]) => string> = {
@@ -61,6 +62,7 @@ const PARAMETERISED: Record<string, (...args: string[]) => string> = {
   "wfbn:foodbank_geojson": (slug) => `/needs/at/${slug}/geo.json`,
   "wfbn:foodbank_location_geojson": (slug, locslug) => `/needs/at/${slug}/${locslug}/geo.json`,
   "wfbn:constituency_geojson": (parlconSlug) => `/needs/in/constituency/${parlconSlug}/geo.json`,
+  "wfbn:constituency": (parlconSlug) => `/needs/in/constituency/${parlconSlug}/`,
   "wfbn-generic:webpush_subscribe": (slug) => `/needs/webpush/subscribe/${slug}/`,
   "wfbn-generic:webpush_unsubscribe": (slug) => `/needs/webpush/unsubscribe/${slug}/`,
 };
@@ -132,6 +134,13 @@ const I18N_SCOPED = new Set([
   "bot",
   "register_foodbank",
   "country_geojson",
+  // WP 4.2. wfbn:constituency (the constituency detail PAGE, not the
+  // geojson feed) is registered here even though gfwfbn's constituency
+  // page itself isn't built yet -- sitemap.xml needs to emit its URL
+  // regardless, same "route name exists ahead of its real handler"
+  // pattern already used for write:index/register_foodbank.
+  "sitemap",
+  "wfbn:constituency",
 ]);
 
 function build(name: string, args: string[]): string {

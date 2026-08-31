@@ -34,6 +34,10 @@ import { publicDonate } from "./routes/public/donate";
 import { publicNews } from "./routes/public/news";
 import { publicCountry, publicCountryGeojson } from "./routes/public/country";
 import { annualReport, annualReportIndex } from "./routes/public/annualReport";
+import { robotsTxt } from "./routes/public/robots";
+import { manifestJson } from "./routes/public/manifest";
+import { sitemapXml } from "./routes/public/sitemaps";
+import { llmsTxt, securityTxt } from "./routes/public/textFiles";
 import { notPortedYet } from "./routes/notPortedYet";
 import { render404 } from "./render404";
 import { render500 } from "./render500";
@@ -209,6 +213,33 @@ for (const locale of LOCALES) {
   app.get(`/${locale}/:countrySlug{scotland|england|wales|northern-ireland}/geo.json`, publicCountryGeojson);
   app.get(`/${locale}/:year{2019|2020|2021|2022|2023|2024|2025}/`, annualReport);
 }
+
+// WP 4.2. robots.txt/manifest.json/sitemap.xml are i18n-patterned in
+// Django (givefood/urls.py:51-53) but none of their handlers actually
+// vary by the requesting locale except manifest.json's lang/description
+// and sitemap.xml's <loc> prefixes -- registered under all 4 locale
+// prefixes regardless, matching Django's own routing exactly.
+app.get("/robots.txt", robotsTxt);
+app.get("/manifest.json", manifestJson);
+app.get("/sitemap.xml", sitemapXml);
+for (const locale of LOCALES) {
+  if (locale === "en") continue;
+  app.get(`/${locale}/robots.txt`, robotsTxt);
+  app.get(`/${locale}/manifest.json`, manifestJson);
+  app.get(`/${locale}/sitemap.xml`, sitemapXml);
+}
+// Untranslated (givefood/urls.py's "Untranslated pages" block) -- no
+// locale loop. sitemap_places_index.xml/sitemap_places*.xml,
+// sitemap_external.xml, and firebase-messaging-sw.js are deliberately NOT
+// built: sitemap_external.xml per explicit maintainer decision (not
+// needed); sitemap_places* per robots.ts's own comment (blocked on the
+// Place gazetteer table, not yet in D1); firebase-messaging-sw.js because
+// it's confirmed dead -- no client anywhere registers it, only /sw.js is,
+// and that's served as a real static file at dist/static/sw.js instead of
+// a Worker route, per PLAN.md's own recommendation since its content is
+// 100% static.
+app.get("/llms.txt", llmsTxt);
+app.get("/.well-known/security.txt", securityTxt);
 
 // Everything below is specified in PLAN.md but not yet built. Each returns
 // 501 so the gap is loud during development. Build order follows PLAN.md

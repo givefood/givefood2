@@ -31,6 +31,16 @@ export async function getAllConstituencies(session: Session): Promise<Constituen
   return result.results.map((r) => mapConstituencyRow(r as Record<string, unknown>));
 }
 
+// sitemap.xml only ever needs the slug -- PLAN.md's hard rule ("nothing in
+// the codebase issues SELECT * on parliamentaryconstituency or
+// foodbanklocation") exists specifically because boundary_geojson can run
+// to ~1.6 MB for the largest constituencies; getAllConstituencies() above
+// would pull all 650 of those blobs just to read .slug off each row.
+export async function getAllConstituencySlugs(session: Session): Promise<string[]> {
+  const result = await session.prepare("SELECT slug FROM parliamentaryconstituency").all();
+  return result.results.map((r) => (r as { slug: string }).slug);
+}
+
 export async function getConstituencyBySlug(session: Session, slug: string): Promise<ConstituencyRow | null> {
   const row = await session.prepare("SELECT * FROM parliamentaryconstituency WHERE slug = ?").bind(slug).first();
   return row ? mapConstituencyRow(row as Record<string, unknown>) : null;

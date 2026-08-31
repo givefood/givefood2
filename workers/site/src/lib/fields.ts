@@ -140,6 +140,16 @@ export function urlWithRefDonationPoint(url: string | null): string | false {
   return parsed.toString();
 }
 
+// Foodbank.changefreq() -- givefood/models/foodbank.py:168-176, for
+// sitemap.xml's per-foodbank <changefreq> value.
+export function changefreq(daysBetweenNeeds: number): string {
+  if (daysBetweenNeeds === 0) return "yearly";
+  if (daysBetweenNeeds > 90) return "yearly";
+  if (daysBetweenNeeds > 25) return "monthly";
+  if (daysBetweenNeeds > 6) return "weekly";
+  return "daily";
+}
+
 // FoodbankChange.no_items() -- 0 for the two "no items" sentinels
 // (deliberately excludes "Facebook", unlike has_needs()'s three-sentinel
 // check -- verified against needs.py directly, not assumed symmetric).

@@ -96,6 +96,16 @@ export async function getAllOpenLocations(session: Session): Promise<FoodbankLoc
   return result.results.map(mapLocationRow);
 }
 
+// sitemap.xml only ever needs foodbank_slug/slug -- PLAN.md's hard rule
+// ("nothing in the codebase issues SELECT * on parliamentaryconstituency
+// or foodbanklocation") exists specifically because boundary_geojson is a
+// large TEXT blob on this table; getAllOpenLocations() above would pull
+// ~2,000 of those just to read two string columns off each row.
+export async function getAllOpenLocationSlugs(session: Session): Promise<Array<{ foodbank_slug: string; slug: string }>> {
+  const result = await session.prepare("SELECT foodbank_slug, slug FROM foodbanklocation WHERE is_closed = 0").all();
+  return result.results as unknown as Array<{ foodbank_slug: string; slug: string }>;
+}
+
 // Candidate set for the location branch of `donationpoint_search`
 // (`FoodbankLocation.objects.filter(is_closed=False, is_donation_point=True)`).
 // `is_donation_point = 1` naturally excludes NULL rows under D1's
