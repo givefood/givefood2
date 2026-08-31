@@ -1,5 +1,6 @@
 import type { Context } from "hono";
-import { LOCALES, url, urlForLocale } from "@givefood/templates";
+import { LOCALES } from "@givefood/templates";
+import { url, urlForLocale } from "@givefood/urls";
 import type { AppEnv } from "../../types";
 
 // givefood/views.py:819-846 robotstxt() -- givefood/urls.py:51, inside

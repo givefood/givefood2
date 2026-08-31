@@ -9,6 +9,7 @@
     "typecheck": "pnpm run precompile && tsc --noEmit"
   },
   "dependencies": {
+    "@givefood/urls": "workspace:*",
     "nunjucks": "^3.2.4"
   },
   "devDependencies": {

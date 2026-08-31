@@ -45,6 +45,7 @@ import {
   type Session,
 } from "@givefood/db";
 import { formatFloat, pyRound, replaceBoundaryProperties, setBoundaryPropertyType, toDjangoJsonFormat } from "@givefood/serialise";
+import { urlForLocale } from "@givefood/urls";
 import { fullAddressNullable, fullAddressUnconditional, fullNameLocaleAware } from "./fields";
 import { COUNTRY_MAPPING } from "./countries";
 
@@ -76,23 +77,17 @@ export type GeojsonScope =
 // locale-prefixed, because `reverse()` inside a request being handled
 // resolves i18n_patterns routes under whatever language the request is
 // currently running under (see gfwfbn/urls/i18n.py: geojson and the three
-// URL names below all live in the SAME i18n-patterned urls module as
-// `wfbn:index`). Shapes copied verbatim from
-// packages/templates/src/urls.ts's PARAMETERISED table -- not imported
-// from there, per WP 3.6's instructions (this is plain route/lib code,
-// not a template).
-function localePrefix(locale: string): string {
-  return locale === "en" ? "" : `/${locale}`;
-}
-function foodbankUrl(locale: string, slug: string): string {
-  return `${localePrefix(locale)}/needs/at/${slug}/`;
-}
-function foodbankLocationUrl(locale: string, slug: string, locslug: string): string {
-  return `${localePrefix(locale)}/needs/at/${slug}/${locslug}/`;
-}
-function foodbankDonationPointUrl(locale: string, slug: string, dpslug: string): string {
-  return `${localePrefix(locale)}/needs/at/${slug}/donationpoint/${dpslug}/`;
-}
+// URL names used below all live in the SAME i18n-patterned urls module as
+// `wfbn:index`, and all three are in @givefood/urls' I18N_SCOPED set).
+//
+// This file used to carry its own localePrefix()/foodbankUrl()/
+// foodbankLocationUrl()/foodbankDonationPointUrl() copies of those shapes,
+// because WP 3.6 said not to import a @givefood/templates module into
+// plain route/lib code. @givefood/urls is now a standalone package with no
+// template dependency, so that objection no longer applies and the shapes
+// are read from the one table instead of a second transcription of it
+// (audit finding D7; output verified byte-identical across all 4 locales
+// before the switch).
 
 // One Point Feature, built as compact JSON text -- `entries` is the
 // property list AFTER "type" (which every feature has first, verbatim
@@ -108,7 +103,7 @@ function pointFeature(typeCode: string, entries: ReadonlyArray<[string, string]>
 
 function foodbankFeatures(foodbank: FoodbankRow, locale: string, includeAddress: boolean, decimalPlaces: number): string[] {
   const fullName = fullNameLocaleAware(foodbank.name, foodbank.alt_name, locale as "en" | "cy" | "ga" | "gd");
-  const url = foodbankUrl(locale, foodbank.slug);
+  const url = urlForLocale(locale, "wfbn:foodbank", foodbank.slug);
   const out: string[] = [];
 
   const mainEntries: Array<[string, string]> = [["name", fullName]];
@@ -143,7 +138,7 @@ function locationFeature(
   includeBoundary: boolean,
   decimalPlaces: number,
 ): string {
-  const url = foodbankLocationUrl(locale, location.foodbank_slug, location.slug);
+  const url = urlForLocale(locale, "wfbn:foodbank_location", location.foodbank_slug, location.slug);
 
   // A boundary only renders as its own polygon ("lb") on a feed that opts
   // in via `includeBoundary` -- the all-items feed (gfwfbn/views.py:288:
@@ -175,7 +170,7 @@ function donationPointFeature(dp: DonationPointRow, locale: string, includeAddre
     ["foodbank", dp.foodbank_name],
   ];
   if (includeAddress) entries.push(["address", fullAddressUnconditional(dp.address, dp.postcode)]);
-  entries.push(["url", foodbankDonationPointUrl(locale, dp.foodbank_slug, dp.slug)]);
+  entries.push(["url", urlForLocale(locale, "wfbn:foodbank_donationpoint", dp.foodbank_slug, dp.slug)]);
   return pointFeature("d", entries, dp.lat_lng, decimalPlaces);
 }
 

@@ -1,6 +1,7 @@
 import type { Context } from "hono";
 import { getFoodbankBySlug, getLocationsByFoodbankId, getDonationPointsByFoodbankId, hasServiceArea } from "@givefood/db";
 import { buildPageContext, render } from "@givefood/templates";
+import { urlForLocale } from "@givefood/urls";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
 import { elapsedMs } from "../../middleware/serverTiming";
@@ -25,11 +26,8 @@ export async function wfbnFoodbankLocations(c: Context<AppEnv>): Promise<Respons
 
   const [latStr, lngStr] = foodbank.lat_lng.split(",");
 
-  // Same map_config shape as ../foodbank.ts's own mapConfig building
-  // (its geojsonPath/bounds comments apply identically here).
-  const geojsonPath = `/needs/at/${foodbank.slug}/geo.json`;
   const mapConfig: Record<string, unknown> = {
-    geojson: locale === "en" ? geojsonPath : `/${locale}${geojsonPath}`,
+    geojson: urlForLocale(locale, "wfbn:foodbank_geojson", foodbank.slug),
   };
   if (foodbank.bounds_north !== null) {
     mapConfig.bounds = {
@@ -96,9 +94,8 @@ export async function wfbnFoodbankDonationpoints(c: Context<AppEnv>): Promise<Re
 
   const [latStr, lngStr] = foodbank.lat_lng.split(",");
 
-  const geojsonPath = `/needs/at/${foodbank.slug}/geo.json`;
   const mapConfig: Record<string, unknown> = {
-    geojson: locale === "en" ? geojsonPath : `/${locale}${geojsonPath}`,
+    geojson: urlForLocale(locale, "wfbn:foodbank_geojson", foodbank.slug),
   };
   if (foodbank.bounds_north !== null) {
     mapConfig.bounds = {

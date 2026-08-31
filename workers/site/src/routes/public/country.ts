@@ -1,6 +1,7 @@
 import type { Context } from "hono";
 import { getMostViewedByCountry, getRecentlyUpdatedByCountry } from "@givefood/db";
 import { buildPageContext, render } from "@givefood/templates";
+import { urlForLocale } from "@givefood/urls";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
 import { elapsedMs } from "../../middleware/serverTiming";
@@ -55,9 +56,8 @@ export async function publicCountry(c: Context<AppEnv>): Promise<Response> {
   }
 
   const mapSettings = COUNTRY_MAP_CONFIG[countryName]!;
-  const geojsonPath = locale === "en" ? `/${countrySlug}/geo.json` : `/${locale}/${countrySlug}/geo.json`;
   const mapConfig = JSON.stringify({
-    geojson: geojsonPath,
+    geojson: urlForLocale(locale, "country_geojson", countrySlug),
     lat: mapSettings.lat,
     lng: mapSettings.lng,
     zoom: mapSettings.zoom,

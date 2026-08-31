@@ -8,7 +8,8 @@ import {
   getSubscriberByUnsubKey,
   insertSubscriber,
 } from "@givefood/db";
-import { buildPageContext, render, url } from "@givefood/templates";
+import { buildPageContext, render } from "@givefood/templates";
+import { url, urlForLocale } from "@givefood/urls";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
 import { elapsedMs } from "../../middleware/serverTiming";
@@ -185,9 +186,8 @@ export async function wfbnFoodbankUpdates(c: Context<AppEnv>): Promise<Response>
 
     const turnstileValid = await validateTurnstile(c.env.TURNSTILE_SECRET, turnstileToken);
     if (!turnstileValid) {
-      const foodbankPath = url("wfbn:foodbank", foodbank.slug);
-      const localizedPath = locale === "en" ? foodbankPath : `/${locale}${foodbankPath}`;
-      const target = `${localizedPath}?turnstilefail=true&email=${encodeURIComponent(emailRaw)}`;
+      const foodbankPath = urlForLocale(locale, "wfbn:foodbank", foodbank.slug);
+      const target = `${foodbankPath}?turnstilefail=true&email=${encodeURIComponent(emailRaw)}`;
       return c.redirect(target, 302);
     }
 

@@ -10,6 +10,7 @@ import {
 } from "@givefood/db";
 import { buildPageContext, render } from "@givefood/templates";
 import { nearest, R_PYTHON } from "@givefood/geo";
+import { url, urlForLocale } from "@givefood/urls";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
 import { elapsedMs } from "../../middleware/serverTiming";
@@ -37,7 +38,7 @@ export async function wfbnConstituencies(c: Context<AppEnv>): Promise<Response> 
   if (postcode) {
     const slug = await constituencySlugFromPostcode(postcode);
     if (slug) {
-      const target = locale === "en" ? `/needs/in/constituency/${slug}/` : `/${locale}/needs/in/constituency/${slug}/`;
+      const target = urlForLocale(locale, "wfbn:constituency", slug);
       return c.redirect(target, 302);
     }
   }
@@ -138,6 +139,19 @@ export async function wfbnConstituency(c: Context<AppEnv>): Promise<Response> {
   // -- concatenates the food-bank list then the location list, NEITHER
   // sub-list sorted (frozen bug B3, see getFoodbanksForConstituency's own
   // comment) -- reproduced here by not sorting either half.
+  // `gf_url` below is deliberately the UNPREFIXED url() form, not
+  // urlForLocale() -- preserving exactly what this page emitted before the
+  // D7 consolidation moved the two path shapes into @givefood/urls.
+  //
+  // KNOWN DIVERGENCE, pre-existing and NOT introduced here: Django builds
+  // this field with reverse() inside the request, which resolves under the
+  // active language, so /cy/needs/in/constituency/<slug>/ links out to
+  // /cy/needs/at/<slug>/ there and to /needs/at/<slug>/ here. Both names
+  // are in I18N_SCOPED, so switching these two calls to urlForLocale()
+  // would fix it in one line -- but that changes rendered output on every
+  // non-English constituency page, which is a parity decision rather than
+  // a refactor. Same bug class as the `human` entry in I18N_SCOPED's own
+  // comment. constituency.njk:71 is the sole consumer.
   const combinedList: Array<Record<string, unknown>> = [];
   for (const fb of rawFoodbanks) {
     const withNeed = byId.get(fb.id);
@@ -152,7 +166,7 @@ export async function wfbnConstituency(c: Context<AppEnv>): Promise<Response> {
     combinedList.push({
       type: "organisation",
       name: fb.name,
-      gf_url: `/needs/at/${fb.slug}/`,
+      gf_url: url("wfbn:foodbank", fb.slug),
       get_change_text: nonEmptyLines(changeText).join("\n"),
       phone_number: fb.phone_number,
       contact_email: fb.contact_email,
@@ -169,7 +183,7 @@ export async function wfbnConstituency(c: Context<AppEnv>): Promise<Response> {
       name: loc.name,
       foodbank_name: loc.foodbank_name,
       foodbank_name_slug: loc.foodbank_slug,
-      gf_url: `/needs/at/${loc.foodbank_slug}/${loc.slug}/`,
+      gf_url: url("wfbn:foodbank_location", loc.foodbank_slug, loc.slug),
       get_change_text: nonEmptyLines(changeText).join("\n"),
       phone_number: phoneOrFoodbankPhone(loc.phone_number, loc.foodbank_phone_number),
       contact_email: emailOrFoodbankEmail(loc.email, loc.foodbank_email),
@@ -202,7 +216,7 @@ export async function wfbnConstituency(c: Context<AppEnv>): Promise<Response> {
   const nearby = nearbyRanked.map((r) => r.item);
 
   const mapConfig = JSON.stringify({
-    geojson: locale === "en" ? `/needs/in/constituency/${constituency.slug}/geo.json` : `/${locale}/needs/in/constituency/${constituency.slug}/geo.json`,
+    geojson: urlForLocale(locale, "wfbn:constituency_geojson", constituency.slug),
     max_zoom: 14,
   });
 

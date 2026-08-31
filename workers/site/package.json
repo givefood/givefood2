@@ -13,6 +13,7 @@
     "@givefood/geo": "workspace:*",
     "@givefood/serialise": "workspace:*",
     "@givefood/templates": "workspace:*",
+    "@givefood/urls": "workspace:*",
     "hono": "^4.13.5"
   },
   "devDependencies": {

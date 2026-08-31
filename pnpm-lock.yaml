@@ -45,6 +45,9 @@ importers:
 
   packages/templates:
     dependencies:
+      '@givefood/urls':
+        specifier: workspace:*
+        version: link:../urls
       nunjucks:
         specifier: ^3.2.4
         version: 3.2.4
@@ -58,6 +61,12 @@ importers:
       tsx:
         specifier: ^4.19.2
         version: 4.23.12
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+
+  packages/urls:
+    devDependencies:
       typescript:
         specifier: ^7.0.2
         version: 7.0.2
@@ -92,6 +101,9 @@ importers:
       '@givefood/templates':
         specifier: workspace:*
         version: link:../../packages/templates
+      '@givefood/urls':
+        specifier: workspace:*
+        version: link:../../packages/urls
       hono:
         specifier: ^4.13.5
         version: 4.13.5

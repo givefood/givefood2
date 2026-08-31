@@ -1,6 +1,7 @@
 import type { Context } from "hono";
 import { buildPageContext, render } from "@givefood/templates";
 import { isUk } from "@givefood/geo";
+import { urlForLocale } from "@givefood/urls";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
 import { geocode } from "../../lib/geocode";
@@ -91,9 +92,8 @@ export async function wfbnIndex(c: Context<AppEnv>): Promise<Response> {
   const locationsByCategory = rawLocationsByCategory && rawLocationsByCategory.length > 0 ? rawLocationsByCategory : null;
 
   const locale = c.get("lang") as "en" | "cy" | "ga" | "gd";
-  const geojsonPath = "/needs/geo.json"; // WP 3.6, not built yet
   const mapConfig = JSON.stringify({
-    geojson: locale === "en" ? geojsonPath : `/${locale}${geojsonPath}`,
+    geojson: urlForLocale(locale, "wfbn:geojson"),
     lat: latStr,
     lng: lngStr,
     zoom: 13,

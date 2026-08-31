@@ -1,6 +1,7 @@
 import type { Context } from "hono";
 import { getFeaturedArticles, getMostViewed, getRecentlyUpdated, getSiteStats } from "@givefood/db";
 import { buildPageContext, render } from "@givefood/templates";
+import { urlForLocale } from "@givefood/urls";
 import type { AppEnv } from "../types";
 import { dbSession } from "../lib/session";
 import { elapsedMs } from "../middleware/serverTiming";
@@ -56,9 +57,8 @@ export async function publicIndex(c: Context<AppEnv>): Promise<Response> {
 
   const articles = articleRows.map(mapArticleRow);
 
-  const geojsonPath = "/needs/geo.json"; // wfbn:geojson, WP 3.6 not built yet
   const mapConfig = JSON.stringify({
-    geojson: locale === "en" ? geojsonPath : `/${locale}${geojsonPath}`,
+    geojson: urlForLocale(locale, "wfbn:geojson"),
     lat: 55.4,
     lng: -4,
     zoom: 5,

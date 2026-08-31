@@ -1,6 +1,7 @@
 import type { Context } from "hono";
 import { getAllConstituencySlugs, getAllOpenDonationPoints, getAllOpenFoodbanks, getAllOpenLocationSlugs } from "@givefood/db";
-import { urlForLocale, type Locale } from "@givefood/templates";
+import type { Locale } from "@givefood/templates";
+import { urlForLocale } from "@givefood/urls";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
 import { changefreq } from "../../lib/fields";

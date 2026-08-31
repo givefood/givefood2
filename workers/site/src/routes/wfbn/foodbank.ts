@@ -1,6 +1,7 @@
 import type { Context } from "hono";
 import { getFoodbankBySlug, hasServiceArea } from "@givefood/db";
 import { buildPageContext, render } from "@givefood/templates";
+import { urlForLocale } from "@givefood/urls";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
 import { elapsedMs } from "../../middleware/serverTiming";
@@ -39,9 +40,8 @@ export async function wfbnFoodbank(c: Context<AppEnv>): Promise<Response> {
   const [latStr, lngStr] = foodbank.lat_lng.split(",");
   const hasServiceAreaValue = foodbank.no_locations !== 0 ? await hasServiceArea(session, foodbank.id) : false;
 
-  const geojsonPath = `/needs/at/${foodbank.slug}/geo.json`; // wfbn:foodbank_geojson, WP 3.6 not built yet
   const mapConfig: Record<string, unknown> = {
-    geojson: locale === "en" ? geojsonPath : `/${locale}${geojsonPath}`,
+    geojson: urlForLocale(locale, "wfbn:foodbank_geojson", foodbank.slug),
     max_zoom: 14,
   };
   if (foodbank.bounds_north !== null) {

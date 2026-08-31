@@ -10,7 +10,8 @@ import {
   getRecentlyUpdated,
   getSiteStats,
 } from "@givefood/db";
-import { render, url } from "@givefood/templates";
+import { render } from "@givefood/templates";
+import { url } from "@givefood/urls";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
 import { isoDate, slugify } from "../../lib/fields";

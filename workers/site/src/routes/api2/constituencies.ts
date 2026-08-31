@@ -9,6 +9,7 @@ import {
 } from "@givefood/db";
 import type { SerialisableValue } from "@givefood/serialise";
 import type { AppEnv } from "../../types";
+import { url } from "@givefood/urls";
 import { dbSession } from "../../lib/session";
 import { apiResponse, SECONDS_IN_DAY, SECONDS_IN_WEEK } from "../../lib/apiResponse";
 import { emailOrFoodbankEmail, phoneOrFoodbankPhone } from "../../lib/fields";
@@ -75,7 +76,7 @@ async function buildConstituencyFoodbankEntries(
       needs: withNeed.latestNeed,
       url: fb.url,
       shopping_list_url: fb.shopping_list_url,
-      gf_url: `/needs/at/${fb.slug}/`,
+      gf_url: url("wfbn:foodbank", fb.slug),
       phone_number: fb.phone_number,
       contact_email: fb.contact_email,
       facebook_page: fb.facebook_page,
@@ -94,7 +95,7 @@ async function buildConstituencyFoodbankEntries(
       needs: parent.latestNeed,
       url: parent.url,
       shopping_list_url: parent.shopping_list_url,
-      gf_url: `/needs/at/${loc.foodbank_slug}/${loc.slug}/`,
+      gf_url: url("wfbn:foodbank_location", loc.foodbank_slug, loc.slug),
       phone_number: phoneOrFoodbankPhone(loc.phone_number, parent.phone_number),
       contact_email: emailOrFoodbankEmail(loc.email, parent.contact_email),
       facebook_page: parent.facebook_page,

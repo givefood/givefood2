@@ -1,6 +1,7 @@
 import type { Context } from "hono";
 import { getDonationPointBySlugs, getFoodbankBySlug, getFoodbankLocationBySlugs, hasServiceArea } from "@givefood/db";
 import { buildPageContext, render } from "@givefood/templates";
+import { urlForLocale } from "@givefood/urls";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
 import { elapsedMs } from "../../middleware/serverTiming";
@@ -45,19 +46,14 @@ export async function wfbnFoodbankLocation(c: Context<AppEnv>): Promise<Response
   // lat_lng, never the raw columns, same as every other handler in this
   // codebase (foodbank.ts, locations.ts, nearby.ts, md/foodbank.ts).
   const [locationLatStr, locationLngStr] = location.lat_lng.split(",");
-  const geojsonPath = `/needs/at/${foodbank.slug}/geo.json`; // wfbn:foodbank_geojson
   const mapConfig = {
-    geojson: locale === "en" ? geojsonPath : `/${locale}${geojsonPath}`,
+    geojson: urlForLocale(locale, "wfbn:foodbank_geojson", foodbank.slug),
     lat: Number(locationLatStr),
     lng: Number(locationLngStr),
     zoom: location.boundary_geojson ? 12 : 15,
     location_marker: false,
   };
-  // `wfbn:foodbank_location_map` isn't in urls.ts's PARAMETERISED map yet
-  // (out of this task's scope to add) -- built directly here, same
-  // locale-prefix idiom as urls.ts's own urlForLocale().
-  const locationMapPath = `/needs/at/${foodbank.slug}/${location.slug}/map.png`;
-  const locationMapUrl = locale === "en" ? locationMapPath : `/${locale}${locationMapPath}`;
+  const locationMapUrl = urlForLocale(locale, "wfbn:foodbank_location_map", foodbank.slug, location.slug);
 
   const context = buildPageContext({
     path: c.req.path,
@@ -133,21 +129,17 @@ export async function wfbnFoodbankDonationpoint(c: Context<AppEnv>): Promise<Res
   // donationpoint.latitude/.longitude are nullable in production (unlike
   // lat_lng, NOT NULL) -- same reasoning as wfbnFoodbankLocation above.
   const [dpLatStr, dpLngStr] = donationpoint.lat_lng.split(",");
-  const geojsonPath = `/needs/at/${foodbank.slug}/geo.json`;
   const mapConfig = {
-    geojson: locale === "en" ? geojsonPath : `/${locale}${geojsonPath}`,
+    geojson: urlForLocale(locale, "wfbn:foodbank_geojson", foodbank.slug),
     lat: Number(dpLatStr),
     lng: Number(dpLngStr),
     zoom: 15,
     location_marker: false,
   };
 
-  // `wfbn:foodbank_donationpoint_openinghours` isn't in urls.ts's
-  // PARAMETERISED map yet (out of this task's scope to add) -- built
-  // directly here, same locale-prefix idiom as geojsonPath above. Reused
-  // for both the Link preload header and the page's own data-include src.
-  const openingHoursPath = `/needs/at/${slug}/donationpoint/${dpslug}/openinghours/`;
-  const openingHoursUrl = locale === "en" ? openingHoursPath : `/${locale}${openingHoursPath}`;
+  // Reused for both the Link preload header and the page's own
+  // data-include src.
+  const openingHoursUrl = urlForLocale(locale, "wfbn:foodbank_donationpoint_openinghours", slug, dpslug);
   if (donationpoint.opening_hours && donationpoint.opening_hours.trim()) {
     c.header("Link", `<${openingHoursUrl}>; rel=preload; as=fetch`);
   }

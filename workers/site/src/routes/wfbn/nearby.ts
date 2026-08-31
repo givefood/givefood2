@@ -1,6 +1,7 @@
 import type { Context } from "hono";
 import { getFoodbankBySlug } from "@givefood/db";
 import { buildPageContext, render } from "@givefood/templates";
+import { urlForLocale } from "@givefood/urls";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
 import { elapsedMs } from "../../middleware/serverTiming";
@@ -55,9 +56,8 @@ export async function wfbnFoodbankNearby(c: Context<AppEnv>): Promise<Response> 
   // guard hides correctly when the list is empty.
   const nearby = rawNearby.length > 0 ? rawNearby : null;
 
-  const geojsonPath = "/needs/geo.json"; // wfbn:geojson, WP 3.6 not built yet
   const mapConfig = JSON.stringify({
-    geojson: locale === "en" ? geojsonPath : `/${locale}${geojsonPath}`,
+    geojson: urlForLocale(locale, "wfbn:geojson"),
     lat,
     lng,
     zoom: 12,

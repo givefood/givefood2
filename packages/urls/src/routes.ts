@@ -1,12 +1,27 @@
 // Django's `{% url 'name' args %}` reverses a named route via the full
 // urls.py graph (401 uses across the public surface, PLAN.md §6.2.1).
 // This is a hand-written subset -- just the names actually used by the
-// templates ported so far -- not the full generated reverse table PLAN.md
-// specifies as the eventual mechanism ("regex + codegen" against
-// urls.py). Grow this table as more of Phase 3 gets built, or replace it
-// with the real generator; do not let it silently drift from
+// templates and handlers ported so far -- not the full generated reverse
+// table PLAN.md specifies as the eventual mechanism ("regex + codegen"
+// against urls.py). Grow this table as more of Phase 3 gets built, or
+// replace it with the real generator; do not let it silently drift from
 // givefood/urls.py in the meantime.
-const ROUTES: Record<string, string> = {
+//
+// This table lived in packages/templates/src/urls.ts until the DRY pass
+// (audit finding D7) moved it here. It had grown four independent copies
+// by then: this table, buildGeojson.ts's own localePrefix()/foodbankUrl()
+// family, 15 inline `locale === "en" ? path : `/${locale}${path}``
+// ternaries across the route handlers, and index.ts's route-registration
+// strings. Two of the handlers carried comments saying the route name
+// they needed "isn't in urls.ts's PARAMETERISED map yet (out of this
+// task's scope to add)" -- WP 3.6's instruction not to import a templates
+// module into plain route/lib code was the reason, and a standalone
+// package is what resolves that layering objection rather than working
+// around it. Both of those names are now in the table below.
+//
+// Anything that needs a givefood.org.uk path imports from here. Nothing
+// else should hardcode one.
+export const ROUTES: Record<string, string> = {
   index: "/",
   about_us: "/about-us/",
   colophon: "/colophon/",
@@ -37,12 +52,20 @@ const ROUTES: Record<string, string> = {
   md_sitemap: "/md/sitemap.xml",
 };
 
-const PARAMETERISED: Record<string, (...args: string[]) => string> = {
+export const PARAMETERISED: Record<string, (...args: string[]) => string> = {
   frag: (slug) => `/frag/${slug}/`,
   "dumps:dump_latest": (dumpType, dumpFormat) => `/dumps/${dumpType}/${dumpFormat}/latest/`,
   "wfbn:foodbank": (slug) => `/needs/at/${slug}/`,
   "wfbn:foodbank_location": (slug, locslug) => `/needs/at/${slug}/${locslug}/`,
   "wfbn:foodbank_donationpoint": (slug, dpslug) => `/needs/at/${slug}/donationpoint/${dpslug}/`,
+  // Added by the D7 consolidation. Both were previously built as inline
+  // template literals in routes/wfbn/locationDetail.ts, each with a
+  // comment noting the name was missing from this table -- the Link
+  // preload header and the page's own data-include src for the opening
+  // hours fragment, and the location map's og:image target.
+  "wfbn:foodbank_location_map": (slug, locslug) => `/needs/at/${slug}/${locslug}/map.png`,
+  "wfbn:foodbank_donationpoint_openinghours": (slug, dpslug) =>
+    `/needs/at/${slug}/donationpoint/${dpslug}/openinghours/`,
   "wfbn-generic:foodbank_hit": (slug) => `/needs/at/${slug}/hit/`,
   "wfbn-generic:foodbank_location_photo": (slug, locslug) => `/needs/at/${slug}/${locslug}/photo.jpg`,
   "wfbn-generic:foodbank_donationpoint_photo": (slug, dpslug) => `/needs/at/${slug}/donationpoint/${dpslug}/photo.jpg`,
@@ -97,7 +120,7 @@ const PARAMETERISED: Record<string, (...args: string[]) => string> = {
 // page.njk consumer built so far is English-only), so getting this wrong
 // for them isn't yet an observable bug. Classify each before the first
 // non-English page that links to one of them ships.
-const I18N_SCOPED = new Set([
+export const I18N_SCOPED = new Set([
   "wfbn:index",
   "wfbn:rss",
   "wfbn:geojson",
@@ -155,28 +178,14 @@ const I18N_SCOPED = new Set([
   "sitemap",
   "wfbn:constituency",
   "wfbn:constituencies",
+  // D7. Both are registered under every locale prefix in the Worker's own
+  // index.ts (inside its `for (const locale of LOCALES)` block), and both
+  // call sites in routes/wfbn/locationDetail.ts already applied the prefix
+  // by hand before this table owned them -- classified here so that stays
+  // true now the ternaries are gone.
+  "wfbn:foodbank_location_map",
+  "wfbn:foodbank_donationpoint_openinghours",
 ]);
 
-function build(name: string, args: string[]): string {
-  if (args.length > 0) {
-    const parameterised = PARAMETERISED[name];
-    if (parameterised) return parameterised(...args);
-  }
-  const path = ROUTES[name];
-  if (path === undefined) throw new Error(`url(): no route named "${name}" in packages/templates/src/urls.ts`);
-  return path;
-}
-
-export function url(name: string, ...args: string[]): string {
-  return build(name, args);
-}
-
-// Locale-aware form -- see I18N_SCOPED above. env.ts injects a closure
-// over this as the `url` template global, bound to the current render's
-// locale, so ported templates just call `{{ url('wfbn:index') }}`
-// unchanged and get the right prefix for whichever page they're on.
-export function urlForLocale(locale: string, name: string, ...args: string[]): string {
-  const path = build(name, args);
-  if (locale === "en" || !I18N_SCOPED.has(name)) return path;
-  return `/${locale}${path}`;
-}
+// url()/urlForLocale() -- the two reverse functions that read these
+// tables -- live in ./index.ts.

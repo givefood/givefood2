@@ -20,6 +20,7 @@ packages/
   geo/         Haversine distance + nearest-neighbour ranking
   serialise/   Byte-exact-parity serialisers (CSV/XML/YAML/GeoJSON) and Python-repr float formatting
   templates/   Nunjucks templates, i18n catalogues, precompilation build step
+  urls/        The reverse-URL table -- Django's `{% url %}` / `reverse()`, including locale prefixing
 workers/
   site/        The public-facing Worker (Hono) — all HTTP routes
   jobs/        Queue consumers / scheduled tasks
@@ -27,7 +28,9 @@ tools/
   pg-to-d1/    One-off Postgres -> D1 data extraction script
 ```
 
-A few `packages/*` directories (`i18n`, `models`, `shared`, `urls`) are reserved/empty scaffolding, not yet built out — the code that would live there today lives inline in `packages/templates/src/`.
+A few `packages/*` directories (`i18n`, `models`, `shared`) are reserved/empty scaffolding, not yet built out — the code that would live there today lives inline in `packages/templates/src/`.
+
+Anything that needs a givefood.org.uk path — a template, a route handler, a sitemap, a redirect target — reverses it through `@givefood/urls` rather than writing the path out. It is a standalone package precisely so plain route/lib code can import it without pulling in the template engine.
 
 ## Local development
 
