@@ -100,18 +100,15 @@ export async function getFeaturedArticles(session: Session, limit: number): Prom
 // deliberately WITHOUT the `featured = 1` filter getFeaturedArticles() above
 // applies -- the /news/ page shows every recent article, not just featured
 // ones. Same row shape/join as getFeaturedArticles(), so it reuses
-// FeaturedArticleRow rather than a near-duplicate interface.
+// FeaturedArticleRow rather than a near-duplicate interface. Also backs
+// gfdash's `articles` dashboard (WP 4.5), unfiltered with a 200-row limit.
 //
-// KNOWN DATA-SCOPE GAP: 0003_homepage_data.sql's own comment says the D1
-// `foodbankarticle` table was seeded with featured=true rows ONLY (168 of
-// 17,194 in production) -- "the homepage only ever reads the 5 most recent
-// featured articles; copying the other 17k for a query that never runs
-// isn't worth it. Revisit if a future /news/ page needs the rest." That
-// future page is this one: until a fuller extraction lands, this query is
-// correct but can only ever return the featured subset already present in
-// D1, not a true "last 100 articles" (also note `article_published_idx` is
-// a partial index `WHERE featured = 1`, so this unfiltered query doesn't
-// use it -- unmeasured, but moot at the table's current ~168-row size).
+// 0003_homepage_data.sql originally seeded featured=true rows only (168 of
+// 17,194 in production) -- WP 4.5's dashboard needed the rest, so
+// tools/pg-to-d1/extract_core.py's DASHBOARD_TABLES now backfills the full
+// table (2026-08-31). `article_published_idx` (`WHERE featured = 1`) still
+// only covers getFeaturedArticles() above; this unfiltered query has never
+// used it.
 export async function getRecentArticles(session: Session, limit: number): Promise<FeaturedArticleRow[]> {
   const result = await session
     .prepare(`${ARTICLE_SELECT}ORDER BY a.published_date DESC LIMIT ?`)
@@ -122,9 +119,8 @@ export async function getRecentArticles(session: Session, limit: number): Promis
 
 // Foodbank.articles() (givefood/models/foodbank.py:307-309) -- md_foodbank_news's
 // `foodbank.articles`, same row shape/join as getFeaturedArticles above,
-// scoped to one food bank instead of the featured=1 filter. Same
-// KNOWN DATA-SCOPE GAP as getRecentArticles above -- will be empty or
-// near-empty for most food banks until a fuller article ETL lands.
+// scoped to one food bank instead of the featured=1 filter. Backed by the
+// full table since the 2026-08-31 backfill -- see getRecentArticles above.
 export async function getArticlesByFoodbankId(session: Session, foodbankId: number, limit: number): Promise<FeaturedArticleRow[]> {
   const result = await session
     .prepare(`${ARTICLE_SELECT}WHERE a.foodbank_id = ? ORDER BY a.published_date DESC LIMIT ?`)

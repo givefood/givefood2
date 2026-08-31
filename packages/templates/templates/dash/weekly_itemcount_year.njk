@@ -1,0 +1,109 @@
+{% extends "page.njk" %}
+
+{% block title %}Items requested by UK food banks per week per year - Give Food{% endblock %}
+
+{% block body %}
+
+    <div class="columns">
+      <div class="column">
+          <a href="{{ url('index') }}" class="logo"><img src="/static/img/logo.svg" alt="Give Food"></a>
+      </div>
+    </div>
+
+    <div class="columns">
+        <div class="column">
+            <nav class="breadcrumb has-arrow-separator" aria-label="breadcrumbs">
+            <ul>
+                <li><a href="{{ url('index') }}">Home</a></li>
+                <li><a href="{{ url('dash:index') }}">Dashboards</a></li>
+                <li class="is-active"><a href="{{ url('dash:weekly_itemcount_year') }}" aria-current="page">Items requested by UK food banks per week per year</a></li>
+            </ul>
+            </nav>
+        </div>
+    </div>
+
+  <div class="columns">
+
+    <div class="column">
+
+        <h1>Items requested by UK food banks per week per year</h1>
+
+        <div id="chart" style="height:500px"></div>
+
+        <table class="table is-striped is-narrow is-fullwidth">
+            <tr>
+                <th>year-week</th>
+                <th>Number of items requested</th>
+            </tr>
+            {% for week in week_needs_items_desc %}
+                <tr>
+                    <td>{{ week.week }}</td>
+                    <td>{{ week.count }}</td>
+                </tr>
+            {% endfor %}
+        </table>
+    </div>
+
+  </div><br><br>
+
+  <script src="/static/js/echarts.js"></script>
+  <script src="/static/js/chart-colors.js"></script>
+
+  <script>
+    var chartDom = document.getElementById('chart');
+    var myChart = echarts.init(chartDom);
+
+    var option = {
+      color: gfChartColors,
+      tooltip: {
+        trigger: 'axis',
+        axisPointer: {
+          type: 'shadow'
+        }
+      },
+      legend: {
+        data: [{% for year in years %}'{{ year }}'{% if not loop.last %}, {% endif %}{% endfor %}],
+        top: '5%'
+      },
+      grid: {
+        left: '3%',
+        right: '4%',
+        bottom: '3%',
+        top: '15%',
+        containLabel: true
+      },
+      xAxis: {
+        type: 'category',
+        data: [
+          {% for week in week_year_needs %}
+            '{{ week.week }}'{% if not loop.last %},{% endif %}
+          {% endfor %}
+        ],
+        axisLabel: {
+          rotate: 45
+        }
+      },
+      yAxis: {
+        type: 'value',
+        name: 'Items requested'
+      },
+      series: [
+        {% for year in years %}
+        {
+          name: '{{ year }}',
+          type: 'bar',
+          data: [
+            {% for week in week_year_needs %}
+              {% for year_data in week.years %}
+                {% if year_data.year == year %}{{ year_data.count }}{% endif %}
+              {% endfor %}{% if not loop.last %},{% endif %}
+            {% endfor %}
+          ]
+        }{% if not loop.last %},{% endif %}
+        {% endfor %}
+      ]
+    };
+    myChart.setOption(option);
+  </script>
+
+{% endblock %}

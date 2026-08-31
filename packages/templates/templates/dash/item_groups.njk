@@ -1,0 +1,82 @@
+{% extends "page.njk" %}
+
+{% block title %}Requested items by item group - Give Food{% endblock %}
+
+{% block body %}
+
+    <div class="columns">
+      <div class="column">
+          <a href="{{ url('index') }}" class="logo"><img src="/static/img/logo.svg" alt="Give Food"></a>
+      </div>
+    </div>
+
+    <div class="columns">
+        <div class="column">
+            <nav class="breadcrumb has-arrow-separator" aria-label="breadcrumbs">
+            <ul>
+                <li><a href="{{ url('index') }}">Home</a></li>
+                <li><a href="{{ url('dash:index') }}">Dashboards</a></li>
+                <li class="is-active"><a href="{{ url('dash:item_groups') }}" aria-current="page">Requested items by item group</a></li>
+            </ul>
+            </nav>
+        </div>
+    </div>
+
+  <div class="columns">
+
+    <div class="column">
+      <h1>Requested items by item group</h1>
+      <div id="chart" style="height:600px"></div>
+
+      <table class="table is-striped is-narrow is-fullwidth">
+        <thead>
+          <tr>
+              <th>Group</th>
+              <th>Number of items</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for group in groups %}
+              <tr>
+                  <td>{{ group.group_name }}</td>
+                  <td>{{ group.count|intcomma }}</td>
+              </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+  </div><br><br>
+
+  <script src="/static/js/echarts.js"></script>
+  <script src="/static/js/chart-colors.js"></script>
+
+  <script>
+    var chartDom = document.getElementById('chart');
+    var myChart = echarts.init(chartDom);
+
+    var option = {
+      color: gfChartColors,
+      tooltip: {
+        trigger: 'item'
+      },
+      series: [
+        {
+          name: 'Number of items',
+          type: 'pie',
+          radius: '70%',
+          data: {{ chart_data_json|safe }},
+          emphasis: {
+            itemStyle: {
+              shadowBlur: 10,
+              shadowOffsetX: 0,
+              shadowColor: 'rgba(0, 0, 0, 0.5)'
+            }
+          }
+        }
+      ]
+    };
+    myChart.setOption(option);
+  </script>
+
+{% endblock %}

@@ -1,0 +1,204 @@
+{% extends "page.njk" %}
+
+{% block title %}Beauty Bank Needs - Give Food{% endblock %}
+
+{% block body %}
+
+    <div class="columns">
+        <div class="column">
+            <a href="{{ url('index') }}" class="logo"><img src="/static/img/logo.svg" alt="Give Food"></a>
+        </div>
+    </div>
+
+    <div class="columns">
+        <div class="column">
+            <nav class="breadcrumb has-arrow-separator" aria-label="breadcrumbs">
+            <ul>
+                <li><a href="{{ url('index') }}">Home</a></li>
+                <li><a href="{{ url('dash:index') }}">Dashboards</a></li>
+                <li class="is-active"><a href="#" aria-current="page">Beauty Bank Needs</a></li>
+            </ul>
+            </nav>
+        </div>
+    </div>
+
+    <div class="columns">
+        <div class="column">
+            <h1>Beauty Banks Needs</h1>
+            <div class="tabs is-boxed">
+                <ul role="tablist" aria-label="Beauty Banks sections">
+                  <li class="is-active" role="presentation">
+                        <a data-tab="map" role="tab" aria-selected="true" aria-controls="map-panel" id="map-tab">
+                          <span>Map</span>
+                        </a>
+                  </li>
+                  <li role="presentation">
+                    <a data-tab="everywhere" role="tab" aria-selected="false" aria-controls="everywhere-panel" id="everywhere-tab">
+                      <span>Everywhere</span>
+                    </a>
+                  </li>
+                  <li role="presentation">
+                    <a data-tab="london" role="tab" aria-selected="false" aria-controls="london-panel" id="london-tab">
+                      <span>London</span>
+                    </a>
+                  </li>
+                  <li role="presentation">
+                    <a data-tab="settings" role="tab" aria-selected="false" aria-controls="settings-panel" id="settings-tab">
+                      <span>Settings</span>
+                    </a>
+                  </li>
+                </ul>
+              </div>
+        </div>
+    </div>
+
+    <div class="columns sections">
+
+        <div class="column map tabcontent" role="tabpanel" id="map-panel" aria-labelledby="map-tab">
+            <p>Food banks requesting a Beauty Banks item in the last 28 days</p>
+            <div id="the-map" style="width:700px;height:1000px;"></div>
+        </div>
+
+        <div class="column everywhere tabcontent is-hidden" role="tabpanel" id="everywhere-panel" aria-labelledby="everywhere-tab">
+            <table class="table is-narrow is-fullwidth">
+                <tr>
+                    <th>Foodbank</th>
+                    <th>Needs</th>
+                    <th>Found</th>
+                </tr>
+                {% for need in all_needs %}
+                    <tr>
+                        <td>
+                            <a href="{{ url('wfbn:foodbank', need.foodbank_slug) }}">{{ need.foodbank_name }}</a><br>
+                            <span class="is-size-7">{{ need.foodbank_postcode }}</span>
+                        </td>
+                        <td>{% for line in need.filtered_change_lines %}{{ line }}<br>{% endfor %}</td>
+                        <td>{{ need.created_timesince }} ago</td>
+                    </tr>
+                {% endfor %}
+            </table>
+        </div>
+
+        <div class="column london tabcontent is-hidden" role="tabpanel" id="london-panel" aria-labelledby="london-tab">
+            <table class="table is-narrow is-fullwidth">
+                <tr>
+                    <th>Foodbank</th>
+                    <th>Needs</th>
+                    <th>Found</th>
+                </tr>
+                {% for need in london_needs %}
+                    <tr>
+                        <td>
+                            <a href="{{ url('wfbn:foodbank', need.foodbank_slug) }}">{{ need.foodbank_name }}</a><br>
+                            <span class="is-size-7">{{ need.foodbank_postcode }}</span>
+                        </td>
+                        <td>{% for line in need.filtered_change_lines %}{{ line }}<br>{% endfor %}</td>
+                        <td>{{ need.created_timesince }} ago</td>
+                    </tr>
+                {% endfor %}
+            </table>
+        </div>
+
+        <div class="column settings tabcontent is-hidden" role="tabpanel" id="settings-panel" aria-labelledby="settings-tab">
+            <h2>Products</h2>
+            <p>List of strings of text we're looking for in a foodbank's need...</p>
+            <p>{% for product in products %}{{ product }}{% if not loop.last %}, {% endif %}{% endfor %}</p>
+            <br>
+
+            <h2>London Postcode Areas</h2>
+            <p>List of postcodes we're using to filter as a London location...</p>
+            <p>{% for london_postcode in london_postcodes %}{{ london_postcode }}{% if not loop.last %}, {% endif %}{% endfor %}</p>
+        </div>
+    </div>
+
+  </div><br><br>
+
+{% endblock %}
+
+
+{% block script %}
+    <script src="/static/js/tabber.js?v={{ version }}" defer></script>
+
+    <link rel="stylesheet" href="/static/css/maplibre-gl.css">
+    <script src="/static/js/maplibre-gl.js" defer></script>
+    <script>
+        const foodbanks = {{ time_since_json|safe }};
+
+        document.addEventListener('DOMContentLoaded', function() {
+            const map = new maplibregl.Map({
+                container: 'the-map',
+                style: 'https://maptiles.opencommons.uk/styles/bright',
+                center: [-4, 55],
+                zoom: 5,
+                attributionControl: false,
+                cooperativeGestures: true,
+                generateId: true,
+            });
+
+            map.addControl(new maplibregl.AttributionControl({
+                compact: true,
+            }));
+
+            const nav = new maplibregl.NavigationControl();
+            map.addControl(nav, 'top-right');
+
+            map.on('load', async () => {
+                const orgimg = await map.loadImage('/static/img/mapmarkers/red.png');
+                map.addImage('orgmrkr', orgimg.data);
+
+                const geojson = {
+                    type: 'FeatureCollection',
+                    features: foodbanks.map(fb => ({
+                        type: 'Feature',
+                        geometry: {
+                            type: 'Point',
+                            coordinates: [fb.lng, fb.lat]
+                        },
+                        properties: {
+                            name: fb.foodbank,
+                            slug: fb.slug,
+                            change_text: fb.change_text
+                        }
+                    }))
+                };
+
+                map.addSource('beautybanks', {
+                    type: 'geojson',
+                    data: geojson,
+                });
+
+                map.addLayer({
+                    'id': 'beautybanks-markers',
+                    'type': 'symbol',
+                    'source': 'beautybanks',
+                    'layout': {
+                        'icon-image': 'orgmrkr',
+                        'icon-size': 0.25,
+                        'icon-allow-overlap': true,
+                    },
+                });
+
+                map.on('click', 'beautybanks-markers', (e) => {
+                    const coordinates = e.features[0].geometry.coordinates.slice();
+                    const props = e.features[0].properties;
+
+                    const html = '<strong><a href="/needs/at/' + props.slug + '">' + props.name + '</a></strong><br><br>' + props.change_text.replaceAll("\n", "<br>");
+
+                    new maplibregl.Popup()
+                        .setLngLat(coordinates)
+                        .setHTML(html)
+                        .addTo(map);
+                });
+
+                map.on('mouseenter', 'beautybanks-markers', () => {
+                    map.getCanvas().style.cursor = 'pointer';
+                });
+
+                map.on('mouseleave', 'beautybanks-markers', () => {
+                    map.getCanvas().style.cursor = '';
+                });
+            });
+        });
+    </script>
+
+{% endblock %}

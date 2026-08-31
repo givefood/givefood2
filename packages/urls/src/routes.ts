@@ -32,6 +32,28 @@ export const ROUTES: Record<string, string> = {
   manifest: "/manifest.json",
   privacy: "/privacy/",
   "dash:index": "/dashboard/",
+  // WP 4.5. gfdash/urls.py -- entirely outside i18n_patterns (the
+  // "Untranslated apps" block, givefood/urls.py), so none of these go in
+  // I18N_SCOPED.
+  "dash:weekly_itemcount": "/dashboard/items-requested-weekly/",
+  "dash:weekly_itemcount_year": "/dashboard/items-requested-weekly/by-year/",
+  "dash:most_requested_items": "/dashboard/most-requested-items/",
+  "dash:most_excess_items": "/dashboard/most-excess-items/",
+  "dash:item_categories": "/dashboard/item-categories/",
+  "dash:item_groups": "/dashboard/item-groups/",
+  "dash:tt_old_data": "/dashboard/trusselltrust/old-data/",
+  "dash:tt_most_requested_items": "/dashboard/trusselltrust/most-requested-items/",
+  "dash:articles": "/dashboard/articles/",
+  "dash:beautybanks": "/dashboard/beautybanks/",
+  "dash:excess": "/dashboard/excess/",
+  "dash:foodbanks_found": "/dashboard/foodbanks-found/",
+  "dash:bean_pasta_index": "/dashboard/bean-pasta-index/",
+  "dash:supermarkets": "/dashboard/donationpoints/supermarkets/",
+  "dash:charity_income_expenditure": "/dashboard/charity-income-expenditure/",
+  "dash:price_per_kg": "/dashboard/price-per/kg/",
+  "dash:heatmap": "/dashboard/heatmap/",
+  "dash:price_per_calorie": "/dashboard/price-per/calorie/",
+  "dash:price_per_item_category": "/dashboard/price-per/item-category/",
   "api2:index": "/api/2/",
   "api2:docs": "/api/2/docs/",
   "dumps:dump_index": "/dumps/",
@@ -101,6 +123,8 @@ export const PARAMETERISED: Record<string, (...args: string[]) => string> = {
   "wfbn-md:md_foodbank_news": (slug) => `/md/needs/at/${slug}/news/`,
   "wfbn-md:md_foodbank_charity": (slug) => `/md/needs/at/${slug}/charity/`,
   "wfbn-md:md_foodbank_nearby": (slug) => `/md/needs/at/${slug}/nearby/`,
+  // WP 4.5. gfdash/urls.py's `re_path(r'^deliveries/(count|items|weight|calories)/$', ...)`.
+  "dash:deliveries": (metric) => `/dashboard/deliveries/${metric}/`,
 };
 
 // Route names reached inside Django's i18n_patterns -- `{% url %}` for one

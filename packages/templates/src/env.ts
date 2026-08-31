@@ -27,6 +27,7 @@ import {
   linebreaksbr,
   slugify,
   truncatechars,
+  truncatewords,
 } from "./filters";
 import { urlForLocale } from "@givefood/urls";
 
@@ -76,6 +77,7 @@ function buildEnvironment(): Environment {
   env.addFilter("djslice", djangoSlice);
   env.addFilter("django_title", djangoTitle);
   env.addFilter("truncatechars", truncatechars);
+  env.addFilter("truncatewords", truncatewords);
   env.addFilter("linebreaksbr", (value: string) => new nunjucksSlim.runtime.SafeString(linebreaksbr(value)));
   env.addFilter("floatformat", floatformat);
   // Django's `linebreaks` is `is_safe = True` -- its <p>/<br> output must

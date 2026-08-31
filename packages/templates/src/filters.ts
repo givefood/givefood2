@@ -201,3 +201,17 @@ export function truncatechars(value: string, count: number): string {
   if (value.length <= count) return value;
   return `${value.slice(0, count - 1)}…`;
 }
+
+// django's `truncatewords:N` -- Truncator(value).words(N, truncate=" …"):
+// Python's str.split() (no-arg) semantics, which splits on any run of
+// whitespace and drops empty leading/trailing tokens, matched here with
+// trim() + split(/\s+/). If there are <= N words, the words are rejoined
+// (whitespace-normalised, same as Django); otherwise the first N words are
+// rejoined and " …" appended (add_truncation_text's default truncate
+// string, which doesn't contain "%(truncated_text)s" so it's a plain
+// suffix, not a %-substitution).
+export function truncatewords(value: string, count: number): string {
+  const words = value.trim().split(/\s+/).filter(Boolean);
+  if (words.length <= count) return words.join(" ");
+  return `${words.slice(0, count).join(" ")} …`;
+}

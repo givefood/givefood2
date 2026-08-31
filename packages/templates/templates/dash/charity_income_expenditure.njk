@@ -1,0 +1,112 @@
+{% extends "page.njk" %}
+
+{% block title %}Food bank charity income & expenditure - Give Food{% endblock %}
+
+{% block body %}
+
+    <div class="columns">
+      <div class="column">
+          <a href="{{ url('index') }}" class="logo"><img src="/static/img/logo.svg" alt="Give Food"></a>
+      </div>
+    </div>
+
+    <div class="columns">
+        <div class="column">
+            <nav class="breadcrumb has-arrow-separator" aria-label="breadcrumbs">
+            <ul>
+                <li><a href="{{ url('index') }}">Home</a></li>
+                <li><a href="{{ url('dash:index') }}">Dashboards</a></li>
+                <li class="is-active"><a href="{{ url('dash:charity_income_expenditure') }}" aria-current="page">Food bank charity income & expenditure</a></li>
+            </ul>
+            </nav>
+        </div>
+    </div>
+
+  <div class="columns">
+
+    <div class="column">
+
+        <h1>Food bank charity income & expenditure</h1>
+
+        <div id="chart" style="height:500px"></div>
+
+        <table class="table is-striped is-narrow is-fullwidth">
+            <tr>
+                <th>Year</th>
+                <th>Income</th>
+                <th>Expenditure</th>
+            </tr>
+            {% for year in years %}
+                <tr>
+                    <td>{{ year.year }} {% if loop.first %}<span class="is-size-7">(so far)</span>{% endif %}</td>
+                    <td>£{{ year.income|intcomma }}</td>
+                    <td>£{{ year.expenditure|intcomma }}</td>
+                </tr>
+            {% endfor %}
+        </table>
+    </div>
+
+  </div><br><br>
+
+  <script src="/static/js/echarts.js"></script>
+  <script src="/static/js/chart-colors.js"></script>
+
+  <script>
+    var chartDom = document.getElementById('chart');
+    var myChart = echarts.init(chartDom);
+
+    var option = {
+      color: gfChartColors,
+      tooltip: {
+        trigger: 'axis',
+        axisPointer: {
+          type: 'shadow'
+        }
+      },
+      legend: {
+        data: ['Income', 'Expenditure'],
+        top: '5%'
+      },
+      grid: {
+        left: '3%',
+        right: '4%',
+        bottom: '3%',
+        top: '15%',
+        containLabel: true
+      },
+      xAxis: {
+        type: 'category',
+        data: [
+          {% for year in years | reverse %}
+            '{{ year.year }}'{% if not loop.last %},{% endif %}
+          {% endfor %}
+        ]
+      },
+      yAxis: {
+        type: 'value'
+      },
+      series: [
+        {
+          name: 'Income',
+          type: 'bar',
+          data: [
+            {% for year in years | reverse %}
+              {{ year.income }}{% if not loop.last %},{% endif %}
+            {% endfor %}
+          ]
+        },
+        {
+          name: 'Expenditure',
+          type: 'bar',
+          data: [
+            {% for year in years | reverse %}
+              {{ year.expenditure }}{% if not loop.last %},{% endif %}
+            {% endfor %}
+          ]
+        }
+      ]
+    };
+    myChart.setOption(option);
+  </script>
+
+{% endblock %}

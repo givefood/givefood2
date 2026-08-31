@@ -1,0 +1,53 @@
+{% extends "page.njk" %}
+
+{% block title %}{% if trusselltrust %}Trussell Trust {% endif %}Most Requested Items - Give Food{% endblock %}
+
+{% block body %}
+
+    <div class="columns">
+      <div class="column">
+          <a href="{{ url('index') }}" class="logo"><img src="/static/img/logo.svg" alt="Give Food"></a>
+      </div>
+    </div>
+
+    <div class="columns">
+        <div class="column">
+          <nav class="breadcrumb has-arrow-separator" aria-label="breadcrumbs">
+            <ul>
+                <li><a href="{{ url('index') }}">Home</a></li>
+                <li><a href="{{ url('dash:index') }}">Dashboards</a></li>
+                <li class="is-active"><a href="{% if trusselltrust %}{{ url('dash:tt_most_requested_items') }}{% else %}{{ url('dash:most_requested_items') }}{% endif %}" aria-current="page">{% if trusselltrust %}Trussell Trust {% endif %}Most Requested Items</a></li>
+            </ul>
+          </nav>
+        </div>
+    </div>
+
+  <div class="columns">
+
+    <div class="column">
+        <h1>{% if trusselltrust %}Trussell Trust {% endif %}Most Requested Items</h1>
+        <p class="is-pulled-left">Found {{ number_items }} items from {{ number_foodbanks }} food bank organisations in the last {{ days }} days.</p>
+        <div class="field is-pulled-right">
+            <div class="control">
+              <div class="select is-small">
+                <select onchange="javascript:window.location.href=this.value">
+                    {% for allowed_day in allowed_days %}
+                        <option value="?days={{ allowed_day }}"{% if allowed_day == days %} selected{% endif %}>{{ allowed_day }} days</option>
+                    {% endfor %}
+                </select>
+              </div>
+            </div>
+          </div>
+        <table class="table is-striped is-narrow is-fullwidth">
+            {% for item in items_sorted %}
+                <tr>
+                    <td>{{ item.item }}</td>
+                    <td>{{ item.count }}</td>
+                </tr>
+            {% endfor %}
+        </table>
+    </div>
+
+  </div><br><br>
+
+{% endblock %}

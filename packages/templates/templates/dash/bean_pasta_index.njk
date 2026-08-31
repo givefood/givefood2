@@ -1,0 +1,99 @@
+{% extends "page.njk" %}
+
+{% block title %}Beans &amp; Pasta Index - Give Food{% endblock %}
+
+{% block body %}
+
+    <div class="columns">
+      <div class="column">
+          <a href="{{ url('index') }}" class="logo"><img src="/static/img/logo.svg" alt="Give Food"></a>
+      </div>
+    </div>
+
+    <div class="columns">
+        <div class="column">
+            <nav class="breadcrumb has-arrow-separator" aria-label="breadcrumbs">
+            <ul>
+                <li><a href="{{ url('index') }}">Home</a></li>
+                <li><a href="{{ url('dash:index') }}">Dashboards</a></li>
+                <li class="is-active"><a href="{{ url('dash:bean_pasta_index') }}" aria-current="page">Beans &amp; Pasta Index</a></li>
+            </ul>
+            </nav>
+        </div>
+    </div>
+
+  <div class="columns">
+
+    <div class="column">
+      <h1>Beans &amp; Pasta Index</h1>
+      <p style="max-width:800px;">Food banks often have baked beans or pasta in abundance, so those items being requested suggests a food bank's supplies are under pressure. Graph shows the number of times we've found food banks requesting beans or pasta to be donated by month.</p><br><br>
+      <div id="chart" style="height:500px"></div>
+
+      <table class="table is-striped is-narrow is-fullwidth">
+          <tr>
+              <th>year-month</th>
+              <th>Beans or Pasta Requests</th>
+          </tr>
+          {% for month in months %}
+              <tr>
+                  <td>{{ month.the_month }}</td>
+                  <td>{{ month.count }}</td>
+              </tr>
+          {% endfor %}
+      </table>
+    </div>
+
+  </div><br><br>
+
+  <script src="/static/js/echarts.js"></script>
+  <script src="/static/js/chart-colors.js"></script>
+
+  <script>
+    var chartDom = document.getElementById('chart');
+    var myChart = echarts.init(chartDom);
+
+    var option = {
+      color: gfChartColors,
+      tooltip: {
+        trigger: 'axis',
+        axisPointer: {
+          type: 'shadow'
+        }
+      },
+      grid: {
+        left: '3%',
+        right: '4%',
+        bottom: '3%',
+        containLabel: true
+      },
+      xAxis: {
+        type: 'category',
+        data: [
+          {% for month in months %}
+            '{{ month.the_month }}'{% if not loop.last %},{% endif %}
+          {% endfor %}
+        ],
+        axisLabel: {
+          rotate: 45
+        }
+      },
+      yAxis: {
+        type: 'value',
+        name: 'Beans or Pasta Requests'
+      },
+      series: [
+        {
+          name: 'Beans or Pasta Requests',
+          type: 'bar',
+          data: [
+            {% for month in months %}
+              {{ month.count }}{% if not loop.last %},{% endif %}
+            {% endfor %}
+          ]
+        }
+      ]
+    };
+    myChart.setOption(option);
+  </script>
+
+{% endblock %}

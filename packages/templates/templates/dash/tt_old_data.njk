@@ -1,0 +1,61 @@
+{% extends "page.njk" %}
+
+{% block title %}Trussell Trust Old Data - Give Food{% endblock %}
+
+{% block body %}
+
+    <div class="columns">
+        <div class="column">
+            <a href="{{ url('index') }}" class="logo"><img src="/static/img/logo.svg" alt="Give Food"></a>
+        </div>
+    </div>
+
+    <div class="columns">
+        <div class="column">
+            <nav class="breadcrumb has-arrow-separator" aria-label="breadcrumbs">
+            <ul>
+                <li><a href="{{ url('index') }}">Home</a></li>
+                <li><a href="{{ url('dash:index') }}">Dashboards</a></li>
+                <li class="is-active"><a href="{{ url('dash:tt_old_data') }}" aria-current="page">Trussell Trust Old Data</a></li>
+            </ul>
+            </nav>
+        </div>
+    </div>
+
+    <div class="columns">
+        <div class="column">
+            <h1>Trussell Trust Old Data</h1>
+        </div>
+    </div>
+
+
+    <div class="columns">
+        <div class="column">
+            <h2>Old Data</h2>
+            <table class="table is-striped is-narrow is-fullwidth">
+                <tr><th>Food Bank</th><th>Last Need Found</th></tr>
+                {% for foodbank in old %}
+                <tr>
+                    <td><a href="{{ foodbank.url }}">{{ foodbank.name }}</a></td>
+                    <td>{{ foodbank.last_need_timesince }} ago</td>
+                </tr>
+                {% endfor %}
+            </table>
+        </div>
+
+        <div class="column">
+            <h2>Recent Changes</h2>
+            <table class="table is-striped is-narrow is-fullwidth">
+                <tr><th>Food Bank</th><th>Last Need Found</th></tr>
+                {% for foodbank in recent %}
+                    <tr>
+                        <td><a href="{{ foodbank.url }}">{{ foodbank.name }}</a></td>
+                        <td>{{ foodbank.last_need_timesince }} ago</td>
+                    </tr>
+                {% endfor %}
+            </table>
+        </div>
+
+  </div>
+
+{% endblock %}

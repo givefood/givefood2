@@ -51,6 +51,26 @@ import { mdFoodbank, mdFoodbankNearby } from "./routes/wfbn/md/foodbank";
 import { mdFoodbankLocation, mdFoodbankLocations } from "./routes/wfbn/md/locations";
 import { mdFoodbankDonationpoint, mdFoodbankDonationpoints } from "./routes/wfbn/md/donationpoints";
 import { mdFoodbankCharity, mdFoodbankNews } from "./routes/wfbn/md/newsCharity";
+import { gfdashIndex } from "./routes/dashboards/index";
+import { gfdashWeeklyItemcount } from "./routes/dashboards/weeklyItemcount";
+import { gfdashWeeklyItemcountYear } from "./routes/dashboards/weeklyItemcountYear";
+import { gfdashMostRequestedItems, gfdashTtMostRequestedItems } from "./routes/dashboards/mostRequestedItems";
+import { gfdashMostExcessItems } from "./routes/dashboards/mostExcessItems";
+import { gfdashItemCategories } from "./routes/dashboards/itemCategories";
+import { gfdashItemGroups } from "./routes/dashboards/itemGroups";
+import { gfdashTtOldData } from "./routes/dashboards/ttOldData";
+import { gfdashArticles } from "./routes/dashboards/articles";
+import { gfdashBeautybanks } from "./routes/dashboards/beautybanks";
+import { gfdashExcess } from "./routes/dashboards/excess";
+import { gfdashFoodbanksFound } from "./routes/dashboards/foodbanksFound";
+import { gfdashBeanPastaIndex } from "./routes/dashboards/beanPastaIndex";
+import { gfdashDeliveries } from "./routes/dashboards/deliveries";
+import { gfdashSupermarkets } from "./routes/dashboards/supermarkets";
+import { gfdashCharityIncomeExpenditure } from "./routes/dashboards/charityIncomeExpenditure";
+import { gfdashPricePerKg } from "./routes/dashboards/pricePerKg";
+import { gfdashHeatmap } from "./routes/dashboards/heatmap";
+import { gfdashPricePerCalorie } from "./routes/dashboards/pricePerCalorie";
+import { gfdashPricePerItemCategory } from "./routes/dashboards/pricePerItemCategory";
 import { notPortedYet } from "./routes/notPortedYet";
 import { render404 } from "./render404";
 import { render500 } from "./render500";
@@ -333,11 +353,37 @@ app.get("/md/needs/at/:slug/charity/", mdFoodbankCharity);
 app.get("/md/needs/at/:slug/nearby/", mdFoodbankNearby);
 app.get("/md/needs/at/:slug/:locslug/", mdFoodbankLocation);
 
+// gfdash (WP 4.5) -- entirely outside Django's i18n_patterns
+// (givefood/urls.py's "Untranslated apps" block, same as /needs/), so no
+// locale loop, matching gfdash/urls.py exactly.
+app.get("/dashboard/", gfdashIndex);
+app.get("/dashboard/items-requested-weekly/", gfdashWeeklyItemcount);
+app.get("/dashboard/items-requested-weekly/by-year/", gfdashWeeklyItemcountYear);
+app.get("/dashboard/most-requested-items/", gfdashMostRequestedItems);
+app.get("/dashboard/most-excess-items/", gfdashMostExcessItems);
+app.get("/dashboard/item-categories/", gfdashItemCategories);
+app.get("/dashboard/item-groups/", gfdashItemGroups);
+app.get("/dashboard/trusselltrust/old-data/", gfdashTtOldData);
+app.get("/dashboard/trusselltrust/most-requested-items/", gfdashTtMostRequestedItems);
+app.get("/dashboard/articles/", gfdashArticles);
+app.get("/dashboard/beautybanks/", gfdashBeautybanks);
+app.get("/dashboard/excess/", gfdashExcess);
+app.get("/dashboard/foodbanks-found/", gfdashFoodbanksFound);
+app.get("/dashboard/bean-pasta-index/", gfdashBeanPastaIndex);
+app.get("/dashboard/deliveries/:metric/", gfdashDeliveries);
+app.get("/dashboard/donationpoints/supermarkets/", gfdashSupermarkets);
+app.get("/dashboard/charity-income-expenditure/", gfdashCharityIncomeExpenditure);
+app.get("/dashboard/price-per/kg/", gfdashPricePerKg);
+app.get("/dashboard/heatmap/", gfdashHeatmap);
+app.get("/dashboard/price-per/calorie/", gfdashPricePerCalorie);
+app.get("/dashboard/price-per/item-category/", gfdashPricePerItemCategory);
+// gfdash/urls.py's old-URL redirect: RedirectView.as_view(url='/dashboard/price-per/kg/', permanent=True).
+app.get("/dashboard/price-per-kg/", (c) => c.redirect("/dashboard/price-per/kg/", 301));
+
 // Everything below is specified in PLAN.md but not yet built. Each returns
 // 501 so the gap is loud during development. Build order follows PLAN.md
 // §10's phases: wfbn (translated pages) and the APIs next, admin last.
 app.route("/needs", notPortedYet("gfwfbn (translated pages)"));
-app.route("/dashboard", notPortedYet("gfdash"));
 app.route("/write", notPortedYet("gfwrite"));
 // The three listing pages (dump_index, dump_type, dump_format) -- unmatched
 // by dumpsApp above, so they fall through to here.
