@@ -19,7 +19,11 @@ import { dbSession } from "../../lib/session";
 // path/query, sz=64. Falls back to a bundled default image on any failure
 // (no url, non-200, network error), matching Django's own
 // `if not favicon: favicon = DEFAULT_FAVICON`.
-const GOOGLE_FAVICON_BASE_URL = "https://www.google.com/s2/favicons";
+//
+// Calls gstatic directly rather than google.com/s2/favicons: the latter is
+// just a 301 to this same faviconV2 endpoint on t0.gstatic.com, so hitting
+// it straight away saves a redirect round trip on every cache miss.
+const GSTATIC_FAVICON_BASE_URL = "https://t0.gstatic.com/faviconV2";
 const DEFAULT_FAVICON_URL = "https://www.givefood.org.uk/static/img/default_favicon.png";
 const CACHE_CONTROL_WEEK = "public, max-age=604800"; // matches @cache_page(SECONDS_IN_WEEK)
 
@@ -31,7 +35,14 @@ async function fetchFaviconFor(url: string | null): Promise<Response | null> {
   } catch {
     return null;
   }
-  const response = await fetch(`${GOOGLE_FAVICON_BASE_URL}?domain=${encodeURIComponent(domain)}&sz=64`);
+  const params = new URLSearchParams({
+    client: "SOCIAL",
+    type: "FAVICON",
+    fallback_opts: "TYPE,SIZE,URL",
+    url: `http://${domain}`,
+    size: "64",
+  });
+  const response = await fetch(`${GSTATIC_FAVICON_BASE_URL}?${params}`);
   return response.ok ? response : null;
 }
 
