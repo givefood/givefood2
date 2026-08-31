@@ -21,6 +21,7 @@ const ROUTES: Record<string, string> = {
   "api2:docs": "/api/2/docs/",
   "dumps:dump_index": "/dumps/",
   "wfbn:index": "/needs/",
+  "wfbn:constituencies": "/needs/in/constituencies/",
   "wfbn:rss": "/needs/rss.xml",
   "wfbn:geojson": "/needs/geo.json",
   "wfbn:get_location": "/needs/getlocation/",
@@ -64,6 +65,7 @@ const PARAMETERISED: Record<string, (...args: string[]) => string> = {
   "wfbn:foodbank_location_geojson": (slug, locslug) => `/needs/at/${slug}/${locslug}/geo.json`,
   "wfbn:constituency_geojson": (parlconSlug) => `/needs/in/constituency/${parlconSlug}/geo.json`,
   "wfbn:constituency": (parlconSlug) => `/needs/in/constituency/${parlconSlug}/`,
+  "api2:constituency": (slug) => `/api/2/constituency/${slug}/`,
   "wfbn-generic:webpush_subscribe": (slug) => `/needs/webpush/subscribe/${slug}/`,
   "wfbn-generic:webpush_unsubscribe": (slug) => `/needs/webpush/unsubscribe/${slug}/`,
   // WP 4.3 (/md/ mirror) -- gfwfbn/urls/md.py's "wfbn-md" namespace, all
@@ -152,6 +154,7 @@ const I18N_SCOPED = new Set([
   // pattern already used for write:index/register_foodbank.
   "sitemap",
   "wfbn:constituency",
+  "wfbn:constituencies",
 ]);
 
 function build(name: string, args: string[]): string {

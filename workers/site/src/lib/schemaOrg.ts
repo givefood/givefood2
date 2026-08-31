@@ -123,12 +123,18 @@ export function schemaOrgStr(foodbank: FoodbankWithLatestNeed, fullName: string)
 
 // FoodbankLocation.schema_org() -- givefood/models/foodbank.py:822-887.
 // `locationFullName` is `"{location.name}, {foodbank full name}"`
-// (FoodbankLocation.full_name()).
+// (FoodbankLocation.full_name()). `asSubProperty` mirrors the Python
+// method's own `as_sub_property` arg -- unlike Foodbank.schema_org(),
+// Django's own source sets `@context` unconditionally (verified directly:
+// it's in the dict literal, then redundantly reassigned only when NOT a
+// sub-property) so it's present here regardless of the flag; only `seeks`
+// is actually gated by it, same as the Foodbank version.
 export function buildLocationSchemaOrg(
   location: FoodbankLocationRow,
   foodbank: FoodbankWithLatestNeed,
   fullName: string,
   locationFullName: string,
+  asSubProperty = false,
 ): Record<string, unknown> {
   const changeText = foodbank.latestNeed?.change_text ?? "Nothing";
   const seeks = computeSeeks(changeText);
@@ -159,7 +165,7 @@ export function buildLocationSchemaOrg(
     if (location.district) address.addressLocality = location.district;
     schema.address = address;
   }
-  if (seeks.length > 0) schema.seeks = seeks;
+  if (!asSubProperty && seeks.length > 0) schema.seeks = seeks;
 
   return schema;
 }
@@ -208,4 +214,48 @@ export function buildDonationPointSchemaOrg(donationpoint: DonationPointRow, foo
 
 export function donationPointSchemaOrgStr(donationpoint: DonationPointRow, foodbank: FoodbankWithLatestNeed, fullName: string): string {
   return JSON.stringify(buildDonationPointSchemaOrg(donationpoint, foodbank, fullName), null, 2);
+}
+
+// ParliamentaryConstituency.schema_org() -- givefood/models/political.py:56-72.
+// `containsPlace` is every open food bank's and open location's own
+// schema_org(as_sub_property=True), same call this constituency's food
+// banks/locations already make on their own pages -- callers pass
+// pre-computed fullName strings, matching every builder above (this file
+// has no locale awareness of its own).
+// Python's urllib.parse.quote_plus -- encodeURIComponent's unreserved set
+// additionally leaves `! ' ( ) *` unescaped, which quote_plus does not
+// (its safe set is just the RFC 3986 unreserved chars, A-Za-z0-9_.-~).
+// No literal spaces reach this in practice (the one caller already
+// replaces them with "_" first, mirroring quote_plus's own space->"+"
+// only mattering when spaces are still present).
+function quotePlus(value: string): string {
+  return encodeURIComponent(value).replace(/[!'()*]/g, (ch) => `%${ch.charCodeAt(0).toString(16).toUpperCase()}`);
+}
+
+export function buildConstituencySchemaOrg(
+  constituency: { name: string | null },
+  foodbanks: Array<{ foodbank: FoodbankWithLatestNeed; fullName: string }>,
+  locations: Array<{ location: FoodbankLocationRow; foodbank: FoodbankWithLatestNeed; fullName: string; locationFullName: string }>,
+): Record<string, unknown> {
+  const containsPlace: unknown[] = [
+    ...foodbanks.map(({ foodbank, fullName }) => buildFoodbankSchemaOrg(foodbank, fullName, true)),
+    ...locations.map(({ location, foodbank, fullName, locationFullName }) =>
+      buildLocationSchemaOrg(location, foodbank, fullName, locationFullName, true),
+    ),
+  ];
+  return {
+    "@context": "https://schema.org",
+    "@type": "AdministrativeArea",
+    name: constituency.name,
+    containsPlace,
+    sameAs: `https://en.wikipedia.org/wiki/${quotePlus((constituency.name ?? "").replace(/ /g, "_"))}_(UK_Parliament_constituency)`,
+  };
+}
+
+export function constituencySchemaOrgStr(
+  constituency: { name: string | null },
+  foodbanks: Array<{ foodbank: FoodbankWithLatestNeed; fullName: string }>,
+  locations: Array<{ location: FoodbankLocationRow; foodbank: FoodbankWithLatestNeed; fullName: string; locationFullName: string }>,
+): string {
+  return JSON.stringify(buildConstituencySchemaOrg(constituency, foodbanks, locations), null, 2);
 }

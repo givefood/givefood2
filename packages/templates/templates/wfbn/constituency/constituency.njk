@@ -1,0 +1,126 @@
+{% extends "page.njk" %}
+
+{% block head %}
+  <link rel="stylesheet" href="/static/css/wfbn.css?v={{ version }}">
+  <link rel="alternate" type="application/json" href="{{ url('api2:constituency', constituency.slug) }}">
+  <link rel="alternate" type="application/xml" href="{{ url('api2:constituency', constituency.slug) }}?format=xml">
+  <link rel="alternate" type="application/yaml" href="{{ url('api2:constituency', constituency.slug) }}?format=yaml">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:site" content="@GiveFoodCharity">
+  <meta property="og:title" content="Food Banks In {{ constituency.name }}">
+  <meta name="description" content="Find out what food banks operate in {{ constituency.name }}, what they are requesting and take action.">
+  <meta property="og:image" content="{{ constituency.mp_photo_url }}">
+  <meta property="og:image:alt" content="{{ constituency.mp }}">
+  <meta name="geo.placename" content="{{ constituency.name }}">
+  <meta name="geo.position" content="{{ constituency.centroid }}">
+  <meta property="place:location:latitude" content="{{ constituency.latt }}">
+  <meta property="place:location:longitude" content="{{ constituency.long }}">
+  <script type="application/ld+json">
+  {{ constituency.schema_org_str|safe }}
+  </script>
+{% endblock %}
+
+{% block title %}Food banks in {{ constituency.name }} - Give Food{% endblock %}
+
+{% block body %}
+
+  <div class="columns">
+    <div class="column">
+
+      <div class="columns">
+
+        <div class="column is-4">
+          <a href="{{ url('index') }}" class="logo"><img src="/static/img/logo.svg" alt="Give Food"></a>
+        </div>
+
+      </div>
+
+      <nav class="breadcrumb has-arrow-separator" aria-label="breadcrumbs">
+            <ul>
+                <li><a href="{{ url('index') }}">{% blocktrans %}Home{% endblocktrans %}</a></li>
+                <li><a href="{{ url('wfbn:constituencies') }}">{% blocktrans %}Constituencies{% endblocktrans %}</a></li>
+                <li class="is-active"><a href="#" aria-current="page">{{ constituency.name }}</a></li>
+            </ul>
+      </nav>
+
+      <h1>{% blocktrans with constituency_name=constituency.name %}Food banks in {{ constituency_name }}{% endblocktrans %}</h1>
+
+      <div class="columns">
+
+          <div class="column">
+            <img src="{{ constituency.mp_photo_url }}" alt="{{ constituency.mp }}" class="mp_photo">
+          </div>
+
+          <div class="column is-6">
+            {% if enable_write %}
+              <p>{% blocktrans with constituency_name=constituency.name %}{{ constituency_name }} constituency is represented by{% endblocktrans %} <a href="https://www.google.co.uk/search?q={{ constituency.mp|urlencode }}%20MP">{{ constituency.mp }} MP</a>
+                {% if constituency.mp_party == "Speaker" %}
+                  {% blocktrans %}who is the Speaker of the House of Commons.{% endblocktrans %}
+                {% else %}
+                  {% blocktrans with mp_party=constituency.mp_party %}of the {{ mp_party }} party.{% endblocktrans %}
+                {% endif %}
+              </p>
+              <a href="{{ url('write:index') }}" class="button is-light is-info">{% blocktrans %}Write{% endblocktrans %}</a><br><br>
+            {% endif %}
+
+            <p>{% blocktrans with constituency_name=constituency.name %}The following food banks operate in the {{ constituency_name }} constituency. Here is what they are requesting to have donated.{% endblocktrans %}</p>
+            <table class="table is-narrow is-fullwidth">
+              {% for foodbank in foodbanks %}
+                <tr>
+                  <td class="foodbank_name">
+                    <a href="{{ foodbank.gf_url }}">{{ foodbank.name }}</a>
+                    {% if foodbank.type == "location" %}
+                      <div class="parent_org">{% blocktrans with foodbank_slug=foodbank.foodbank_name_slug foodbank_name=foodbank.foodbank_name %}Part of <a href="/needs/at/{{ foodbank_slug }}/">{{ foodbank_name }}</a>{% endblocktrans %}</div>
+                    {% endif %}
+                  </td>
+                  <td>
+                    {% if foodbank.get_change_text == "Unknown" %}
+                      {% if foodbank.phone_number %}
+                        <img src="/static/img/phone.svg" alt="{% blocktrans %}Phone{% endblocktrans %}" class="contact-icon"> <a href="tel:{{ foodbank.phone_number|full_phone }}">{{ foodbank.phone_number|friendly_phone }}</a>
+                        <br>
+                      {% endif %}
+                      {% if foodbank.contact_email %}
+                        <img src="/static/img/email.svg" alt="{% blocktrans %}Email{% endblocktrans %}" class="contact-icon"> <a href="mailto:{{ foodbank.contact_email }}">{{ foodbank.contact_email }}</a>
+                      {% endif %}
+                    {% elif foodbank.get_change_text == "Facebook" %}
+                      {% if foodbank.facebook_page %}
+                        {% blocktrans %}Check the foodbank's {% endblocktrans %}
+                        <a href="https://www.facebook.com/{{ foodbank.facebook_page }}?ref=givefood.org.uk">{% blocktrans %}Facebook page{% endblocktrans %}</a>
+                        {% blocktrans %} for what they need{% endblocktrans %}
+                      {% else %}
+                        {% set need_text = foodbank.get_change_text %}{% include "wfbn/includes/need_text.njk" %}
+                      {% endif %}
+                    {% else %}
+                      {% set need_text = foodbank.get_change_text %}{% include "wfbn/includes/need_text.njk" %}
+                    {% endif %}
+                  </td>
+                </tr>
+              {% endfor %}
+            </table><br>
+          </div>
+
+          <div class="column is-4">
+
+            <div id="map" class="sidemap"></div>
+            {% include "includes/maplegend.njk" %}
+
+            <h2>{% blocktrans %}Nearby Constituencies{% endblocktrans %}</h2>
+            <ul>
+              {% for nearby_constituency in nearby %}
+                <li><a href="{{ url('wfbn:constituency', nearby_constituency.slug) }}">{{ nearby_constituency.name }}</a></li>
+              {% endfor %}
+            </ul>
+          </div>
+      </div>
+
+    </div>
+  </div>
+
+{% endblock %}
+
+{% block script %}
+
+  {% include "includes/mapconfig.njk" %}
+  <script src="/static/js/wfbn.js?v={{ version }}" defer onload="init()"></script>
+
+{% endblock %}

@@ -1,0 +1,176 @@
+{% extends "page.njk" %}
+
+{% block head %}
+  <link rel="stylesheet" href="/static/css/wfbn.css?v={{ version }}">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:site" content="@GiveFoodCharity">
+  <meta property="og:title" content="Constituencies">
+  <meta name="description" content="Find what food banks in your MP's constituency are requesting to have donated and take action.">
+  <meta property="og:image" content="https://www.givefood.org.uk/static/img/map.png">
+  <meta property="og:image:alt" content="Map of UK food banks">
+{% endblock %}
+
+{% block title %}Parliamentary Constituencies - Give Food{% endblock %}
+
+{% block body %}
+
+  <div class="columns">
+    <div class="column">
+
+      <div class="columns">
+
+        <div class="column is-4">
+          <a href="{{ url('index') }}" class="logo"><img src="/static/img/logo.svg" alt="Give Food"></a>
+        </div>
+
+      </div>
+
+      <nav class="breadcrumb has-arrow-separator" aria-label="breadcrumbs">
+            <ul>
+                <li><a href="{{ url('index') }}">{% blocktrans %}Home{% endblocktrans %}</a></li>
+                <li class="is-active"><a href="#" aria-current="page">{% blocktrans %}Parliamentary Constituencies{% endblocktrans %}</a></li>
+            </ul>
+      </nav>
+
+      <h1>{% blocktrans %}Parliamentary Constituencies{% endblocktrans %}</h1>
+
+      <div class="columns">
+
+          <div class="column">
+
+            <p>{% blocktrans %}Find which food banks operate in your parliamentary constituency, then donate or take action.{% endblocktrans %}</p>
+
+            {% if postcode %}
+              <div class="notification is-warning">
+                {% blocktrans %}Sorry, we didn't recognise this postcode. Could you try again?{% endblocktrans %}
+              </div>
+            {% endif %}
+
+            <form id="postcodeform" action="{{ url('wfbn:constituencies') }}" method="get">
+              <input id="postcode_field" type="text" name="postcode" class="input" placeholder="{% blocktrans %}Search by postcode{% endblocktrans %}" value="{% if postcode %}{{ postcode }}{% endif %}" autofocus aria-label="{% blocktrans %}Postcode{% endblocktrans %}">
+              <input type="submit" class="button is-light is-info" value="{% blocktrans %}Go{% endblocktrans %}">
+            </form>
+
+            <br>
+
+            {% for group in country_groups %}
+                <details>
+                    <summary class="is-size-6">{{ group.country }}</summary>
+                    <ul>
+                        {% for constituency in group.constituencies %}
+                          <li><a href="{{ url('wfbn:constituency', constituency.slug) }}">{{ constituency.name }}</a></li>
+                        {% endfor %}
+                    </ul>
+                </details>
+            {% endfor %}
+
+          </div>
+
+          <div class="column is-6">
+            <div id="map"></div>
+          </div>
+      </div>
+
+    </div>
+  </div>
+
+{% endblock %}
+
+{% block script %}
+
+<link rel="stylesheet" href="/static/css/maplibre-gl.css">
+<script src="/static/js/maplibre-gl.js" defer></script>
+<script src="/static/js/wfbn.js?v={{ version }}" defer></script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const mapElement = document.querySelector("#map");
+    if (!mapElement) return;
+
+    const map = new maplibregl.Map({
+        container: 'map',
+        style: 'https://maptiles.opencommons.uk/styles/bright',
+        center: [-4, 55],
+        zoom: 5,
+        attributionControl: false,
+        cooperativeGestures: true,
+        generateId: true,
+    });
+
+    map.addControl(new maplibregl.AttributionControl({
+        compact: true,
+    }));
+
+    const nav = new maplibregl.NavigationControl();
+    map.addControl(nav, 'top-right');
+
+    map.on('load', () => {
+        map.addSource('constituencies', {
+            type: 'geojson',
+            data: '/static/geojson/parlcon.json',
+        });
+
+        map.addLayer({
+            'id': 'constituencies-fill',
+            'type': 'fill',
+            'source': 'constituencies',
+            'paint': {
+                'fill-color': '#000',
+                'fill-opacity': 0.1,
+            },
+        });
+
+        map.addLayer({
+            'id': 'constituencies-outline',
+            'type': 'line',
+            'source': 'constituencies',
+            'paint': {
+                'line-color': '#000',
+                'line-width': 1,
+            },
+        });
+
+        map.once('sourcedata', (e) => {
+            if (e.sourceId === 'constituencies' && e.isSourceLoaded) {
+                const bounds = new maplibregl.LngLatBounds();
+                const features = map.querySourceFeatures('constituencies');
+                if (features && features.length > 0) {
+                    features.forEach((feature) => {
+                        if (feature.geometry.type === 'Polygon') {
+                            feature.geometry.coordinates[0].forEach((coord) => {
+                                bounds.extend(coord);
+                            });
+                        } else if (feature.geometry.type === 'MultiPolygon') {
+                            feature.geometry.coordinates.forEach((polygon) => {
+                                polygon[0].forEach((coord) => {
+                                    bounds.extend(coord);
+                                });
+                            });
+                        }
+                    });
+                    if (!bounds.isEmpty()) {
+                        map.fitBounds(bounds, { padding: 20 });
+                    }
+                }
+            }
+        });
+    });
+
+    map.on('click', 'constituencies-fill', (e) => {
+        const name = e.features[0].properties.PCON24NM;
+        if (name) {
+            const slug = slugify(name);
+            window.location = '/needs/in/constituency/' + slug + '/';
+        }
+    });
+
+    map.on('mouseenter', 'constituencies-fill', () => {
+        map.getCanvas().style.cursor = 'pointer';
+    });
+
+    map.on('mouseleave', 'constituencies-fill', () => {
+        map.getCanvas().style.cursor = '';
+    });
+});
+</script>
+
+{% endblock %}

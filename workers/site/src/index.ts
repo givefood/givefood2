@@ -23,6 +23,7 @@ import { wfbnFoodbankDonationpoints, wfbnFoodbankLocations } from "./routes/wfbn
 import { wfbnFoodbankDonationpoint, wfbnFoodbankDonationpointOpeninghours, wfbnFoodbankLocation } from "./routes/wfbn/locationDetail";
 import { wfbnFoodbankCharity, wfbnFoodbankNews } from "./routes/wfbn/newsCharity";
 import { wfbnConstituencyGeojson, wfbnFoodbankGeojson, wfbnFoodbankLocationGeojson, wfbnGeojson } from "./routes/wfbn/geojson";
+import { wfbnConstituencies, wfbnConstituency, wfbnMpPhotoRedirect } from "./routes/wfbn/constituencies";
 import { wfbnFoodbankUpdates } from "./routes/wfbn/updates";
 import { wfbnFoodbankHit } from "./routes/wfbn/hit";
 import { wfbnWebpushConfig, wfbnWebpushSubscribe, wfbnWebpushUnsubscribe } from "./routes/wfbn/webpush";
@@ -135,6 +136,12 @@ app.get("/needs/geo.json", wfbnGeojson);
 app.get("/needs/at/:slug/geo.json", wfbnFoodbankGeojson);
 app.get("/needs/at/:slug/:locslug/geo.json", wfbnFoodbankLocationGeojson);
 app.get("/needs/in/constituency/:parlconSlug/geo.json", wfbnConstituencyGeojson);
+app.get("/needs/in/constituencies/", wfbnConstituencies);
+// gfwfbn/urls/i18n.py:44 -- a bare, slug-less RedirectView back to the
+// plural index (an old/hand-typed singular URL), not a page of its own.
+app.get("/needs/in/constituency/", (c) => c.redirect("/needs/in/constituencies/", 302));
+app.get("/needs/in/constituency/:slug/mp_photo_threefour.png", wfbnMpPhotoRedirect);
+app.get("/needs/in/constituency/:slug/", wfbnConstituency);
 // :locslug is a generic catch-all at the same path depth as every literal
 // sibling above (locations/, donationpoints/, news/, charity/, nearby/,
 // updates/:action/) -- Hono's router prefers a literal segment over a
@@ -165,6 +172,10 @@ for (const locale of LOCALES) {
   app.get(`/${locale}/needs/at/:slug/geo.json`, wfbnFoodbankGeojson);
   app.get(`/${locale}/needs/at/:slug/:locslug/geo.json`, wfbnFoodbankLocationGeojson);
   app.get(`/${locale}/needs/in/constituency/:parlconSlug/geo.json`, wfbnConstituencyGeojson);
+  app.get(`/${locale}/needs/in/constituencies/`, wfbnConstituencies);
+  app.get(`/${locale}/needs/in/constituency/`, (c) => c.redirect(`/${locale}/needs/in/constituencies/`, 302));
+  app.get(`/${locale}/needs/in/constituency/:slug/mp_photo_threefour.png`, wfbnMpPhotoRedirect);
+  app.get(`/${locale}/needs/in/constituency/:slug/`, wfbnConstituency);
   app.get(`/${locale}/needs/at/:slug/updates/:action{subscribe|confirm|unsubscribe}/`, wfbnFoodbankUpdates);
   app.post(`/${locale}/needs/at/:slug/updates/:action{subscribe|confirm|unsubscribe}/`, wfbnFoodbankUpdates);
   app.get(`/${locale}/needs/at/:slug/:locslug/`, wfbnFoodbankLocation);

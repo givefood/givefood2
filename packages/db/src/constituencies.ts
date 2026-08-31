@@ -48,9 +48,40 @@ export async function getAllConstituencySlugsWithNames(session: Session): Promis
   return result.results as unknown as Array<{ slug: string; name: string }>;
 }
 
+// `get_all_constituencies()` (givefood/utils/cache.py:138-146) --
+// `.defer("boundary_geojson").order_by("name")`. Narrow (see the hard-rule
+// comment on getAllConstituencySlugs above): the index page's country
+// grouping and the nearby-constituency haversine search (constituency.ts)
+// both need every row's name/slug/country/centroid, never boundary_geojson.
+export interface ConstituencyListRow {
+  name: string | null;
+  slug: string;
+  country: string | null;
+  centroid: string;
+}
+export async function getAllConstituenciesOrderedByName(session: Session): Promise<ConstituencyListRow[]> {
+  const result = await session.prepare("SELECT name, slug, country, centroid FROM parliamentaryconstituency ORDER BY name").all();
+  return result.results as unknown as ConstituencyListRow[];
+}
+
 export async function getConstituencyBySlug(session: Session, slug: string): Promise<ConstituencyRow | null> {
   const row = await session.prepare("SELECT * FROM parliamentaryconstituency WHERE slug = ?").bind(slug).first();
   return row ? mapConstituencyRow(row as Record<string, unknown>) : null;
+}
+
+// The constituency detail page and the MP-photo redirect (wfbn/constituencies.ts)
+// use everything on ConstituencyRow EXCEPT boundary_geojson (that page's own
+// geojson feed is served by a separate route) -- PLAN.md's hard rule again,
+// same reasoning as getAllConstituencySlugs above. Narrower than
+// getConstituencyBySlug, which stays as-is for the one caller that
+// genuinely needs the blob (the geojson feed).
+export type ConstituencyRowNarrow = Omit<ConstituencyRow, "boundary_geojson">;
+export async function getConstituencyBySlugNarrow(session: Session, slug: string): Promise<ConstituencyRowNarrow | null> {
+  const row = await session
+    .prepare("SELECT id, name, slug, country, mp, mp_party, mp_parl_id, mp_display_name, email, centroid, latitude, longitude FROM parliamentaryconstituency WHERE slug = ?")
+    .bind(slug)
+    .first();
+  return row ? (row as unknown as ConstituencyRowNarrow) : null;
 }
 
 // `ParliamentaryConstituency.foodbanks()` -- concatenates the food-bank
