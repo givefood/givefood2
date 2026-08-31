@@ -24,6 +24,15 @@ import { phoneOrFoodbankPhone, emailOrFoodbankEmail } from "./fields";
 // food-bank+location candidate set is contract-exact for every
 // skip_first=False search (this one is) -- not the two-independently-
 // capped-then-merged queries the Python source issues.
+//
+// `skipFirst` (default false, matching every existing caller -- the
+// /needs/ index page) threads straight through to nearest()'s own
+// skipFirst param, for gfwfbn/foodbank_nearby's find_locations(lat_lng,
+// 20, True) call (routes/wfbn/nearby.ts): a global scan, not the
+// two-leg-then-merge Python does, per @givefood/geo/nearest.ts's own
+// documented divergence note and PLAN.md's "Documented divergence"
+// writeup -- see routes/wfbn/nearby.ts for the resulting known-divergence
+// food bank ids.
 export interface LocationSearchResult {
   type: "organisation" | "location";
   name: string;
@@ -44,6 +53,7 @@ export async function findLocations(
   lat: number,
   lng: number,
   quantity: number,
+  skipFirst = false,
 ): Promise<LocationSearchResult[]> {
   const [foodbankCoords, locationCoords] = await Promise.all([
     getOpenFoodbankCoordinates(session),
@@ -62,7 +72,7 @@ export async function findLocations(
     (candidate) => [candidate.coord.latitude, candidate.coord.longitude],
     quantity,
     R_EARTHDISTANCE,
-    false,
+    skipFirst,
   );
 
   const organisationIds = ranked.filter((r) => r.item.kind === "organisation").map((r) => r.item.coord.id);

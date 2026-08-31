@@ -28,6 +28,7 @@ export interface Env {
   SUBSCRIBER_SALT: string;
   TURNSTILE_SECRET: string;
   POSTMARK_TOKEN: string;
+  VAPID_PUBLIC_KEY: string;
   GMAP_STATIC_KEY: string;
   GMAP_PLACES_KEY: string;
   GMAP_GEOCODE_KEY: string;

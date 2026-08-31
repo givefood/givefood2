@@ -7,6 +7,8 @@ import { geocode } from "../../lib/geocode";
 import { elapsedMs } from "../../middleware/serverTiming";
 import { findLocations } from "../../lib/findLocations";
 import { findDonationpoints } from "../../lib/findDonationpoints";
+import { findLocationsByCategory } from "../../lib/findLocationsByCategory";
+import { ITEM_CATEGORIES } from "../../lib/itemCategories";
 
 // gfwfbn `index` (GET /needs/, i18n-patterned -- mounted at /needs/,
 // /cy/needs/, /ga/needs/, /gd/needs/ in index.ts). The `place` view
@@ -15,11 +17,11 @@ import { findDonationpoints } from "../../lib/findDonationpoints";
 // backed by the Place model, out of scope for this pass.
 //
 // ITEM_CATEGORIES_CHOICES (the "by item" tab's category dropdown) and
-// find_locations_by_category() are not ported yet either -- the category
-// filter needs FoodbankChangeLine, one of the tables PLAN.md's WP 2.2a
-// scoping confirmed isn't copied to D1 (the 5 API-read tables don't
-// include it). The tab still renders, just with an empty category list --
-// a real, honest "not populated yet" state, not a broken one.
+// find_locations_by_category() are now ported (WP 3.5) -- itemCategories.ts
+// and findLocationsByCategory.ts respectively. foodbankchangeline (the
+// table the category filter needs) is now populated in D1
+// (migrations/0003_homepage_data.sql, 332,478 rows) -- the earlier "not
+// populated yet" blocker this comment used to describe is resolved.
 // A plain handler, registered directly at each of the 4 language-variant
 // paths in index.ts (bare + /cy//ga//gd/) -- not a mounted sub-app.
 // Mounting a sub-app whose own route is a bare .get("/") matches the
@@ -61,10 +63,20 @@ export async function wfbnIndex(c: Context<AppEnv>): Promise<Response> {
 
   const latLngIsUk = !Number.isNaN(lat) && !Number.isNaN(lng) && isUk(lat, lng);
 
+  // gfwfbn/views.py:89-93 -- `item_category` is validated against
+  // ITEM_CATEGORIES_CHOICES before find_locations_by_category() runs at
+  // all; an unrecognised value (typo, stale link, tampered query string)
+  // is silently ignored rather than erroring, same as Django.
+  const itemCategoryIsValid = itemCategory !== "" && ITEM_CATEGORIES.includes(itemCategory);
+
   const session = dbSession(c);
-  const [rawLocations, rawDonationpoints] = latLngIsUk
-    ? await Promise.all([findLocations(session, lat, lng, 20), findDonationpoints(session, lat, lng, 20)])
-    : [null, null];
+  const [rawLocations, rawDonationpoints, rawLocationsByCategory] = latLngIsUk
+    ? await Promise.all([
+        findLocations(session, lat, lng, 20),
+        findDonationpoints(session, lat, lng, 20),
+        itemCategoryIsValid ? findLocationsByCategory(session, lat, lng, itemCategory, 20) : Promise.resolve(null),
+      ])
+    : [null, null, null];
   // Nunjucks' {% if %} uses JS truthiness -- an empty array is truthy,
   // unlike Django's `if locations:`, which is false for an empty list
   // (verified directly: env.renderString with items=[] renders the
@@ -76,6 +88,7 @@ export async function wfbnIndex(c: Context<AppEnv>): Promise<Response> {
   // ported template that gates on a possibly-empty list.
   const locations = rawLocations && rawLocations.length > 0 ? rawLocations : null;
   const donationpoints = rawDonationpoints && rawDonationpoints.length > 0 ? rawDonationpoints : null;
+  const locationsByCategory = rawLocationsByCategory && rawLocationsByCategory.length > 0 ? rawLocationsByCategory : null;
 
   const locale = c.get("lang") as "en" | "cy" | "ga" | "gd";
   const geojsonPath = "/needs/geo.json"; // WP 3.6, not built yet
@@ -106,9 +119,13 @@ export async function wfbnIndex(c: Context<AppEnv>): Promise<Response> {
       lng: Number.isNaN(lng) ? "" : lngStr,
       locations,
       donationpoints,
-      locations_by_category: null,
+      locations_by_category: locationsByCategory,
       item_category: itemCategory,
-      item_categories: [],
+      // wfbn/index.njk destructures each entry as `cat_value, cat_label`
+      // (Django's ITEM_CATEGORIES_CHOICES is a tuple of (category,
+      // category) pairs -- see itemCategories.ts) -- pair up the flat
+      // string list the same way here, at the template boundary.
+      item_categories: ITEM_CATEGORIES.map((category) => [category, category]),
       is_uk: latLngIsUk,
       map_config: mapConfig,
       page_title: null,

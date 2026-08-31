@@ -18,6 +18,13 @@ import { api3App } from "./routes/api3";
 import { api1Index, api2Docs, api2Index } from "./routes/apiDocs";
 import { wfbnIndex } from "./routes/wfbn";
 import { wfbnFoodbank } from "./routes/wfbn/foodbank";
+import { wfbnFoodbankNearby } from "./routes/wfbn/nearby";
+import { wfbnConstituencyGeojson, wfbnFoodbankGeojson, wfbnFoodbankLocationGeojson, wfbnGeojson } from "./routes/wfbn/geojson";
+import { wfbnFoodbankUpdates } from "./routes/wfbn/updates";
+import { wfbnFoodbankHit } from "./routes/wfbn/hit";
+import { wfbnWebpushConfig, wfbnWebpushSubscribe, wfbnWebpushUnsubscribe } from "./routes/wfbn/webpush";
+import { wfbnMobsub, wfbnDeleteMobsub } from "./routes/wfbn/mobsub";
+import { humanRelay } from "./routes/human";
 import { publicIndex } from "./routes/public";
 import { notPortedYet } from "./routes/notPortedYet";
 import { render404 } from "./render404";
@@ -95,17 +102,59 @@ app.route("/api", notPortedYet("gfapi3 docs page"));
 // resolveLanguage.ts's own PREFIXES set (derived from the same LOCALES).
 app.get("/needs/", wfbnIndex);
 app.get("/needs/at/:slug/", wfbnFoodbank);
+app.get("/needs/at/:slug/nearby/", wfbnFoodbankNearby);
+app.get("/needs/geo.json", wfbnGeojson);
+app.get("/needs/at/:slug/geo.json", wfbnFoodbankGeojson);
+app.get("/needs/at/:slug/:locslug/geo.json", wfbnFoodbankLocationGeojson);
+app.get("/needs/in/constituency/:parlconSlug/geo.json", wfbnConstituencyGeojson);
+// Django's `updates` view has no method-restricting decorator (only
+// @csrf_exempt) -- reachable via GET (render a page) or POST (the actions
+// themselves, including the RFC 8058 bare-200 one-click unsubscribe case
+// the handler itself branches on). :action is regex-constrained the same
+// way media.ts/api2/donationpoints.ts already constrain a path segment.
+app.get("/needs/at/:slug/updates/:action{subscribe|confirm|unsubscribe}/", wfbnFoodbankUpdates);
+app.post("/needs/at/:slug/updates/:action{subscribe|confirm|unsubscribe}/", wfbnFoodbankUpdates);
 for (const locale of LOCALES) {
   if (locale === "en") continue;
   app.get(`/${locale}/needs/`, wfbnIndex);
   app.get(`/${locale}/needs/at/:slug/`, wfbnFoodbank);
+  app.get(`/${locale}/needs/at/:slug/nearby/`, wfbnFoodbankNearby);
+  app.get(`/${locale}/needs/geo.json`, wfbnGeojson);
+  app.get(`/${locale}/needs/at/:slug/geo.json`, wfbnFoodbankGeojson);
+  app.get(`/${locale}/needs/at/:slug/:locslug/geo.json`, wfbnFoodbankLocationGeojson);
+  app.get(`/${locale}/needs/in/constituency/:parlconSlug/geo.json`, wfbnConstituencyGeojson);
+  app.get(`/${locale}/needs/at/:slug/updates/:action{subscribe|confirm|unsubscribe}/`, wfbnFoodbankUpdates);
+  app.post(`/${locale}/needs/at/:slug/updates/:action{subscribe|confirm|unsubscribe}/`, wfbnFoodbankUpdates);
 }
+
+// gfwfbn `wfbn-generic` -- registered before i18n_patterns in
+// givefood/urls.py (§6.1.1), so these never carry a language prefix
+// regardless of the current page's language. webpush_subscribe/
+// webpush_unsubscribe have no @require_POST in Django either (the view
+// checks request.method by hand and returns 400, not 404, for the wrong
+// method) -- app.all() reproduces that, where app.post() would make Hono
+// itself 404 a non-POST request instead.
+app.post("/needs/at/:slug/hit/", wfbnFoodbankHit);
+app.get("/needs/webpush/config/", wfbnWebpushConfig);
+app.all("/needs/webpush/subscribe/:slug/", wfbnWebpushSubscribe);
+app.all("/needs/webpush/unsubscribe/:slug/", wfbnWebpushUnsubscribe);
+app.post("/needs/mobsub/", wfbnMobsub);
+app.post("/needs/mobsub/delete/", wfbnDeleteMobsub);
 
 // givefood `index` (GET /, i18n-patterned same as wfbn:index above).
 app.get("/", publicIndex);
 for (const locale of LOCALES) {
   if (locale === "en") continue;
   app.get(`/${locale}/`, publicIndex);
+}
+
+// givefood `human` -- the Turnstile honeypot relay the subscribe form
+// posts through before its real target (givefood/urls.py:28, inside
+// i18n_patterns). @require_POST in Django -- POST only.
+app.post("/human/", humanRelay);
+for (const locale of LOCALES) {
+  if (locale === "en") continue;
+  app.post(`/${locale}/human/`, humanRelay);
 }
 
 // Everything below is specified in PLAN.md but not yet built. Each returns

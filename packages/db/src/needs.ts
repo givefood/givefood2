@@ -78,3 +78,38 @@ export async function getNeedsByIds(session: Session, ids: readonly number[]): P
   const rows = result.results.map((r) => mapNeedRow(r as Record<string, unknown>));
   return new Map(rows.map((row) => [row.id, row]));
 }
+
+// gfwfbn `index` view's "by item" category filter -- the food-bank half of
+// givefood/utils/geo.py's find_locations_by_category() (:304-404), which
+// builds `foodbank_ids_with_category` from
+// `Exists(FoodbankChangeLine.objects.filter(need=OuterRef('latest_need'),
+// category=category, type='need'))` and then feeds it into
+// `FoodbankLocation.objects.filter(foodbank_id__in=foodbank_ids_with_category)`
+// -- an unbounded id list that hits D1's 100-bound-parameter cap for any
+// common category (PLAN.md §4.8.5 flags this and sketches a
+// categories.json-to-R2 precompute; findLocationsByCategory.ts takes a
+// simpler route instead -- see that file's own comment).
+//
+// This query reproduces the `OuterRef('latest_need')` join directly:
+// foodbankchangeline is a verbatim mirror of every historical need's line
+// items (332,478 rows, migrations/0003_homepage_data.sql), not just each
+// food bank's current one, so matching on category+type alone (without
+// this join) would also match a food bank whose *past* need had this
+// category but whose current one doesn't. Joining on
+// `foodbank.latest_need_id = foodbankchangeline.need_id` restricts to
+// only each food bank's live need, and `is_closed = 0` mirrors
+// find_locations_by_category's own `Foodbank.objects.filter(is_closed=False, ...)`
+// on the same queryset. Only ever 2 bound params (category, the literal
+// 'need') -- no per-id IN() list, so no D1 bound-parameter ceiling to hit.
+export async function getFoodbankIdsByCategory(session: Session, category: string): Promise<number[]> {
+  const result = await session
+    .prepare(
+      `SELECT DISTINCT foodbankchangeline.foodbank_id
+       FROM foodbankchangeline
+       JOIN foodbank ON foodbank.latest_need_id = foodbankchangeline.need_id AND foodbank.is_closed = 0
+       WHERE foodbankchangeline.category = ? AND foodbankchangeline.type = 'need'`,
+    )
+    .bind(category)
+    .all();
+  return result.results.map((row) => (row as { foodbank_id: number }).foodbank_id);
+}

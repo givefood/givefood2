@@ -48,16 +48,44 @@ export function mapLocationRow(raw: Record<string, unknown>): FoodbankLocationRo
   return coerceBooleans<FoodbankLocationRow>(raw, BOOLEAN_COLUMNS);
 }
 
-// `Foodbank.locations()` -- used by `api_foodbank`/`foodbank(slug)`.
-// Deliberately no `is_closed` filter: a food bank's location list can, and
-// does, include closed locations even when the food bank itself is open.
-// Sorted in JS, not SQL -- see sortByName's comment in types.ts.
+// `Foodbank.locations()` -- used by `api_foodbank`/`foodbank(slug)`. That
+// model method is `FoodbankLocation.objects.filter(foodbank =
+// self).order_by("name")` (givefood/models/foodbank.py:546) -- explicitly
+// sorted at the Postgres end. Deliberately no `is_closed` filter: a food
+// bank's location list can, and does, include closed locations even when
+// the food bank itself is open. Sorted in JS, not SQL -- see sortByName's
+// comment in types.ts.
 export async function getLocationsByFoodbankId(session: Session, foodbankId: number): Promise<FoodbankLocationRow[]> {
   const result = await session
     .prepare("SELECT * FROM foodbanklocation WHERE foodbank_id = ?")
     .bind(foodbankId)
     .all();
   return sortByName(result.results.map(mapLocationRow));
+}
+
+// gfwfbn `geojson`'s slug-only branch (WP 3.6): builds its OWN
+// `FoodbankLocation.objects.filter(foodbank__slug = slug)` directly
+// (gfwfbn/views.py:238) rather than calling `foodbank.locations()` above
+// -- no `.order_by("name")`, so unlike getLocationsByFoodbankId this must
+// NOT be name-sorted. Confirmed against a live per-foodbank geo.json
+// response for a food bank with 6 locations: feature order there is
+// neither alphabetical nor foodbank id order, but it DOES match Postgres
+// physical (ctid) scan order exactly for that row -- i.e. genuinely "no
+// ORDER BY", not a hidden sort. D1's own un-ORDER-BY'd row order is the
+// closest available match, but "no ORDER BY" is formally undefined SQL:
+// Postgres's query planner can pick a different physical strategy per
+// table (a live donation-points response for the SAME food bank came
+// back in an order this ctid theory does NOT explain -- see
+// getDonationPointsByFoodbankIdUnsorted's own comment), and neither is
+// reproducible byte-for-byte from a different engine's query planner.
+// This is the best faithful choice available, not a guaranteed-exact one.
+// Same "no is_closed filter" behaviour as getLocationsByFoodbankId.
+export async function getLocationsByFoodbankIdUnsorted(session: Session, foodbankId: number): Promise<FoodbankLocationRow[]> {
+  const result = await session
+    .prepare("SELECT * FROM foodbanklocation WHERE foodbank_id = ?")
+    .bind(foodbankId)
+    .all();
+  return result.results.map(mapLocationRow);
 }
 
 // gfapi2 `locations`, and the full-detail source for `location_search`'s
@@ -95,6 +123,27 @@ export async function getOpenDonationPointLocationCoordinates(session: Session):
   );
 }
 
+// Candidate set for the location branch of `find_locations_by_category`
+// (findLocationsByCategory.ts) -- the plain `getOpenLocationCoordinates`
+// candidate set plus `foodbank_id`, needed there because "does this
+// location's food bank need this category" can only be tested against the
+// location's *parent*, not the location row itself (PLAN.md §4.8.5: "the
+// category is a property of the parent food bank's latest_need, but the
+// points being ranked are food banks and locations"). Not a covering-index
+// scan the way the plain coordinate query is (`foodbank_id` isn't in
+// `loc_open_latlng_idx`), but still id+3-columns, nowhere near the cost of
+// a full row.
+export interface LocationCoordinateRow extends CoordinateRow {
+  foodbank_id: number;
+}
+
+export async function getOpenLocationCoordinatesWithFoodbankId(session: Session): Promise<LocationCoordinateRow[]> {
+  const result = await session
+    .prepare("SELECT id, latitude, longitude, foodbank_id FROM foodbanklocation WHERE is_closed = 0")
+    .all();
+  return result.results as unknown as LocationCoordinateRow[];
+}
+
 // Foodbank.has_service_area() -- a live count, not a cached field (the
 // Python source queries FoodbankLocation fresh on every call, no
 // annotation/cache column exists to read instead).
@@ -124,6 +173,24 @@ export async function getLocationsByIds(session: Session, ids: readonly number[]
   const rows = result.results.map((r) => mapLocationRow(r as Record<string, unknown>));
   const byId = new Map(rows.map((row) => [row.id, row]));
   return ids.map((id) => byId.get(id)).filter((row): row is FoodbankLocationRow => row !== undefined);
+}
+
+// gfwfbn `geojson`'s locslug branch (WP 3.6):
+// `FoodbankLocation.objects.filter(slug=locslug, foodbank__slug=slug)` --
+// a single row, or none. `foodbank_slug` is the denormalised column
+// already on this table (see FoodbankLocationRow), so this is a
+// single-table lookup, no join needed to reproduce Django's
+// `foodbank__slug` filter.
+export async function getFoodbankLocationBySlugs(
+  session: Session,
+  foodbankSlug: string,
+  locationSlug: string,
+): Promise<FoodbankLocationRow | null> {
+  const row = await session
+    .prepare("SELECT * FROM foodbanklocation WHERE slug = ? AND foodbank_slug = ?")
+    .bind(locationSlug, foodbankSlug)
+    .first();
+  return row ? mapLocationRow(row as Record<string, unknown>) : null;
 }
 
 // `ParliamentaryConstituency.location_obj()` -- the location half of

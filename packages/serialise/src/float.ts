@@ -42,3 +42,20 @@ export function round2(x: number): number {
   }
   return Number(x.toFixed(2));
 }
+
+// Python round(x, ndigits) generalised to an arbitrary precision --
+// same round-half-to-even tie-break as round2 above (see its comment),
+// just parameterised on the number of decimal places instead of hardcoded
+// to 2. WP 3.6 (geo.json) needs 4dp on the all-items feed and 6dp on
+// every scoped feed; round2 is left untouched (still hand-verified against
+// real Python output for distance_mi) rather than rewritten in terms of
+// this, so nothing about its already-checked behaviour can drift.
+export function pyRound(x: number, ndigits: number): number {
+  const factor = 10 ** ndigits;
+  const scaled = x * factor;
+  const floor = Math.floor(scaled);
+  if (scaled - floor === 0.5) {
+    return (floor % 2 === 0 ? floor : floor + 1) / factor;
+  }
+  return Number(x.toFixed(ndigits));
+}

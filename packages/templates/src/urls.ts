@@ -55,6 +55,11 @@ const PARAMETERISED: Record<string, (...args: string[]) => string> = {
   "wfbn-generic:foodbank_favicon": (slug) => `/needs/at/${slug}/favicon.png`,
   country: (countrySlug) => `/${countrySlug}/`,
   annual_report: (year) => `/${year}/`,
+  "wfbn:foodbank_geojson": (slug) => `/needs/at/${slug}/geo.json`,
+  "wfbn:foodbank_location_geojson": (slug, locslug) => `/needs/at/${slug}/${locslug}/geo.json`,
+  "wfbn:constituency_geojson": (parlconSlug) => `/needs/in/constituency/${parlconSlug}/geo.json`,
+  "wfbn-generic:webpush_subscribe": (slug) => `/needs/webpush/subscribe/${slug}/`,
+  "wfbn-generic:webpush_unsubscribe": (slug) => `/needs/webpush/unsubscribe/${slug}/`,
 };
 
 // Route names reached inside Django's i18n_patterns -- `{% url %}` for one
@@ -90,6 +95,9 @@ const I18N_SCOPED = new Set([
   "wfbn:foodbank_charity",
   "wfbn:foodbank_nearby",
   "wfbn:updates",
+  "wfbn:foodbank_geojson",
+  "wfbn:foodbank_location_geojson",
+  "wfbn:constituency_geojson",
   // Newly exercised by the root homepage (the first non-wfbn,
   // language-prefixed page built) -- all inside givefood/urls.py's
   // i18n_patterns block, same as the wfbn:* names above.
@@ -110,6 +118,13 @@ const I18N_SCOPED = new Set([
   "apps",
   "colophon",
   "annual_report_index",
+  // Pre-existing latent bug, found while wiring up WP 3.7: `human/` sits
+  // inside i18n_patterns too (givefood/urls.py:28, page_translatable=True
+  // in its own context), but wasn't classified here even though
+  // wfbn/foodbank/includes/subscribe.njk has called url('human') since
+  // that template was first ported -- silently dropping the locale prefix
+  // on every cy/ga/gd foodbank page's subscribe form action.
+  "human",
 ]);
 
 function build(name: string, args: string[]): string {

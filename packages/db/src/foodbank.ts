@@ -184,6 +184,29 @@ export async function getFoodbankSlugByUuid(session: Session, uuid: string): Pro
   return row ? row.slug : null;
 }
 
+// wfbn-generic `mobsub`/`delete_mobsub` -- the mobile app's shipped
+// contract identifies a food bank by `Foodbank.uuid`, not by slug (see
+// `get_object_or_404(Foodbank, uuid=foodbank_uuid)` in
+// gfwfbn/views.py:1367/1402). Projected to just the numeric `id` the
+// `mobilesubscriber` foreign key actually needs, same spirit as
+// getFoodbankSlugByUuid's `.only("slug")` above.
+export async function getFoodbankIdByUuid(session: Session, uuid: string): Promise<number | null> {
+  const row = await session
+    .prepare("SELECT id FROM foodbank WHERE uuid = ?")
+    .bind(normalizeUuid(uuid))
+    .first<{ id: number }>();
+  return row ? row.id : null;
+}
+
+// wfbn-generic `foodbank_hit` -- existence check only (404 on an unknown
+// slug, gfwfbn/views.py:1210-1212); the Workers hit beacon writes to
+// Analytics Engine, not D1 (PLAN.md §10.7.3, routes/wfbn/hit.ts), so
+// nothing else about the row is ever read here.
+export async function getFoodbankIdBySlug(session: Session, slug: string): Promise<number | null> {
+  const row = await session.prepare("SELECT id FROM foodbank WHERE slug = ?").bind(slug).first<{ id: number }>();
+  return row ? row.id : null;
+}
+
 // `ParliamentaryConstituency.foodbank_obj()` -- the food-bank half of
 // `constituency.foodbanks()`.
 export async function getFoodbanksByConstituencyId(session: Session, constituencyId: number): Promise<FoodbankRow[]> {

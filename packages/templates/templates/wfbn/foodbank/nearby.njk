@@ -1,0 +1,84 @@
+{% extends "page.njk" %}
+
+{% block head %}
+  <link rel="stylesheet" href="/static/css/wfbn.css?v={{ version }}">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:site" content="@GiveFoodCharity">
+  <meta property="og:title" content="{{ full_name }}">
+  <meta property="og:description" content="Find what {{ full_name }} is requesting to have donated">
+  <meta name="description" content="Find what {{ full_name }} is requesting to have donated">
+  <meta property="og:image" content="https://www.givefood.org.uk{{ url('wfbn:foodbank_map', foodbank.slug) }}">
+  <meta property="og:image:alt" content="Map of {{ full_name }}">
+  <meta name="geo.placename" content="{{ full_name }}">
+  <meta name="geo.position" content="{{ foodbank.lat_lng }}">
+  <meta property="place:location:latitude" content="{{ latt }}">
+  <meta property="place:location:longitude" content="{{ long }}">
+  {% if foodbank.is_closed %}
+    <meta name="robots" content="noindex">
+  {% endif %}
+{% endblock %}
+
+{% block title %}{% blocktrans %}Nearby{% endblocktrans %} - {{ full_name }} - Give Food{% endblock %}
+
+{% block body %}
+
+  <div class="columns">
+    <div class="column">
+
+      <div class="columns">
+        <div class="column">
+          <a href="{{ url('index') }}" class="logo"><img src="/static/img/logo.svg" alt="Give Food"></a>
+          {% include "includes/langswitcher.njk" %}
+        </div>
+      </div>
+
+      <nav class="breadcrumb has-arrow-separator" aria-label="breadcrumbs">
+        <ul>
+          <li><a href="{{ url('index') }}">{% blocktrans %}Home{% endblocktrans %}</a></li>
+          <li><a href="{{ url('wfbn:foodbank', foodbank.slug) }}">{{ full_name }}</a></li>
+          <li class="is-active"><a href="#" aria-current="page">{% blocktrans %}Nearby{% endblocktrans %}</a></li>
+        </ul>
+      </nav>
+
+      {% set prefix = _("Nearby") %}
+      {% include "wfbn/foodbank/includes/pagetitle.njk" %}
+
+      <div class="columns is-8 is-variable">
+
+          <div class="column is-2 menu-col">
+            {% include "wfbn/foodbank/includes/menu.njk" %}
+          </div>
+
+          <div class="column is-6">
+            <div id="map" class="mainmap"></div>
+            {% include "includes/maplegend.njk" %}
+          </div>
+
+          <div class="column">
+
+            {% if nearby %}
+              {% for location in nearby %}
+                {% if location.type == "location" %}
+                  <a href="{{ url('wfbn:foodbank_location', location.foodbank_slug, location.slug) }}">{{ location.name }}</a> ({{ location.foodbank_name }}) <span class="is-size-7">{{ location.distance_mi|floatformat(1) }}mi {% blocktrans %}away{% endblocktrans %}</span><br>
+                {% else %}
+                  <a href="{{ url('wfbn:foodbank', location.foodbank_slug) }}">{{ location.name }}</a> <span class="is-size-7">{{ location.distance_mi|floatformat(1) }}mi {% blocktrans %}away{% endblocktrans %}</span><br>
+                {% endif %}
+              {% endfor %}
+            {% endif %}
+
+          </div>
+
+      </div>
+
+    </div>
+  </div>
+
+{% endblock %}
+
+{% block script %}
+
+  {% include "includes/mapconfig.njk" %}
+  <script src="/static/js/wfbn.js?v={{ version }}" defer onload="init()"></script>
+  {% set slug = foodbank.slug %}{% include "wfbn/includes/hit.njk" %}
+
+{% endblock %}

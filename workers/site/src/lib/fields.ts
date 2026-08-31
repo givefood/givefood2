@@ -20,6 +20,12 @@ const DONT_APPEND_FOOD_BANK = [
 
 const QUERYSTRING_RUBBISH = ["utm_source", "utm_medium", "utm_campaign", "y_source", "sc_cmp", "extcam", "utm_content"];
 
+// Countries whose charity register wfbn/foodbank/includes/charitynetwork.njk
+// can link to (has_charity_details) -- shared by every route that includes
+// that same partial (foodbank.ts, nearby.ts, updates.ts) rather than each
+// keeping its own copy.
+export const CHARITY_DETAIL_COUNTRIES = new Set(["England", "Wales", "Scotland", "Northern Ireland"]);
+
 export function fullNameFoodbank(name: string): string {
   if (DONT_APPEND_FOOD_BANK.includes(name)) return name;
   return `${name} Foodbank`;

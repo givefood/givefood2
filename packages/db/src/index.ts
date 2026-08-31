@@ -9,3 +9,4 @@ export * from "./constituencies";
 export * from "./foodbankDetail";
 export * from "./dumps";
 export * from "./homepage";
+export * from "./subscribers";

@@ -4,10 +4,8 @@ import { buildPageContext, render } from "@givefood/templates";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
 import { elapsedMs } from "../../middleware/serverTiming";
-import { bankuetUrl, fullNameLocaleAware, networkUrl, urlWithRefFoodbank } from "../../lib/fields";
+import { bankuetUrl, CHARITY_DETAIL_COUNTRIES, fullNameLocaleAware, networkUrl, urlWithRefFoodbank } from "../../lib/fields";
 import { schemaOrgStr } from "../../lib/schemaOrg";
-
-const CHARITY_DETAIL_COUNTRIES = new Set(["England", "Wales", "Scotland", "Northern Ireland"]);
 
 // FB SDK locale codes -- Django's FACEBOOK_LOCALES map, ga/gd approximated
 // (Facebook's own supported-locale list has neither; en_GB is the

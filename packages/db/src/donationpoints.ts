@@ -1,4 +1,5 @@
 import { coerceBooleans, queryCoordinates, sortByName, type CoordinateRow, type Session } from "./types";
+import { normalizeUuid } from "./uuid";
 
 const BOOLEAN_COLUMNS = ["place_has_photo", "is_closed", "in_store_only", "wheelchair_accessible"] as const;
 
@@ -50,17 +51,49 @@ export function mapDonationPointRow(raw: Record<string, unknown>): DonationPoint
   return coerceBooleans<DonationPointRow>(raw, BOOLEAN_COLUMNS);
 }
 
-// `Foodbank.donation_points()` -- used by `api_foodbank`/`foodbank(slug)`.
-// No `is_closed` filter, same as `getLocationsByFoodbankId` -- see PLAN.md
-// §7.2's note that a food bank's own donation-point list is not filtered
-// even when the food bank itself is open. Sorted in JS, not SQL -- see
-// sortByName's comment in types.ts.
+// `Foodbank.donation_points()` -- used by `api_foodbank`/`foodbank(slug)`
+// AND by gfwfbn `geojson`'s slug-only branch (WP 3.6). That model method
+// is `FoodbankDonationPoint.objects.filter(foodbank =
+// self).order_by("name")` (givefood/models/foodbank.py:552) -- explicitly
+// sorted at the Postgres end. No `is_closed` filter, same as
+// `getLocationsByFoodbankId` -- see PLAN.md §7.2's note that a food
+// bank's own donation-point list is not filtered even when the food bank
+// itself is open. Sorted in JS, not SQL -- see sortByName's comment in
+// types.ts.
+//
+// The geojson view (gfwfbn/views.py:239) actually builds its own
+// `FoodbankDonationPoint.objects.filter(foodbank__slug = slug)` directly,
+// NOT via this model method, and has no `.order_by()` of its own --
+// unlike locations (see getLocationsByFoodbankIdUnsorted in
+// locations.ts), this function is still the right one to reuse for it.
+// Checked against 4 live per-foodbank geo.json responses (3, 5, 5, and 31
+// donation points) -- every one came back in exact alphabetical order,
+// unlike their SAME food banks' locations, which mostly didn't. Most
+// likely donation points get bulk-imported from partner store-locator
+// data that's already alphabetised, so Postgres's un-ordered scan just
+// happens to preserve that -- but whatever the cause, the sorted query
+// is the empirically closer match, not the unsorted one this table's
+// data would otherwise suggest reaching for.
 export async function getDonationPointsByFoodbankId(session: Session, foodbankId: number): Promise<DonationPointRow[]> {
   const result = await session
     .prepare("SELECT * FROM foodbankdonationpoint WHERE foodbank_id = ?")
     .bind(foodbankId)
     .all();
   return sortByName(result.results.map(mapDonationPointRow));
+}
+
+// wfbn-generic `mobsub`/`delete_mobsub` -- the optional `donationpoint`
+// UUID in the mobile app's POST body, scoped to the already-resolved
+// food bank exactly like Django's `get_object_or_404(FoodbankDonationPoint,
+// foodbank=foodbank, uuid=donationpoint_uuid)` (gfwfbn/views.py:1371/1406):
+// a donation point UUID that exists but belongs to a DIFFERENT food bank
+// must 404 too, not silently resolve.
+export async function getDonationPointIdByUuid(session: Session, uuid: string, foodbankId: number): Promise<number | null> {
+  const row = await session
+    .prepare("SELECT id FROM foodbankdonationpoint WHERE uuid = ? AND foodbank_id = ?")
+    .bind(normalizeUuid(uuid), foodbankId)
+    .first<{ id: number }>();
+  return row ? row.id : null;
 }
 
 // gfapi2 `donationpoints` geojson, and the full-detail source for
@@ -77,6 +110,25 @@ export async function getAllOpenDonationPoints(session: Session): Promise<Donati
 // own comment in types.ts. Covered entirely by `dp_open_latlng_idx`.
 export async function getOpenDonationPointCoordinates(session: Session): Promise<CoordinateRow[]> {
   return queryCoordinates(session, "SELECT id, latitude, longitude FROM foodbankdonationpoint WHERE is_closed = 0");
+}
+
+// gfwfbn `geojson`'s parlcon_slug branch (WP 3.6) -- the donation-point
+// half of the constituency-scoped feed, same pattern as
+// `getOpenLocationsByConstituencyId` in locations.ts:
+// `FoodbankDonationPoint.objects.filter(parliamentary_constituency_slug =
+// parlcon_slug, is_closed=False)`, joined here by the FK id (resolved from
+// the slug by the caller) rather than the denormalised slug column --
+// same equivalence reasoning as that function's own use for the
+// food-bank/location halves of the same view.
+export async function getOpenDonationPointsByConstituencyId(
+  session: Session,
+  constituencyId: number,
+): Promise<DonationPointRow[]> {
+  const result = await session
+    .prepare("SELECT * FROM foodbankdonationpoint WHERE parliamentary_constituency_id = ? AND is_closed = 0")
+    .bind(constituencyId)
+    .all();
+  return result.results.map(mapDonationPointRow);
 }
 
 // Full rows for a small, already-ranked set of donation-point ids -- same

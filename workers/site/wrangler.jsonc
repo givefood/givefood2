@@ -132,9 +132,16 @@
   "secrets": {
     // GMAP_GEOCODE_KEY: lib/geocode.ts (the four */search/?address=
     // endpoints, WP 2.4 follow-up). Set 2026-08-30.
-    "required": ["GMAP_GEOCODE_KEY"]
-    // GOOGLE_OAUTH_CLIENT_SECRET, SESSION_HMAC_KEY, SUBSCRIBER_SALT -- auth (§3.5)
-    // TURNSTILE_SECRET, POSTMARK_TOKEN -- public forms (§3.12)
+    // VAPID_PUBLIC_KEY: routes/wfbn/webpush.ts's wfbnWebpushConfig.
+    // TURNSTILE_SECRET: routes/wfbn/updates.ts's subscribe action (siteverify).
+    // POSTMARK_TOKEN: routes/wfbn/updates.ts's confirm/confirmed email sends
+    // -- degrades gracefully (logs and skips) if unset, so this being
+    // required-but-not-yet-set doesn't 500 the endpoint, just the email.
+    // SUBSCRIBER_SALT: routes/wfbn/updates.ts's sub_key/unsub_key generation
+    // -- also degrades gracefully (empty-string fallback, format-consistency
+    // only, see PLAN.md risk N1). All four added by WP 3.7, not yet set.
+    "required": ["GMAP_GEOCODE_KEY", "VAPID_PUBLIC_KEY", "TURNSTILE_SECRET", "POSTMARK_TOKEN", "SUBSCRIBER_SALT"]
+    // GOOGLE_OAUTH_CLIENT_SECRET, SESSION_HMAC_KEY -- auth (§3.5)
     // GMAP_STATIC_KEY, GMAP_PLACES_KEY -- media backfill, queued not inline (§3.7)
     // CF_API_KEY, CF_ZONE_ID -- cache-tag purge (§3.6)
   },
