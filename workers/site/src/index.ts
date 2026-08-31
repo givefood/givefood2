@@ -155,6 +155,16 @@ app.get("/needs/in/constituency/:slug/", wfbnConstituency);
 // registered after them for the same reason gfwfbn/urls/i18n.py lists
 // foodbank_location dead last.
 app.get("/needs/at/:slug/:locslug/", wfbnFoodbankLocation);
+// gfwfbn `place` (at/place/<county>/<place>/, i18n-patterned) -- PERMANENTLY
+// out of scope, not deferred: maintainer decision 2026-08-31, the `Place`
+// gazetteer (253,584 rows sourced from gazetteer.org.uk, no FK from
+// anything else in the schema) is not being migrated to D1 at all. A real
+// 404, not notPortedYet's 501 -- this isn't "not built yet", it's "never
+// coming". Registered ahead of the generic /needs catch-all below purely
+// so it doesn't inherit that placeholder's misleading "not ported yet"
+// text; Hono resolves this by literal-segment-count, same as every other
+// static-vs-:param disambiguation in this file.
+app.get("/needs/at/place/:county/:place/", (c) => c.notFound());
 // Django's `updates` view has no method-restricting decorator (only
 // @csrf_exempt) -- reachable via GET (render a page) or POST (the actions
 // themselves, including the RFC 8058 bare-200 one-click unsubscribe case
@@ -187,6 +197,7 @@ for (const locale of LOCALES) {
   app.get(`/${locale}/needs/at/:slug/updates/:action{subscribe|confirm|unsubscribe}/`, wfbnFoodbankUpdates);
   app.post(`/${locale}/needs/at/:slug/updates/:action{subscribe|confirm|unsubscribe}/`, wfbnFoodbankUpdates);
   app.get(`/${locale}/needs/at/:slug/:locslug/`, wfbnFoodbankLocation);
+  app.get(`/${locale}/needs/at/place/:county/:place/`, (c) => c.notFound());
 }
 
 // gfwfbn `wfbn-generic` -- registered before i18n_patterns in
@@ -280,13 +291,13 @@ for (const locale of LOCALES) {
 // Untranslated (givefood/urls.py's "Untranslated pages" block) -- no
 // locale loop. sitemap_places_index.xml/sitemap_places*.xml,
 // sitemap_external.xml, and firebase-messaging-sw.js are deliberately NOT
-// built: sitemap_external.xml per explicit maintainer decision (not
-// needed); sitemap_places* per robots.ts's own comment (blocked on the
-// Place gazetteer table, not yet in D1); firebase-messaging-sw.js because
-// it's confirmed dead -- no client anywhere registers it, only /sw.js is,
-// and that's served as a real static file at dist/static/sw.js instead of
-// a Worker route, per PLAN.md's own recommendation since its content is
-// 100% static.
+// built: sitemap_external.xml and sitemap_places* per explicit maintainer
+// decisions (not needed -- see robots.ts's own comment on the latter, and
+// the /needs/at/place/ registration above for the page they'd advertise);
+// firebase-messaging-sw.js because it's confirmed dead -- no client
+// anywhere registers it, only /sw.js is, and that's served as a real
+// static file at dist/static/sw.js instead of a Worker route, per
+// PLAN.md's own recommendation since its content is 100% static.
 app.get("/llms.txt", llmsTxt);
 app.get("/.well-known/security.txt", securityTxt);
 

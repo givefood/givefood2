@@ -14,10 +14,12 @@ import type { AppEnv } from "../../types";
 // Disallow:/Sitemap: lists; this port loops LOCALES (4: en/cy/ga/gd, per
 // PLAN.md §2.7.1), so Disallow: is 10 lines here, not Django's 44.
 //
-// sitemap_places_index is still DELIBERATELY OMITTED from the Sitemap:
-// list: it needs the gazetteer `Place` table (Phase 2.5, not yet copied to
-// D1 -- see WP 4.2's own scoping notes). md_sitemap was omitted for the
-// same "don't advertise a URL that 501s" reason, but WP 4.3 (the /md/
+// sitemap_places_index is PERMANENTLY OMITTED from the Sitemap: list, not
+// just deferred: maintainer decision 2026-08-31 -- the `/needs/at/place/`
+// gazetteer pages (Django's `Place` model, 253,584 rows sourced from
+// gazetteer.org.uk) are out of scope for this port entirely, so there is
+// no sitemap to advertise for them. md_sitemap was omitted for the
+// different "don't advertise a URL that 501s" reason, but WP 4.3 (the /md/
 // markdown mirror) now exists, so it's added back below -- appended once,
 // like Django's own `sitemap_urls.append(md_sitemap_url)`, not per-locale
 // (the /md/ tree is entirely outside i18n_patterns).
