@@ -150,12 +150,9 @@
     // CSRF_SECRET: lib/csrf.ts's signed double-submit token (routes/write/*,
     // WP 4.6 R3). Set 2026-09-01, confirmed via `wrangler secret list`.
     //
-    // WHATSAPP_WEBHOOKVERIFYTOKEN, WHATSAPP_APP_SECRET (routes/whatsappHook.ts,
-    // WP 4.8): NOT YET SET -- code is live and fails closed (GET always
-    // 403s, POST never verifies) until both are provisioned via
-    // `wrangler secret put`. Deliberately not pulled from GfCredential
-    // automatically per this file's own instruction below; move into
-    // "required" only once both are actually set.
+    // WHATSAPP_WEBHOOKVERIFYTOKEN, WHATSAPP_APP_SECRET: routes/whatsappHook.ts's
+    // GET verification and POST signature check (WP 4.8). Set 2026-09-01,
+    // confirmed via `wrangler secret list`.
     //
     // "required" is enforced for real by `wrangler deploy` (not just
     // `wrangler dev`) -- confirmed the hard way earlier the same day:
@@ -165,7 +162,7 @@
     // main until reverted. `wrangler deploy --dry-run` does NOT perform
     // this check, so it looks safe locally when it isn't. Move a name
     // into "required" only in the same change that actually sets it.
-    "required": ["GMAP_GEOCODE_KEY", "VAPID_PUBLIC_KEY", "TURNSTILE_SECRET", "POSTMARK_TOKEN", "SUBSCRIBER_SALT", "CSRF_SECRET"]
+    "required": ["GMAP_GEOCODE_KEY", "VAPID_PUBLIC_KEY", "TURNSTILE_SECRET", "POSTMARK_TOKEN", "SUBSCRIBER_SALT", "CSRF_SECRET", "WHATSAPP_WEBHOOKVERIFYTOKEN", "WHATSAPP_APP_SECRET"]
     // GOOGLE_OAUTH_CLIENT_SECRET, SESSION_HMAC_KEY -- auth (§3.5)
     // GMAP_STATIC_KEY, GMAP_PLACES_KEY -- media backfill, queued not inline
     // (§3.7) -- this Worker never calls Google directly; see
