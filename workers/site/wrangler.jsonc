@@ -108,8 +108,17 @@
 
   "queues": {
     "producers": [
-      { "queue": "cache-purge", "binding": "PURGE_Q" },
-      { "queue": "jobs",        "binding": "JOBS_Q"  }
+      { "queue": "cache-purge",    "binding": "PURGE_Q"    },
+      { "queue": "jobs",           "binding": "JOBS_Q"     },
+      // WP 4.8: routes/whatsappHook.ts enqueues a verified inbound message
+      // here and returns 200 immediately -- no consumer declared anywhere
+      // yet. Command processing (subscribe/unsubscribe, which needs a D1
+      // whatsappsubscriber table that doesn't exist yet, and the outbound
+      // WHATSAPP_TOKEN send capability, which lives only on givefood-jobs)
+      // is Phase 5 work; messages simply queue up until that consumer is
+      // built, same as Cloudflare Queues' normal producer-before-consumer
+      // support.
+      { "queue": "whatsapp-hook",  "binding": "WHATSAPP_Q" }
     ]
   },
 
@@ -140,6 +149,13 @@
     // secret list`) -- safe to list as required now.
     // CSRF_SECRET: lib/csrf.ts's signed double-submit token (routes/write/*,
     // WP 4.6 R3). Set 2026-09-01, confirmed via `wrangler secret list`.
+    //
+    // WHATSAPP_WEBHOOKVERIFYTOKEN, WHATSAPP_APP_SECRET (routes/whatsappHook.ts,
+    // WP 4.8): NOT YET SET -- code is live and fails closed (GET always
+    // 403s, POST never verifies) until both are provisioned via
+    // `wrangler secret put`. Deliberately not pulled from GfCredential
+    // automatically per this file's own instruction below; move into
+    // "required" only once both are actually set.
     //
     // "required" is enforced for real by `wrangler deploy` (not just
     // `wrangler dev`) -- confirmed the hard way earlier the same day:

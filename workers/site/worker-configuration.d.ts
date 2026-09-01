@@ -18,6 +18,7 @@ export interface Env {
   HITS: AnalyticsEngineDataset;
   PURGE_Q: Queue<unknown>;
   JOBS_Q: Queue<unknown>;
+  WHATSAPP_Q: Queue<unknown>;
 
   SITE_DOMAIN: string;
   GOOGLE_OAUTH_CLIENT_ID: string;
@@ -35,4 +36,6 @@ export interface Env {
   GMAP_GEOCODE_KEY: string;
   CF_API_KEY: string;
   CF_ZONE_ID: string;
+  WHATSAPP_WEBHOOKVERIFYTOKEN: string;
+  WHATSAPP_APP_SECRET: string;
 }

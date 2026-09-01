@@ -64,6 +64,7 @@ export const ROUTES: Record<string, string> = {
   "wfbn:get_location": "/needs/getlocation/",
   "wfbn-generic:webpush_config": "/needs/webpush/config/",
   human: "/human/",
+  whatsapp_hook: "/whatsapp_hook/",
   "write:index": "/write/",
   services: "/services/",
   news: "/news/",

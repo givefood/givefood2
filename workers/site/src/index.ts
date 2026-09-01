@@ -32,6 +32,7 @@ import { wfbnFoodbankDonationpointFavicon, wfbnFoodbankFavicon } from "./routes/
 import { wfbnWebpushConfig, wfbnWebpushSubscribe, wfbnWebpushUnsubscribe } from "./routes/wfbn/webpush";
 import { wfbnMobsub, wfbnDeleteMobsub } from "./routes/wfbn/mobsub";
 import { humanRelay } from "./routes/human";
+import { whatsappHook } from "./routes/whatsappHook";
 import { publicIndex } from "./routes/public";
 import { publicAboutUs, publicApps, publicBot } from "./routes/public/contentPages";
 import { publicColophon } from "./routes/public/colophon";
@@ -342,6 +343,13 @@ for (const locale of LOCALES) {
 // PLAN.md's own recommendation since its content is 100% static.
 app.get("/llms.txt", llmsTxt);
 app.get("/.well-known/security.txt", securityTxt);
+
+// WP 4.8: givefood/urls.py:70, in the same untranslated block as the two
+// lines above -- no locale loop. GET/POST both reach whatsappHook, which
+// branches on method itself (matching Django's own GET/POST/405 shape in
+// one view) -- app.all so any other method reaches that same 405 branch
+// too, rather than a bare Hono 404.
+app.all("/whatsapp_hook/", whatsappHook);
 
 // WP 4.4: givefood/urls.py:27, inside i18n_patterns. :frag is
 // regex-constrained to the exact 4-value whitelist -- Django's own
