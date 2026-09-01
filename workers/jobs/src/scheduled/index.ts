@@ -1,12 +1,21 @@
 import type { Env } from "../../worker-configuration";
-import { FRAG_KV_KEY_LAST_UPDATED, FRAG_KV_KEY_NEED_HITS, getLastModifiedFoodbank, getRecentHitsTotal } from "@givefood/db";
+import {
+  FRAG_KV_KEY_LAST_UPDATED,
+  FRAG_KV_KEY_NEED_HITS,
+  findCrawlSetByRunId,
+  getLastModifiedFoodbank,
+  getOpenFoodbanksForNeedCheck,
+  getRecentHitsTotal,
+  insertCrawlSet,
+  insertFoodbankDiscrepancy,
+  setCrawlSetExpected,
+} from "@givefood/db";
+import type { NeedcheckRenderMessage } from "../queues/needcheckRender";
 
 // One handler per cron in wrangler.jsonc's triggers.crons, dispatched by
-// the exact cron expression. None of these are implemented yet -- see
-// PLAN.md §10 (delivery plan) and §3.10/§8 (needcheck as a Workflow) for
-// what each becomes. This file exists so the Worker's scheduled() export
-// has somewhere real to route to as each job is built.
-const HANDLERS: Record<string, (env: Env) => Promise<void>> = {
+// the exact cron expression. See PLAN.md §10 (delivery plan) and §8.5
+// (needcheck, in forensic detail) for what each becomes.
+const HANDLERS: Record<string, (env: Env, scheduledTime: number) => Promise<void>> = {
   "0 15 * * *": needcheck,
   "20 8-22/2 * * *": getArticles,
   "30 5 * * *": charityInfo,
@@ -26,14 +35,104 @@ export async function handleScheduled(
     console.error(`givefood-jobs: no handler registered for cron "${event.cron}"`);
     return;
   }
-  ctx.waitUntil(handler(env));
+  ctx.waitUntil(handler(env, event.scheduledTime));
 }
 
-// PLAN.md §3.10/§8: the needcheck pipeline (fetch/render food bank pages via
-// Browser Rendering, OpenRouter extraction, the "material change?" gate) is
-// the single highest-stakes piece of the jobs Worker and is not built yet.
-async function needcheck(env: Env): Promise<void> {
-  throw new Error("needcheck: not implemented");
+// PLAN.md §8.5.2: three lines of real work, deliberately -- a scheduled()
+// handler on a >=1-hour interval gets 15 minutes of CPU, but there is no
+// reason to spend any of it here. Create the CrawlSet, enqueue one
+// message per open food bank, return; needcheckRender.ts's consumer does
+// everything else.
+async function needcheck(env: Env, scheduledTime: number): Promise<void> {
+  const session = env.DB.withSession("first-unconstrained");
+
+  // Idempotency: the run id is derived from the scheduled date. Cron
+  // Triggers are at-least-once, so a duplicate delivery finds the
+  // existing row and does nothing (PLAN.md §8.5.2, §8.5.5).
+  const runId = `needcheck-${new Date(scheduledTime).toISOString().slice(0, 10)}`;
+  const existing = await findCrawlSetByRunId(session, runId);
+  if (existing) {
+    console.log(`needcheck: crawlset for ${runId} already exists (id ${existing.id}) -- duplicate cron delivery, skipping`);
+    return;
+  }
+
+  let crawlSetId: number;
+  try {
+    crawlSetId = await insertCrawlSet(session, "need", runId);
+  } catch (err) {
+    // The findCrawlSetByRunId check above is check-then-insert, not
+    // transactional -- two genuinely concurrent duplicate Cron Trigger
+    // deliveries (documented at-least-once) can both pass it and race to
+    // insert. crawlset_runid_uniq (0008_needcheck.sql) then makes the
+    // loser's INSERT throw; treat that exactly like the read-side
+    // "already exists" case above (harmless, nothing has been enqueued
+    // yet) rather than letting it surface as an unhandled rejection
+    // inside ctx.waitUntil, indistinguishable from a genuine failure.
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.includes("UNIQUE constraint failed")) {
+      console.log(`needcheck: crawlset for ${runId} was just created by a concurrent invocation -- lost the race, skipping`);
+      return;
+    }
+    throw err;
+  }
+  const foodbanks = await getOpenFoodbanksForNeedCheck(session);
+
+  // Set expected/remaining BEFORE sending a single message: the queue
+  // consumer can start processing (and decrementing `remaining`) as soon
+  // as the first sendBatch call lands, which can easily be before this
+  // function itself would otherwise get around to initialising the
+  // counter. decrementCrawlSetRemaining()'s guard (`remaining > 0`)
+  // matches nothing while `remaining` is still NULL, so an early message
+  // finishing before that update landed would silently fail to
+  // decrement -- permanently under-counting this run.
+  await setCrawlSetExpected(session, crawlSetId, foodbanks.length);
+
+  // sendBatch caps at 100 messages / 256 KB per call. Each chunk is
+  // independent, so one chunk's transient failure (a Queues blip) doesn't
+  // abort the other ~10 -- letting a single failure stop the whole loop
+  // used to be worse than it looks: the CrawlSet row above already
+  // committed, so any later invocation for the same runId takes the
+  // "already exists, skipping" early return and never resumes the
+  // un-enqueued remainder. Un-enqueued food banks are recorded as one
+  // discrepancy below instead of vanishing silently.
+  const BATCH_SIZE = 100;
+  let enqueuedCount = 0;
+  let failedChunks = 0;
+  for (let i = 0; i < foodbanks.length; i += BATCH_SIZE) {
+    const chunk = foodbanks.slice(i, i + BATCH_SIZE);
+    try {
+      await env.RENDER_Q.sendBatch(
+        chunk.map((fb) => ({
+          body: {
+            crawlSetId,
+            foodbankId: fb.id,
+            slug: fb.slug,
+            name: fb.name,
+            url: fb.url,
+            shoppingListUrl: fb.shopping_list_url,
+            facebookPage: fb.facebook_page,
+          } satisfies NeedcheckRenderMessage,
+        })),
+      );
+      enqueuedCount += chunk.length;
+    } catch (err) {
+      failedChunks++;
+      console.error(`needcheck: sendBatch failed for chunk starting at index ${i} (${chunk.length} food banks) in run ${runId}`, err);
+    }
+  }
+
+  if (failedChunks > 0) {
+    const missed = foodbanks.length - enqueuedCount;
+    await insertFoodbankDiscrepancy(session, {
+      foodbankId: null,
+      foodbankName: null,
+      url: null,
+      discrepancyType: "website",
+      discrepancyText: `needcheck ${runId}: ${missed} food bank(s) across ${failedChunks} chunk(s) failed to enqueue and were not need-checked today`,
+    }).catch((discErr) => console.error("needcheck: also failed to write the enqueue-failure discrepancy", discErr));
+  }
+
+  console.log(`needcheck: enqueued ${enqueuedCount}/${foodbanks.length} food banks for ${runId} (crawlset ${crawlSetId})`);
 }
 
 async function getArticles(env: Env): Promise<void> {

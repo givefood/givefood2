@@ -24,7 +24,10 @@ export interface FoodbankChangeRow {
   modified: string;
 }
 
-function mapNeedRow(raw: Record<string, unknown>): FoodbankChangeRow {
+// Exported for needcheck.ts (WP 5.2), which reads FoodbankChange rows
+// (last published / last unpublished need) as part of the change-detection
+// pipeline, rather than duplicating this same boolean-coercion mapping.
+export function mapNeedRow(raw: Record<string, unknown>): FoodbankChangeRow {
   return coerceBooleans<FoodbankChangeRow>(raw, BOOLEAN_COLUMNS);
 }
 
