@@ -50,6 +50,7 @@ import { sitemapXml } from "./routes/public/sitemaps";
 import { llmsTxt, securityTxt } from "./routes/public/textFiles";
 import { frag } from "./routes/public/frag";
 import { mdIndex, mdSitemapMd, mdSitemapXml } from "./routes/public/md";
+import { addressAutocomplete } from "./routes/public/aac";
 import { mdFoodbank, mdFoodbankNearby } from "./routes/wfbn/md/foodbank";
 import { mdFoodbankLocation, mdFoodbankLocations } from "./routes/wfbn/md/locations";
 import { mdFoodbankDonationpoint, mdFoodbankDonationpoints } from "./routes/wfbn/md/donationpoints";
@@ -195,14 +196,19 @@ app.get("/needs/in/constituency/:slug/", wfbnConstituency);
 // foodbank_location dead last.
 app.get("/needs/at/:slug/:locslug/", wfbnFoodbankLocation);
 // gfwfbn `place` (at/place/<county>/<place>/, i18n-patterned) -- PERMANENTLY
-// out of scope, not deferred: maintainer decision 2026-08-31, the `Place`
-// gazetteer (253,584 rows sourced from gazetteer.org.uk, no FK from
-// anything else in the schema) is not being migrated to D1 at all. A real
-// 404, not notPortedYet's 501 -- this isn't "not built yet", it's "never
-// coming". Registered ahead of the generic /needs catch-all below purely
-// so it doesn't inherit that placeholder's misleading "not ported yet"
-// text; Hono resolves this by literal-segment-count, same as every other
-// static-vs-:param disambiguation in this file.
+// out of scope, not deferred: maintainer decision 2026-08-31. This is
+// narrower than an earlier version of this comment implied -- confirmed
+// with the maintainer 2026-09-01: only this standalone browse-by-place
+// PAGE is dropped (no FK from anything else in the schema references it,
+// and sitemap_places*.xml is separately, also confirmed out of scope).
+// The underlying Place gazetteer DATA is NOT out of scope -- /aac/ (§4.8.6)
+// still needs it migrated to D1 for its place-name search half; see
+// routes/public/aac.ts. A real 404 here, not notPortedYet's 501 -- this
+// isn't "not built yet", it's "never coming". Registered ahead of the
+// generic /needs catch-all below purely so it doesn't inherit that
+// placeholder's misleading "not ported yet" text; Hono resolves this by
+// literal-segment-count, same as every other static-vs-:param
+// disambiguation in this file.
 app.get("/needs/at/place/:county/:place/", (c) => c.notFound());
 // Django's `updates` view has no method-restricting decorator (only
 // @csrf_exempt) -- reachable via GET (render a page) or POST (the actions
@@ -282,6 +288,7 @@ app.get("/donate/", publicDonate);
 app.get("/news/", publicNews);
 app.get("/services/", publicServices);
 app.get("/privacy/", publicPrivacy);
+app.get("/aac/", addressAutocomplete);
 app.get("/annual-reports/", annualReportIndex);
 for (const locale of LOCALES) {
   if (locale === "en") continue;

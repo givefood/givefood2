@@ -100,6 +100,8 @@ UUID_COLUMNS = {
     "orderline": set(),
     "charityyear": set(),
     "foodbankchangetranslation": set(),
+    "place": set(),
+    "postcode": set(),
 }
 
 # (postgres_table, d1_table, [d1_columns_in_order])
@@ -241,6 +243,31 @@ TRANSLATION_TABLES = [
         "from_table": "givefood_foodbankchangetranslation t JOIN givefood_foodbankchange c ON c.id = t.need_id",
         "where": "t.language IN ('cy', 'ga', 'gd')",
         "order_by": "t.id",
+    }),
+]
+
+
+# /aac/ (PLAN.md §4.8.6-§4.8.7): the Place and Postcode gazetteers.
+# name_upper is computed BY POSTGRES here, not derived from `cols` like
+# every other table -- it must be Postgres's own UPPER(name) output, never
+# recomputed by D1's ASCII-only upper() at query time (§4.8.6b). postcode
+# loads only the three columns any production code path reads
+# (postcode_normalized/lat_lng/county, §4.8.7's "Trimmed" option); the
+# migration's `postcode` column is D1-generated, not selected here at all.
+GEO_TABLES = [
+    ("givefood_place", "place", [
+        'id', 'gbpnid', 'name', 'name_upper', 'lat_lng', 'county', 'county_slug',
+        'name_slug', 'population',
+    ], {
+        "select_cols": [
+            'id', 'gbpnid', 'name', 'upper(name) AS name_upper', 'lat_lng', 'county',
+            'county_slug', 'name_slug', 'population',
+        ],
+    }),
+    ("givefood_postcode", "postcode", [
+        'id', 'pcn', 'lat_lng', 'county',
+    ], {
+        "select_cols": ['id', 'postcode_normalized AS pcn', 'lat_lng', 'county'],
     }),
 ]
 
@@ -458,6 +485,16 @@ def load_site_stats(token_box, cur):
     return foodbanks, donationpoints, items, meals
 
 
+# place_fts is an external-content FTS5 table (content='place'), so it is
+# never written directly by the INSERT OR REPLACE loop above -- it must be
+# told to resync against `place` explicitly. The 'rebuild' special command
+# does that in one statement (SQLite FTS5 docs, "The rebuild command").
+def rebuild_place_fts(token_box):
+    result = d1_query(token_box, "INSERT INTO place_fts(place_fts) VALUES('rebuild')")
+    if not result.get("success"):
+        raise RuntimeError("place_fts rebuild failed: %s" % result)
+
+
 def run_table_list(token_box, table_list, cur):
     total_loaded = 0
     for entry in table_list:
@@ -474,9 +511,9 @@ def run_table_list(token_box, table_list, cur):
 def main():
     import psycopg2  # deferred: only needed for this one-off script, not a repo dependency
 
-    # `dashboards`/`translations`: one-time snapshots (DASHBOARD_TABLES /
-    # TRANSLATION_TABLES) only -- skip the slow original 5-table + homepage
-    # copy, which neither needs re-run for.
+    # `dashboards`/`translations`/`geo`: one-time snapshots (DASHBOARD_TABLES /
+    # TRANSLATION_TABLES / GEO_TABLES) only -- skip the slow original
+    # 5-table + homepage copy, which none of them needs re-run for.
     mode = sys.argv[1] if len(sys.argv) > 1 else None
 
     token_box = TokenBox()
@@ -494,6 +531,10 @@ def main():
         total_loaded = run_table_list(token_box, DASHBOARD_TABLES, cur)
     elif mode == "translations":
         total_loaded = run_table_list(token_box, TRANSLATION_TABLES, cur)
+    elif mode == "geo":
+        total_loaded = run_table_list(token_box, GEO_TABLES, cur)
+        print("place_fts: rebuilding...", flush=True)
+        rebuild_place_fts(token_box)
     else:
         total_loaded = run_table_list(token_box, TABLES, cur)
         total_loaded += run_table_list(token_box, HOMEPAGE_TABLES, cur)
