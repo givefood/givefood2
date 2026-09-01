@@ -141,9 +141,23 @@ app.get("/api/2/docs/", api2Docs); // gfapi2 `docs` (WP 2.7)
 app.get("/api/3/", (c) => c.text("Give Food API 3"));
 app.route("/api/3", api3App);
 app.route("/api", api2App);
+// The same index/docs pull-out above applies to the bare /api/ dual-mount
+// too (givefood/urls.py:96's `path('api/', include('gfapi2.urls'))` is a
+// second, unnamespaced include of the exact same urlconf as /api/2/'s --
+// index and docs are both defined ON that urlconf, gfapi2/urls.py:7-8, so
+// both are live at the bare prefix in production, not just the versioned
+// one). Missing until now -- these two lines were never added when the
+// pull-out was done for /api/2/ itself; api2App's own data endpoints
+// (foodbanks/, search/, etc.) were already correctly dual-mounted via the
+// app.route() line above, only the two sub-app-root-matching pages were
+// still falling through to the catch-all below.
+app.get("/api/", api2Index);
+app.get("/api/docs/", api2Docs);
 
-// Anything WP 2.4/2.7 didn't mount above -- genuinely unmatched /api/* paths.
-app.route("/api", notPortedYet("gfapi3 docs page"));
+// Genuinely unmatched /api/* paths -- nothing should reach this now that
+// the above covers every route gfapi2/gfapi1/gfapi3 actually register,
+// but kept as a defensive fallback rather than a bare 404.
+app.route("/api", notPortedYet("unmatched /api/* path"));
 
 // gfwfbn `index` -- i18n-patterned (givefood/urls.py:47, inside
 // i18n_patterns), so it's registered once bare (English, no prefix) and
