@@ -32,6 +32,7 @@ export interface DonationpointSearchResult {
   facebook_page: string | null;
   distance_mi: number;
   latest_need_change_text: string;
+  latest_need_id: number;
 }
 
 type Candidate = { kind: "donationpoint" | "location"; coord: CoordinateRow };
@@ -92,6 +93,7 @@ export async function findDonationpoints(
         distance_mi: miles(distanceM),
         // Frozen bug B12 (see findLocations.ts): unguarded, matches Django.
         latest_need_change_text: parentFoodbank.latestNeed!.change_text,
+      latest_need_id: parentFoodbank.latestNeed!.id,
       };
     }
     const row = locationById.get(item.coord.id)!;
@@ -106,6 +108,7 @@ export async function findDonationpoints(
       facebook_page: parentFoodbank.facebook_page,
       distance_mi: miles(distanceM),
       latest_need_change_text: parentFoodbank.latestNeed!.change_text,
+      latest_need_id: parentFoodbank.latestNeed!.id,
     };
   });
 }

@@ -1,4 +1,5 @@
 import type { Context } from "hono";
+import { getNeedTranslationsByIds } from "@givefood/db";
 import { buildPageContext, render } from "@givefood/templates";
 import { isUk } from "@givefood/geo";
 import { urlForLocale } from "@givefood/urls";
@@ -10,6 +11,7 @@ import { findLocations } from "../../lib/findLocations";
 import { findDonationpoints } from "../../lib/findDonationpoints";
 import { findLocationsByCategory } from "../../lib/findLocationsByCategory";
 import { ITEM_CATEGORIES } from "../../lib/itemCategories";
+import { resolveNeedText } from "../../lib/fields";
 
 // gfwfbn `index` (GET /needs/, i18n-patterned -- mounted at /needs/,
 // /cy/needs/, /ga/needs/, /gd/needs/ in index.ts). The `place` view
@@ -70,6 +72,7 @@ export async function wfbnIndex(c: Context<AppEnv>): Promise<Response> {
   // is silently ignored rather than erroring, same as Django.
   const itemCategoryIsValid = itemCategory !== "" && ITEM_CATEGORIES.includes(itemCategory);
 
+  const locale = c.get("lang") as "en" | "cy" | "ga" | "gd";
   const session = dbSession(c);
   const [rawLocations, rawDonationpoints, rawLocationsByCategory] = latLngIsUk
     ? await Promise.all([
@@ -87,11 +90,44 @@ export async function wfbnIndex(c: Context<AppEnv>): Promise<Response> {
   // by changing nunjucks' global truthiness (which every other template
   // also relies on behaving like JS). Watch for this with any future
   // ported template that gates on a possibly-empty list.
-  const locations = rawLocations && rawLocations.length > 0 ? rawLocations : null;
-  const donationpoints = rawDonationpoints && rawDonationpoints.length > 0 ? rawDonationpoints : null;
-  const locationsByCategory = rawLocationsByCategory && rawLocationsByCategory.length > 0 ? rawLocationsByCategory : null;
+  const filteredLocations = rawLocations && rawLocations.length > 0 ? rawLocations : null;
+  const filteredDonationpoints = rawDonationpoints && rawDonationpoints.length > 0 ? rawDonationpoints : null;
+  const filteredLocationsByCategory = rawLocationsByCategory && rawLocationsByCategory.length > 0 ? rawLocationsByCategory : null;
 
-  const locale = c.get("lang") as "en" | "cy" | "ga" | "gd";
+  // FoodbankChangeTranslation batch lookup (needs.py:216-259) -- ONE D1
+  // round trip covering every result across all three lists (a food bank
+  // can legitimately appear in more than one), not one per row.
+  // findLocations()/findDonationpoints()/findLocationsByCategory() have no
+  // locale context of their own (see findDonationpoints.ts's own comment
+  // on why) and only ever carry the raw English latest_need_change_text;
+  // this route knows the locale, so it resolves the translated DISPLAY
+  // text here and overlays it as a parallel field. Unlike foodbank.ts
+  // (whose Nothing/Unknown gate stays on the raw field, only the inner
+  // Facebook/display split uses the translated one), index.njk's own
+  // Nothing/Unknown/Facebook branch checks for all three sections
+  // (locations, donationpoints, locations_by_category) check the
+  // TRANSLATED latest_need_get_change_text field for every branch --
+  // matching Django's real wfbn/index.html, which resolves
+  // `change_text=location.latest_need.get_change_text` FIRST via
+  // `{% with %}` and only then branches on it.
+  const allNeedIds = Array.from(
+    new Set([
+      ...(filteredLocations ?? []).map((r) => r.latest_need_id),
+      ...(filteredDonationpoints ?? []).map((r) => r.latest_need_id),
+      ...(filteredLocationsByCategory ?? []).map((r) => r.latest_need_id),
+    ]),
+  );
+  const needTranslations = locale !== "en" && allNeedIds.length > 0 ? await getNeedTranslationsByIds(session, allNeedIds, locale) : null;
+  const withTranslatedText = <T extends { latest_need_change_text: string; latest_need_id: number }>(rows: T[] | null) =>
+    rows === null
+      ? null
+      : rows.map((row) => ({
+          ...row,
+          latest_need_get_change_text: resolveNeedText(row.latest_need_change_text, needTranslations?.get(row.latest_need_id)?.change_text, locale),
+        }));
+  const locations = withTranslatedText(filteredLocations);
+  const donationpoints = withTranslatedText(filteredDonationpoints);
+  const locationsByCategory = withTranslatedText(filteredLocationsByCategory);
   const mapConfig = JSON.stringify({
     geojson: urlForLocale(locale, "wfbn:geojson"),
     lat: latStr,

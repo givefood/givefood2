@@ -96,7 +96,7 @@ export interface FoodbankWithLatestNeed extends FoodbankRow {
   latestNeed: FoodbankChangeRow | null;
 }
 
-function mapFoodbankRow(raw: Record<string, unknown>): FoodbankRow {
+export function mapFoodbankRow(raw: Record<string, unknown>): FoodbankRow {
   return coerceBooleans<FoodbankRow>(raw, BOOLEAN_COLUMNS);
 }
 

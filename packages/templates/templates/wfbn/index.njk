@@ -107,20 +107,20 @@
                   </td>
                   <td class="need_detail">
                     <div class="fb_needs">
-                      {% if location.latest_need_change_text == "Nothing" %}
+                      {% if location.latest_need_get_change_text == "Nothing" %}
                         {% blocktrans %}Nothing right now, thanks{% endblocktrans %}
-                      {% elif location.latest_need_change_text == "Unknown" %}
+                      {% elif location.latest_need_get_change_text == "Unknown" %}
                         {% if location.phone_number %}
                           <img src="/static/img/phone.svg" alt="{% blocktrans %}Phone{% endblocktrans %}" class="contact-icon"> <a href="tel:{{ location.phone_number|full_phone }}">{{ location.phone_number|friendly_phone }}</a>
                           <br>
                         {% endif %}
                         <img src="/static/img/email.svg" alt="{% blocktrans %}Email{% endblocktrans %}" class="contact-icon"> <a href="mailto:{{ location.contact_email }}">{{ location.contact_email }}</a>
-                      {% elif location.latest_need_change_text == "Facebook" %}
+                      {% elif location.latest_need_get_change_text == "Facebook" %}
                         {% blocktrans %}Check the foodbank's {% endblocktrans %}
                         <a href="https://www.facebook.com/{{ location.facebook_page }}?ref=givefood.org.uk">{% blocktrans %}Facebook page{% endblocktrans %}</a>
                         {% blocktrans %} for what they need{% endblocktrans %}
                       {% else %}
-                        {{ location.latest_need_change_text|linebreaks }}
+                        {{ location.latest_need_get_change_text|linebreaks }}
                       {% endif %}
                       {% set slug = location.foodbank_slug %}{% include "wfbn/includes/hit.njk" %}
                     </div>
@@ -158,14 +158,14 @@
                     <div class="distance">{{ donationpoint.distance_mi|floatformat(2) }}mi {% blocktrans %}away{% endblocktrans %}</div>
                   </td>
                   <td>
-                    {% if donationpoint.latest_need_change_text == "Nothing" %}
+                    {% if donationpoint.latest_need_get_change_text == "Nothing" %}
                       {% blocktrans %}Nothing right now, thanks{% endblocktrans %}
-                    {% elif donationpoint.latest_need_change_text == "Unknown" %}
+                    {% elif donationpoint.latest_need_get_change_text == "Unknown" %}
                       {% blocktrans %}Sorry. We don't know what's needed here, please contact the food bank{% endblocktrans %}
-                    {% elif donationpoint.latest_need_change_text == "Facebook" %}
+                    {% elif donationpoint.latest_need_get_change_text == "Facebook" %}
                       Check the food bank's <a href="https://www.facebook.com/{{ donationpoint.facebook_page }}?ref=givefood.org.uk">Facebook page</a> for what they need
                     {% else %}
-                      {{ donationpoint.latest_need_change_text|linebreaks }}
+                      {{ donationpoint.latest_need_get_change_text|linebreaks }}
                     {% endif %}
                     {% set slug = donationpoint.foodbank_slug %}{% include "wfbn/includes/hit.njk" %}
                   </td>
@@ -207,20 +207,20 @@
                     </td>
                     <td class="need_detail">
                       <div class="fb_needs">
-                        {% if location.latest_need_change_text == "Nothing" %}
+                        {% if location.latest_need_get_change_text == "Nothing" %}
                           {% blocktrans %}Nothing right now, thanks{% endblocktrans %}
-                        {% elif location.latest_need_change_text == "Unknown" %}
+                        {% elif location.latest_need_get_change_text == "Unknown" %}
                           {% if location.phone_number %}
                             <img src="/static/img/phone.svg" alt="{% blocktrans %}Phone{% endblocktrans %}" class="contact-icon"> <a href="tel:{{ location.phone_number|full_phone }}">{{ location.phone_number|friendly_phone }}</a>
                             <br>
                           {% endif %}
                           <img src="/static/img/email.svg" alt="{% blocktrans %}Email{% endblocktrans %}" class="contact-icon"> <a href="mailto:{{ location.contact_email }}">{{ location.contact_email }}</a>
-                        {% elif location.latest_need_change_text == "Facebook" %}
+                        {% elif location.latest_need_get_change_text == "Facebook" %}
                           {% blocktrans %}Check the foodbank's {% endblocktrans %}
                           <a href="https://www.facebook.com/{{ location.facebook_page }}?ref=givefood.org.uk">{% blocktrans %}Facebook page{% endblocktrans %}</a>
                           {% blocktrans %} for what they need{% endblocktrans %}
                         {% else %}
-                          {{ location.latest_need_change_text|linebreaks }}
+                          {{ location.latest_need_get_change_text|linebreaks }}
                         {% endif %}
                         {% set slug = location.foodbank_slug %}{% include "wfbn/includes/hit.njk" %}
                       </div>

@@ -1,11 +1,11 @@
 import type { Context } from "hono";
-import { getFoodbankBySlug, getRecentArticles, getArticlesByFoodbankId, getRecentPublishedNeedsForRss, toDashedUuid } from "@givefood/db";
+import { getFoodbankBySlug, getRecentArticles, getArticlesByFoodbankId, getRecentPublishedNeedsForRss, getNeedTranslationsByIds, toDashedUuid } from "@givefood/db";
 import { buildPageContext, loadCatalogue, render, translate } from "@givefood/templates";
 import { urlForLocale } from "@givefood/urls";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
 import { elapsedMs } from "../../middleware/serverTiming";
-import { fullNameLocaleAware, noItems, nonEmptyLines } from "../../lib/fields";
+import { fullNameLocaleAware, noItems, resolveNeedText } from "../../lib/fields";
 
 const ITEMS_LIMIT = 10;
 
@@ -37,6 +37,16 @@ async function rss(c: Context<AppEnv>, slug: string | undefined): Promise<Respon
     loadCatalogue(locale),
   ]);
 
+  // FoodbankChangeTranslation batch lookup (needs.py:216-259) -- one D1
+  // round trip for every need on this feed, not one per row.
+  // getRecentPublishedNeedsForRss's own query already excludes the
+  // Unknown/Facebook/Nothing sentinels, so unlike foodbank.ts/
+  // locationDetail.ts there's no "is this a real need" gate needed here --
+  // every row is real. noItems() (the item count in the title) stays
+  // against the RAW change_text -- FoodbankChange.no_items() (needs.py:93)
+  // is not locale-aware either.
+  const translations = locale !== "en" && needs.length > 0 ? await getNeedTranslationsByIds(session, needs.map((need) => need.id), locale) : null;
+
   const itemsRequestedAt = translate(catalogue, "items requested at");
   const items: RssItem[] = [];
   for (const need of needs) {
@@ -45,10 +55,7 @@ async function rss(c: Context<AppEnv>, slug: string | undefined): Promise<Respon
       title: `${noItems(need.change_text)} ${itemsRequestedAt} ${needFullName}`,
       url: `${c.env.SITE_DOMAIN}${urlForLocale(locale, "wfbn:foodbank", need.foodbank_slug)}#need-${toDashedUuid(need.need_id)}`,
       date: need.created,
-      // Raw English change_text, not a per-locale FoodbankChangeTranslation
-      // lookup -- same known, already-tracked gap as every other need-text
-      // page in this codebase (no route anywhere does this lookup yet).
-      description: nonEmptyLines(need.change_text).join("\n"),
+      description: resolveNeedText(need.change_text, translations?.get(need.id)?.change_text, locale),
     });
   }
   for (const article of articles) {

@@ -64,13 +64,13 @@
             {% endif %}
 
             {% if foodbank.latest_need_change_text != "Unknown" and foodbank.latest_need_change_text != "Nothing" %}
-              {% if foodbank.latest_need_change_text == "Facebook" %}
+              {% if foodbank.latest_need_get_change_text == "Facebook" %}
                 <p>{% blocktrans %}You can find out what is needed on the foodbank's Facebook page:{% endblocktrans %}</p>
                 {% set page_name = foodbank.facebook_page %}{% include "wfbn/includes/facebook_embed.njk" %}
               {% else %}
                 <p>{{ full_name }} {% blocktrans %}is currently requesting the following items to be donated:{% endblocktrans %}</p>
                 <p class="needs">
-                  {% set need_text = foodbank.latest_need_change_text %}{% include "wfbn/includes/need_text.njk" %}
+                  {% set need_text = foodbank.latest_need_get_change_text %}{% include "wfbn/includes/need_text.njk" %}
                 </p>
                 {% if foodbank.latest_need_excess_text %}
                   <p>{% blocktrans %}They don't need any more{% endblocktrans %} {% for item in excess_text_list %}{{ item }}{% if not loop.last %}, {% endif %}{% endfor %}.</p>

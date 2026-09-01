@@ -6,6 +6,7 @@ import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
 import { elapsedMs } from "../../middleware/serverTiming";
 import { bankuetUrl, CHARITY_DETAIL_COUNTRIES, fullNameLocaleAware, networkUrl, urlWithRefFoodbank } from "../../lib/fields";
+import { resolveNeedDisplay } from "../../lib/needDisplay";
 import { schemaOrgStr } from "../../lib/schemaOrg";
 
 // FB SDK locale codes -- Django's FACEBOOK_LOCALES map, ga/gd approximated
@@ -29,16 +30,23 @@ export async function wfbnFoodbank(c: Context<AppEnv>): Promise<Response> {
 
   const locale = c.get("lang") as "en" | "cy" | "ga" | "gd";
   const fullName = fullNameLocaleAware(foodbank.name, foodbank.alt_name, locale);
-  const latestNeedChangeText = foodbank.latestNeed?.change_text ?? "Nothing";
-  const latestNeedExcessText = foodbank.latestNeed?.excess_change_text ?? null;
-  // FoodbankChange.get_excess_text_list() -- non-empty lines only, then
-  // re-split; only ever read from the template when excess_change_text is
-  // already truthy, so the "no text at all" edge case (Python's [""])
-  // never actually renders.
-  const excessTextList = (latestNeedExcessText ?? "").split("\n").filter((line) => line.trim().length > 0);
+
+  // index.njk's Unknown/Nothing exclusion checks stay against the RAW
+  // latestNeedChangeText below ("" for a missing need record, not the
+  // "Nothing" sentinel -- a real, distinct value -- matching Django's
+  // silent-variable-failure semantics), which is Django's outer
+  // `{% if foodbank.latest_need.change_text != ... %}` gate, deliberately
+  // NOT locale-aware; latestNeedGetChangeText is the translated-or-English-
+  // fallback DISPLAY text (Django's inner `{% with foodbank.latest_need.get_change_text as change_text %}`).
+  // resolveNeedDisplay() and hasServiceArea() are independent D1 round
+  // trips, run concurrently.
+  const [{ changeText: latestNeedChangeText, excessChangeText: latestNeedExcessText, getChangeText: latestNeedGetChangeText, excessTextList }, hasServiceAreaValue] =
+    await Promise.all([
+      resolveNeedDisplay(session, foodbank, locale),
+      foodbank.no_locations !== 0 ? hasServiceArea(session, foodbank.id) : Promise.resolve(false),
+    ]);
 
   const [latStr, lngStr] = foodbank.lat_lng.split(",");
-  const hasServiceAreaValue = foodbank.no_locations !== 0 ? await hasServiceArea(session, foodbank.id) : false;
 
   const mapConfig: Record<string, unknown> = {
     geojson: urlForLocale(locale, "wfbn:foodbank_geojson", foodbank.slug),
@@ -67,7 +75,17 @@ export async function wfbnFoodbank(c: Context<AppEnv>): Promise<Response> {
       ...context,
       render_time_ms: elapsedMs(c),
       section: "foodbank",
-      foodbank: { ...foodbank, latest_need_change_text: latestNeedChangeText, latest_need_excess_text: latestNeedExcessText },
+      // has_service_area also nested here (see locations.ts/
+      // locationDetail.ts's identical comment) -- maplegend.njk reads
+      // `foodbank.has_service_area`, a level the top-level `has_service_area`
+      // key below never reaches.
+      foodbank: {
+        ...foodbank,
+        latest_need_change_text: latestNeedChangeText,
+        latest_need_get_change_text: latestNeedGetChangeText,
+        latest_need_excess_text: latestNeedExcessText,
+        has_service_area: hasServiceAreaValue,
+      },
       full_name: fullName,
       excess_text_list: excessTextList,
       has_charity_details: CHARITY_DETAIL_COUNTRIES.has(foodbank.country),

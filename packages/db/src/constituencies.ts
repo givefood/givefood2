@@ -1,6 +1,6 @@
 import type { Session } from "./types";
-import { getFoodbanksByConstituencyId, type FoodbankRow } from "./foodbank";
-import { getOpenLocationsByConstituencyId, type FoodbankLocationRow } from "./locations";
+import { mapFoodbankRow, type FoodbankRow } from "./foodbank";
+import { mapLocationRow, type FoodbankLocationRow } from "./locations";
 
 export interface ConstituencyRow {
   id: number;
@@ -91,13 +91,26 @@ export async function getConstituencyBySlugNarrow(session: Session, slug: string
 // layer without checking it's actually a food bank slug, which 404s. This
 // function only returns the two raw lists; reproducing B3 is the caller's
 // job, done by not validating which list an entry came from.
+//
+// The two SELECTs are independent (different tables, same constituencyId),
+// so session.batch() sends them in one D1 round trip instead of two
+// sequential ones -- same pattern, and the same measured-slowdown
+// rationale, as foodbankDetail.ts's getLocationsAndDonationPointsByFoodbankId.
 export async function getFoodbanksForConstituency(
   session: Session,
   constituencyId: number,
 ): Promise<{ foodbanks: FoodbankRow[]; locations: FoodbankLocationRow[] }> {
-  const [foodbanks, locations] = await Promise.all([
-    getFoodbanksByConstituencyId(session, constituencyId),
-    getOpenLocationsByConstituencyId(session, constituencyId),
+  const results = await session.batch([
+    session.prepare("SELECT * FROM foodbank WHERE parliamentary_constituency_id = ? AND is_closed = 0").bind(constituencyId),
+    session.prepare("SELECT * FROM foodbanklocation WHERE parliamentary_constituency_id = ? AND is_closed = 0").bind(constituencyId),
   ]);
-  return { foodbanks, locations };
+  // batch() always returns one result per input statement, in the same
+  // order -- exactly 2 here, so these indexes are never actually out of
+  // range despite noUncheckedIndexedAccess flagging them as possibly so.
+  const foodbanksResult = results[0]!;
+  const locationsResult = results[1]!;
+  return {
+    foodbanks: foodbanksResult.results.map((r) => mapFoodbankRow(r as Record<string, unknown>)),
+    locations: locationsResult.results.map((r) => mapLocationRow(r as Record<string, unknown>)),
+  };
 }

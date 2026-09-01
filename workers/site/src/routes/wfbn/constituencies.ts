@@ -4,6 +4,7 @@ import {
   getConstituencyBySlugNarrow,
   getFoodbanksByIds,
   getFoodbanksForConstituency,
+  getNeedTranslationsByIds,
   type ConstituencyListRow,
   type FoodbankLocationRow,
   type FoodbankWithLatestNeed,
@@ -14,7 +15,7 @@ import { url, urlForLocale } from "@givefood/urls";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
 import { elapsedMs } from "../../middleware/serverTiming";
-import { emailOrFoodbankEmail, ENABLE_WRITE, fullNameLocaleAware, nonEmptyLines, phoneOrFoodbankPhone } from "../../lib/fields";
+import { emailOrFoodbankEmail, ENABLE_WRITE, fullNameLocaleAware, phoneOrFoodbankPhone, resolveNeedText } from "../../lib/fields";
 import { constituencySchemaOrgStr } from "../../lib/schemaOrg";
 
 // gfwfbn `constituencies` (GET /needs/in/constituencies/, i18n-patterned).
@@ -135,6 +136,21 @@ export async function wfbnConstituency(c: Context<AppEnv>): Promise<Response> {
   const foodbanksWithNeed = await getFoodbanksByIds(session, foodbankIds);
   const byId = new Map(foodbanksWithNeed.map((fb) => [fb.id, fb]));
 
+  // FoodbankChangeTranslation batch lookup (needs.py:216-259) -- ONE D1
+  // round trip covering every food bank on this page (constituency.html's
+  // `foodbank.needs.get_change_text` is locale-aware; this table backs
+  // that lookup). Django's real Nothing/Unknown/Facebook checks here
+  // compare the ALREADY-TRANSLATED change_text (unlike foodbank.ts's own
+  // page, which splits raw-for-the-gate vs translated-for-display -- see
+  // that file's comment) -- constituency.njk's template already reads
+  // `foodbank.get_change_text` for its checks, so no template change is
+  // needed, only making this route's get_change_text translation-aware.
+  const constituencyNeedIds = Array.from(
+    new Set(foodbanksWithNeed.map((fb) => fb.latestNeed?.id).filter((id): id is number => id !== undefined && id !== null)),
+  );
+  const constituencyTranslations =
+    locale !== "en" && constituencyNeedIds.length > 0 ? await getNeedTranslationsByIds(session, constituencyNeedIds, locale) : null;
+
   // ParliamentaryConstituency.foodbanks() (givefood/models/political.py:100-135)
   // -- concatenates the food-bank list then the location list, NEITHER
   // sub-list sorted (frozen bug B3, see getFoodbanksForConstituency's own
@@ -152,22 +168,26 @@ export async function wfbnConstituency(c: Context<AppEnv>): Promise<Response> {
   // non-English constituency page, which is a parity decision rather than
   // a refactor. Same bug class as the `human` entry in I18N_SCOPED's own
   // comment. constituency.njk:71 is the sole consumer.
+  // "" (not "Nothing") when there's no latest_need at all -- Django's
+  // `foodbank.needs` here is the raw nullable FK (not the
+  // latest_need_text()-style sentinel wrapper foodbank.ts's own page
+  // uses), so a None value resolves to Django's invalid-variable default
+  // ('') and renders a blank cell, not the "isn't requesting anything"
+  // message. See workers/site/src/routes/wfbn/foodbank.ts's own comment
+  // for the general reasoning. Shared by both loops below (organisation
+  // rows read `withNeed`, location rows read the parent's `parentFb` --
+  // same FoodbankWithLatestNeed shape either way).
+  const getChangeTextFor = (withNeed: FoodbankWithLatestNeed | undefined): string =>
+    resolveNeedText(withNeed?.latestNeed?.change_text ?? "", withNeed?.latestNeed ? constituencyTranslations?.get(withNeed.latestNeed.id)?.change_text : undefined, locale);
+
   const combinedList: Array<Record<string, unknown>> = [];
   for (const fb of rawFoodbanks) {
     const withNeed = byId.get(fb.id);
-    // "" (not "Nothing") when there's no latest_need at all -- Django's
-    // `foodbank.needs` here is the raw nullable FK (not the
-    // latest_need_text()-style sentinel wrapper foodbank.ts's own page
-    // uses), so a None value resolves to Django's invalid-variable
-    // default ('') and renders a blank cell, not the "isn't requesting
-    // anything" message. See workers/site/src/routes/wfbn/foodbank.ts's
-    // own comment for the general reasoning.
-    const changeText = withNeed?.latestNeed?.change_text ?? "";
     combinedList.push({
       type: "organisation",
       name: fb.name,
       gf_url: url("wfbn:foodbank", fb.slug),
-      get_change_text: nonEmptyLines(changeText).join("\n"),
+      get_change_text: getChangeTextFor(withNeed),
       phone_number: fb.phone_number,
       contact_email: fb.contact_email,
       facebook_page: fb.facebook_page,
@@ -175,16 +195,13 @@ export async function wfbnConstituency(c: Context<AppEnv>): Promise<Response> {
   }
   for (const loc of locations) {
     const parentFb = byId.get(loc.foodbank_id);
-    // "" (not "Nothing") when there's no latest_need at all -- see the
-    // organisation branch above for why.
-    const changeText = parentFb?.latestNeed?.change_text ?? "";
     combinedList.push({
       type: "location",
       name: loc.name,
       foodbank_name: loc.foodbank_name,
       foodbank_name_slug: loc.foodbank_slug,
       gf_url: url("wfbn:foodbank_location", loc.foodbank_slug, loc.slug),
-      get_change_text: nonEmptyLines(changeText).join("\n"),
+      get_change_text: getChangeTextFor(parentFb),
       phone_number: phoneOrFoodbankPhone(loc.phone_number, loc.foodbank_phone_number),
       contact_email: emailOrFoodbankEmail(loc.email, loc.foodbank_email),
       facebook_page: parentFb?.facebook_page ?? null,

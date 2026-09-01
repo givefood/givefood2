@@ -99,6 +99,7 @@ UUID_COLUMNS = {
     "orders": set(),
     "orderline": set(),
     "charityyear": set(),
+    "foodbankchangetranslation": set(),
 }
 
 # (postgres_table, d1_table, [d1_columns_in_order])
@@ -218,6 +219,29 @@ DASHBOARD_TABLES = [
     ("givefood_charityyear", "charityyear", [
         'id', 'foodbank_id', 'created', 'date', 'income', 'expenditure',
     ]),
+]
+
+# Follow-up to WP 3's gfwfbn HTML build: FoodbankChangeTranslation
+# (migrations/0006_need_translations.sql), filtered to the 3 non-English
+# locales this app actually serves (cy/ga/gd -- see that migration's own
+# comment: production carries 16 other languages, ~60k more rows, for
+# Django's wider LANGUAGES list this app doesn't serve). Joined against
+# foodbankchange (PLAN.md's own reference export, §5.3.3: "the JOIN
+# silently drops the 863 orphans") -- needs_deleteall's queryset delete
+# (gfadmin/views.py:422) bypasses FoodbankChange's own cascade, so some
+# FoodbankChangeTranslation rows reference a need_id that no longer
+# exists; loading those would be harmless (no FK, never looked up since
+# only live latest_need_id values are queried) but is needless bytes and
+# diverges from the documented approach for no reason to.
+TRANSLATION_TABLES = [
+    ("givefood_foodbankchangetranslation", "foodbankchangetranslation", [
+        'id', 'need_id', 'foodbank_id', 'language', 'change_text', 'excess_change_text',
+    ], {
+        "select_cols": ['t.id', 't.need_id', 't.foodbank_id', 't.language', 't.change_text', 't.excess_change_text'],
+        "from_table": "givefood_foodbankchangetranslation t JOIN givefood_foodbankchange c ON c.id = t.need_id",
+        "where": "t.language IN ('cy', 'ga', 'gd')",
+        "order_by": "t.id",
+    }),
 ]
 
 
@@ -450,10 +474,10 @@ def run_table_list(token_box, table_list, cur):
 def main():
     import psycopg2  # deferred: only needed for this one-off script, not a repo dependency
 
-    # `dashboards`: WP 4.5's gfdash one-time snapshot (DASHBOARD_TABLES) only
-    # -- skips the slow original 5-table + homepage copy, which nothing here
-    # needs re-run for.
-    dashboards_only = len(sys.argv) > 1 and sys.argv[1] == "dashboards"
+    # `dashboards`/`translations`: one-time snapshots (DASHBOARD_TABLES /
+    # TRANSLATION_TABLES) only -- skip the slow original 5-table + homepage
+    # copy, which neither needs re-run for.
+    mode = sys.argv[1] if len(sys.argv) > 1 else None
 
     token_box = TokenBox()
     env = load_env(FOODCHARITY_ENV_PATH)
@@ -466,8 +490,10 @@ def main():
 
     t0 = time.monotonic()
 
-    if dashboards_only:
+    if mode == "dashboards":
         total_loaded = run_table_list(token_box, DASHBOARD_TABLES, cur)
+    elif mode == "translations":
+        total_loaded = run_table_list(token_box, TRANSLATION_TABLES, cur)
     else:
         total_loaded = run_table_list(token_box, TABLES, cur)
         total_loaded += run_table_list(token_box, HOMEPAGE_TABLES, cur)

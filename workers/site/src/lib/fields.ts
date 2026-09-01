@@ -176,6 +176,25 @@ export function nonEmptyLines(text: string): string[] {
   return text.split("\n").filter((line) => line.trim().length > 0);
 }
 
+// FoodbankChange.get_text()'s locale-aware half (needs.py:216-259) --
+// nonEmptyLines() above only ever did the final blank-line-strip step; this
+// completes the port: for English, the raw text always wins outright (the
+// `current_language == "en"` branch never even queries
+// FoodbankChangeTranslation); for cy/ga/gd, a truthy translated value wins,
+// otherwise raw English is the fallback. (The Django source's leading
+// sentinel-check branch -- `if self.change_text in [...]: the_text = ...`
+// -- is unconditionally overwritten by one of the two branches this
+// reproduces, on every real code path, so it's dead code not reproduced
+// here.) `translatedText` is `getNeedTranslation`/`getNeedTranslationsByIds`
+// (@givefood/db)'s change_text or excess_change_text column for the
+// current request's locale -- undefined/null when there's no row, or
+// locale is "en" and the caller skipped the lookup entirely.
+export function resolveNeedText(rawText: string | null, translatedText: string | null | undefined, locale: "en" | "cy" | "ga" | "gd"): string {
+  const text = locale !== "en" && translatedText ? translatedText : rawText;
+  if (!text) return "";
+  return nonEmptyLines(text).join("\n");
+}
+
 // Django's slugify(), reproduced only as simply as this codebase actually
 // needs it -- same scope note as api1.ts's own copy (PLAN.md R7: a full
 // Unicode-faithful slugify is a much bigger job that matters for the

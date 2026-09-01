@@ -5,7 +5,8 @@ import { urlForLocale } from "@givefood/urls";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
 import { elapsedMs } from "../../middleware/serverTiming";
-import { CHARITY_DETAIL_COUNTRIES, emailOrFoodbankEmail, fullNameLocaleAware, networkUrl, nonEmptyLines, phoneOrFoodbankPhone, urlWithRefDonationPoint, urlWithRefFoodbank } from "../../lib/fields";
+import { CHARITY_DETAIL_COUNTRIES, emailOrFoodbankEmail, fullNameLocaleAware, networkUrl, phoneOrFoodbankPhone, urlWithRefDonationPoint, urlWithRefFoodbank } from "../../lib/fields";
+import { resolveNeedDisplay } from "../../lib/needDisplay";
 import { donationPointSchemaOrgStr, locationSchemaOrgStr } from "../../lib/schemaOrg";
 import { isOpen, openingHoursDays } from "../../lib/openingHours";
 
@@ -33,13 +34,12 @@ export async function wfbnFoodbankLocation(c: Context<AppEnv>): Promise<Response
   const locationFullName = `${location.name}, ${fullName}`;
 
   // "" (not "Nothing") null-latestNeed fallback -- see mdFoodbankLocation's
-  // own comment for why.
-  const changeText = foodbank.latestNeed?.change_text ?? "";
-  const excessChangeText = foodbank.latestNeed?.excess_change_text ?? null;
-  const getChangeText = nonEmptyLines(changeText).join("\n");
-  const excessTextList = excessChangeText ? nonEmptyLines(excessChangeText) : [];
-
-  const hasServiceAreaValue = await hasServiceArea(session, foodbank.id);
+  // own comment for why. resolveNeedDisplay() and hasServiceArea() are
+  // independent D1 round trips, run concurrently.
+  const [{ changeText, excessChangeText, getChangeText, excessTextList }, hasServiceAreaValue] = await Promise.all([
+    resolveNeedDisplay(session, foodbank, locale),
+    hasServiceArea(session, foodbank.id),
+  ]);
 
   // location.latitude/.longitude are nullable in production (unlike
   // lat_lng, NOT NULL) -- Django's own latt()/long() always derive from
@@ -116,15 +116,15 @@ export async function wfbnFoodbankDonationpoint(c: Context<AppEnv>): Promise<Res
   const locale = c.get("lang") as "en" | "cy" | "ga" | "gd";
   const fullName = fullNameLocaleAware(foodbank.name, foodbank.alt_name, locale);
 
-  const changeText = foodbank.latestNeed?.change_text ?? "";
+  // resolveNeedDisplay() and hasServiceArea() are independent D1 round
+  // trips, run concurrently. Guarded like ../locations.ts's
+  // wfbnFoodbankDonationpoints sibling (this page is reachable even for a
+  // food bank with no_locations === 0).
+  const [{ changeText, excessChangeText, getChangeText, excessTextList }, hasServiceAreaValue] = await Promise.all([
+    resolveNeedDisplay(session, foodbank, locale),
+    foodbank.no_locations !== 0 ? hasServiceArea(session, foodbank.id) : Promise.resolve(false),
+  ]);
   const hasNeed = changeText !== "Unknown" && changeText !== "Nothing" && changeText !== "Facebook";
-  const excessChangeText = foodbank.latestNeed?.excess_change_text ?? null;
-  const getChangeText = nonEmptyLines(changeText).join("\n");
-  const excessTextList = excessChangeText ? nonEmptyLines(excessChangeText) : [];
-
-  // Guarded like ../locations.ts's wfbnFoodbankDonationpoints sibling
-  // (this page is reachable even for a food bank with no_locations === 0).
-  const hasServiceAreaValue = foodbank.no_locations !== 0 ? await hasServiceArea(session, foodbank.id) : false;
 
   // donationpoint.latitude/.longitude are nullable in production (unlike
   // lat_lng, NOT NULL) -- same reasoning as wfbnFoodbankLocation above.

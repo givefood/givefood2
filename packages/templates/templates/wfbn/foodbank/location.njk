@@ -62,7 +62,7 @@
             {% endif %}
 
             {% if foodbank.latest_need_change_text != "Unknown" and foodbank.latest_need_change_text != "Nothing" %}
-              {% if foodbank.latest_need_change_text == "Facebook" %}
+              {% if foodbank.latest_need_get_change_text == "Facebook" %}
                 <p>You can find out what {{ full_name }} is requesting to have donated on their Facebook page:</p>
                 {% set page_name = foodbank.facebook_page %}{% include "wfbn/includes/facebook_embed.njk" %}
               {% else %}

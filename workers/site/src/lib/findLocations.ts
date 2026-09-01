@@ -44,6 +44,7 @@ export interface LocationSearchResult {
   contact_email: string;
   facebook_page: string | null;
   latest_need_change_text: string;
+  latest_need_id: number;
 }
 
 type Candidate = { kind: "organisation" | "location"; coord: CoordinateRow };
@@ -102,6 +103,7 @@ export async function findLocations(
         contact_email: row.contact_email,
         facebook_page: row.facebook_page,
         latest_need_change_text: row.latestNeed!.change_text,
+        latest_need_id: row.latestNeed!.id,
       };
     }
     const row = locationById.get(item.coord.id)!;
@@ -117,6 +119,7 @@ export async function findLocations(
       contact_email: emailOrFoodbankEmail(row.email, row.foodbank_email),
       facebook_page: parentFoodbank.facebook_page,
       latest_need_change_text: parentFoodbank.latestNeed!.change_text,
+      latest_need_id: parentFoodbank.latestNeed!.id,
     };
   });
 }

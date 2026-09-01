@@ -12,3 +12,4 @@ export * from "./homepage";
 export * from "./subscribers";
 export * from "./frag";
 export * from "./dashboards";
+export * from "./needTranslations";

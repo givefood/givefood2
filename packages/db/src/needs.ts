@@ -40,6 +40,7 @@ export async function getPublishedNeeds(session: Session, limit: number): Promis
 }
 
 export interface RssNeedRow {
+  id: number; // foodbankchange.id -- the numeric FK getNeedTranslationsByIds needs, not the need_id UUID below
   need_id: string;
   change_text: string;
   created: string;
@@ -59,7 +60,7 @@ export async function getRecentPublishedNeedsForRss(session: Session, limit: num
   const foodbankFilter = foodbankId !== undefined ? "AND fc.foodbank_id = ? " : "";
   const result = await session
     .prepare(
-      "SELECT fc.need_id, fc.change_text, fc.created, f.slug AS foodbank_slug, f.name AS foodbank_name, f.alt_name AS foodbank_alt_name " +
+      "SELECT fc.id, fc.need_id, fc.change_text, fc.created, f.slug AS foodbank_slug, f.name AS foodbank_name, f.alt_name AS foodbank_alt_name " +
         "FROM foodbankchange fc JOIN foodbank f ON f.id = fc.foodbank_id " +
         `WHERE fc.published = 1 AND fc.change_text NOT IN ('Unknown', 'Facebook', 'Nothing') ${foodbankFilter}` +
         "ORDER BY fc.created DESC LIMIT ?",
