@@ -1,0 +1,95 @@
+{% extends "page.njk" %}
+
+{% block head %}
+  <meta name="description" content="Give Food a UK charity uses data to highlight local and structural food insecurity then provides tools to help alleviate it.">
+  <meta name="robots" content="noindex">
+{% endblock %}
+
+{% block title %}{{ _("Flag something wrong") }} - Give Food{% endblock %}
+
+{% block body %}
+
+    <div class="columns is-centered">
+        <div class="column is-half">
+            <a href="{{ url('index') }}" class="logo"><img src="/static/img/logo.svg" alt="Give Food"></a>
+        </div>
+    </div>
+
+    <div class="columns is-centered">
+        <div class="column is-half content">
+
+            <h1>{{ _("Flag something wrong") }}</h1>
+
+            {% if done %}
+
+                <p>{% blocktrans %}Thanks! We'll try and get back to you within 24 hours.{% endblocktrans %}</p>
+
+            {% else %}
+
+                {% if turnstilefail %}
+                  <div class="notification is-danger">
+                    <p>{% blocktrans %}Sorry, the security check failed. Please try again.{% endblocktrans %}</p>
+                  </div>
+                {% endif %}
+                {% if form_error %}
+                  <div class="notification is-danger">
+                    <p>{% blocktrans %}Sorry, please check the details below and try again.{% endblocktrans %}</p>
+                  </div>
+                {% endif %}
+                {% if send_failed %}
+                  <div class="notification is-danger">
+                    <p>{% blocktrans %}Sorry, something went wrong sending your report. Please try again.{% endblocktrans %}</p>
+                  </div>
+                {% endif %}
+
+                <p>{% blocktrans %}Sorry that you've found something wrong. We'll review your report within 24 hours, usually quicker.{% endblocktrans %}</p>
+
+                <p>{{ _("Your IP address:") }} <span data-include="{{ url('frag', 'ip-address') }}"></span></p>
+
+                <form action="{{ url('human') }}" method="post">
+
+                    <div class="field">
+                      <label class="label" for="id_our_page">{{ _("Page") }}</label>
+                      <div class="control">
+                        <input type="url" name="our_page" class="input" id="id_our_page" value="{{ form_values.our_page }}" required>
+                      </div>
+                      <p class="help">{{ _("Address of the page you're flagging") }}</p>
+                    </div>
+
+                    <div class="field">
+                      <label class="label" for="id_your_email">{{ _("Your email") }}</label>
+                      <div class="control">
+                        <input type="email" name="your_email" class="input" id="id_your_email" value="{{ form_values.your_email }}">
+                      </div>
+                      <p class="help">{{ _("Optional. Your email address") }}</p>
+                    </div>
+
+                    <div class="field">
+                      <label class="label" for="id_explanation">{{ _("Explanation") }}</label>
+                      <div class="control">
+                        <textarea name="explanation" class="textarea" id="id_explanation">{{ form_values.explanation }}</textarea>
+                      </div>
+                      <p class="help">{{ _("Optional. Please explain why you're flagging this page") }}</p>
+                    </div>
+
+                    <input type="submit" class="button is-link" value="{{ _('Submit') }}">
+                    <input type="hidden" name="target" value="{{ url('flag') }}">
+                    <input type="hidden" name="action" value="flag">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+                </form>
+
+            {% endif %}
+
+        </div>
+    </div>
+
+{% endblock %}
+
+{% block script %}
+
+  <script>
+    document.getElementById("id_our_page").value = window.location.hash.replace("#", "");
+  </script>
+
+{% endblock %}

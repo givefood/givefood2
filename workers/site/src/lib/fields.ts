@@ -26,6 +26,42 @@ const QUERYSTRING_RUBBISH = ["utm_source", "utm_medium", "utm_campaign", "y_sour
 // keeping its own copy.
 export const CHARITY_DETAIL_COUNTRIES = new Set(["England", "Wales", "Scotland", "Northern Ireland"]);
 
+// givefood/const/general.py's COUNTRIES/FOODBANK_NETWORKS -- the
+// FoodbankRegistrationForm select options (routes/public/registerFoodbank.ts).
+// Django's ChoiceField pairs each with itself as (value, label); ported as a
+// plain string array instead, since every value and its label are always
+// identical here and register_foodbank.njk just needs one string per
+// <option>, not a {value, label} pair.
+export const COUNTRIES = ["England", "Wales", "Scotland", "Northern Ireland", "Isle of Man", "Jersey", "Guernsey"];
+export const FOODBANK_NETWORKS = ["Trussell", "IFAN", "Independent"];
+
+// URLField's default scheme allowlist is http/https/ftp/ftps -- this app
+// never expects anything but http/https in practice. Shared by both
+// registerFoodbank.ts (website/shopping_list_link/facebook) and flag.ts
+// (our_page) rather than each keeping its own copy.
+export function isValidHttpUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+// Neither Django's plain CharField nor URLField/EmailField reject an
+// embedded newline in a single-line form value -- but this port also
+// re-emits every field verbatim as one "key: value" line in a plain-text
+// internal email (lib/email.ts's redactedKeyValueLines()), where an
+// embedded \n/\r would let a submitted value forge additional-looking
+// "key: value" lines ahead of the real ones. Rejecting newlines in every
+// single-line field (registerFoodbank.ts's name/postcode/phone_number/
+// charity_number/website/shopping_list_link/facebook, flag.ts's
+// our_page/your_email) closes that off; address/explanation are genuine
+// multi-line textareas and don't use this check.
+export function isSingleLine(value: string): boolean {
+  return !value.includes("\n") && !value.includes("\r");
+}
+
 // A simple, not-Django's-exact-EmailValidator check -- good enough to
 // reject obviously malformed input server-side. Shared by every route that
 // validates a submitted email address (updates.ts's subscribe action,

@@ -27,6 +27,22 @@ export interface SendEmailParams {
   replyTo?: string;
 }
 
+// registration_email.txt/flag_email.txt, ported as one shared builder
+// rather than two copies (routes/public/registerFoodbank.ts and flag.ts
+// both feed a submitted form's fields into an internal notification email
+// this same way): one "key: value" line per field, csrf_token and
+// cf-turnstile-response always excluded (an internal email to
+// mail@givefood.org.uk still shouldn't carry a live CSRF/Turnstile token --
+// flag()'s real Django view already strips the equivalent two keys for the
+// same reason, views.py:1112-1113; registration_email.txt's real Django
+// template does NOT, a leak this port doesn't reproduce).
+export function redactedKeyValueLines(fields: Record<string, string>): string {
+  return Object.entries(fields)
+    .filter(([key]) => key !== "csrf_token" && key !== "cf-turnstile-response")
+    .map(([key, value]) => `${key}: ${value}`)
+    .join("\n");
+}
+
 export async function sendEmail(c: Context<AppEnv>, params: SendEmailParams): Promise<boolean> {
   const token = c.env.POSTMARK_TOKEN;
   if (!token) {
@@ -56,6 +72,12 @@ export async function sendEmail(c: Context<AppEnv>, params: SendEmailParams): Pr
         TextBody: params.textBody,
         HtmlBody: params.htmlBody ?? null,
         ReplyTo: params.replyTo ?? null,
+        // notifications.py:111-114 -- "broadcast" iff is_broadcast, else
+        // "outbound". No caller of this shared sendEmail() (updates.ts's
+        // two, write/index.ts's one, or the two this MessageStream fix
+        // itself was found while adding) ever sends a broadcast; hardcoded
+        // rather than threading an unused parameter through every call site.
+        MessageStream: "outbound",
       }),
     });
     // Django's send_email() checks `result.status_code == 200` exactly,

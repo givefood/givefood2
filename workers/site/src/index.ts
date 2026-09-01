@@ -39,6 +39,8 @@ import { publicServices } from "./routes/public/services";
 import { publicPrivacy } from "./routes/public/privacy";
 import { publicDonate } from "./routes/public/donate";
 import { publicNews } from "./routes/public/news";
+import { publicRegisterFoodbank } from "./routes/public/registerFoodbank";
+import { publicFlag } from "./routes/public/flag";
 import { publicCountry, publicCountryGeojson } from "./routes/public/country";
 import { annualReport, annualReportIndex } from "./routes/public/annualReport";
 import { robotsTxt } from "./routes/public/robots";
@@ -275,6 +277,22 @@ for (const locale of LOCALES) {
   app.get(`/${locale}/donate/`, publicDonate);
   app.get(`/${locale}/news/`, publicNews);
   app.get(`/${locale}/annual-reports/`, annualReportIndex);
+}
+
+// WP 4.7: register_foodbank/flag (givefood/urls.py:22,30, both inside
+// i18n_patterns). One handler per route for both GET (render) and POST
+// (process, reached only via the POST /human/ relay's auto-submit) --
+// matching Django's own single-view-both-methods shape.
+app.get("/register-foodbank/", publicRegisterFoodbank);
+app.post("/register-foodbank/", publicRegisterFoodbank);
+app.get("/flag/", publicFlag);
+app.post("/flag/", publicFlag);
+for (const locale of LOCALES) {
+  if (locale === "en") continue;
+  app.get(`/${locale}/register-foodbank/`, publicRegisterFoodbank);
+  app.post(`/${locale}/register-foodbank/`, publicRegisterFoodbank);
+  app.get(`/${locale}/flag/`, publicFlag);
+  app.post(`/${locale}/flag/`, publicFlag);
 }
 
 // givefood `country`/`country_geojson` and `annual_report` -- both single

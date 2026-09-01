@@ -1,0 +1,173 @@
+{% extends "page.njk" %}
+
+{% block head %}
+  <meta name="robots" content="noindex">
+{% endblock %}
+
+{% block title %}{{ _("Register a food bank") }} - Give Food{% endblock %}
+
+{% block body %}
+
+  <div class="columns is-centered">
+    <div class="column is-half">
+      <a href="{{ url('index') }}" class="logo"><img src="/static/img/logo.svg" alt="Give Food"></a>
+    </div>
+  </div>
+
+  <div class="columns is-centered">
+    <div class="column is-half content">
+      <h1>{{ _("Register a food bank") }}</h1>
+
+      {% if done %}
+
+        <p>{% blocktrans %}Thanks! We'll try and get back to you within a couple days.{% endblocktrans %}</p>
+
+      {% else %}
+
+        {% if turnstilefail %}
+          <div class="notification is-danger">
+            <p>{% blocktrans %}Sorry, the security check failed. Please try again.{% endblocktrans %}</p>
+          </div>
+        {% endif %}
+        {% if form_error %}
+          <div class="notification is-danger">
+            <p>{% blocktrans %}Sorry, please check the details below and try again.{% endblocktrans %}</p>
+          </div>
+        {% endif %}
+        {% if send_failed %}
+          <div class="notification is-danger">
+            <p>{% blocktrans %}Sorry, something went wrong sending your registration. Please try again.{% endblocktrans %}</p>
+          </div>
+        {% endif %}
+
+        <p>{% blocktrans %}Please use this form to submit the details of a food bank to be included in our database.{% endblocktrans %}</p>
+        <p>{% set needs_url = url('wfbn:index') %}{% blocktrans with needs_url=needs_url %}This will allow users to see what you are requesting to have donated in our <a href="{{ needs_url }}">tool</a>, as well as places our data is used.{% endblocktrans %}</p>
+
+        <p>{% blocktrans %}The UK-based food bank must meet at least <strong>two</strong> of the following criteria:{% endblocktrans %}</p>
+
+        <ul>
+          <li>{% blocktrans %}Be a charity registered with Charity Commission for England and Wales, Office of the Scottish Charity Regulator, or Charity Commission for Northern Ireland. We also consider charities registered on the Isle Of Man and the Channel Islands.{% endblocktrans %}</li>
+          <li>{% blocktrans %}Show that food recipients are referred to them by agencies such as a local authority, schools, Citizens Advice Bureau, Jobcentre, GPs, probation service or the police.{% endblocktrans %}</li>
+          <li>{% blocktrans %}Have a published strategy for supporting the food recipient so as they do not become reliant on the foodbank in the long term.{% endblocktrans %}</li>
+          <li>{% blocktrans %}Be a member of Trussell or IFAN.{% endblocktrans %}</li>
+        </ul>
+
+        <p>{% blocktrans %}In order to use our service fully and for us to automatically discover what donations the food bank is requesting we will need a website address containing your shopping list.{% endblocktrans %}</p>
+
+        <p>{% blocktrans %}We hope to get back to you within 24 hours.{% endblocktrans %}</p>
+
+        <form method="post" action="{{ url('human') }}">
+
+          <div class="field">
+            <label class="label" for="id_name">{{ _("Name") }}</label>
+            <div class="control">
+              <input type="text" name="name" maxlength="100" class="input" id="id_name" value="{{ form_values.name }}" required>
+            </div>
+            <p class="help">{{ _("E.g. 'Brixton', 'Sid Valley', or 'One Can Trust'") }}</p>
+          </div>
+
+          <div class="field">
+            <label class="label" for="id_address">{{ _("Address") }}</label>
+            <div class="control">
+              <textarea name="address" class="textarea" id="id_address" required>{{ form_values.address }}</textarea>
+            </div>
+          </div>
+
+          <div class="field">
+            <label class="label" for="id_postcode">{{ _("Postcode") }}</label>
+            <div class="control">
+              <input type="text" name="postcode" maxlength="10" class="input" id="id_postcode" value="{{ form_values.postcode }}" required>
+            </div>
+          </div>
+
+          <div class="field">
+            <label class="label" for="id_country">{{ _("Country") }}</label>
+            <div class="control">
+              <div class="select">
+                <select name="country" id="id_country" required>
+                  <option value="">---------</option>
+                  {% for country in countries %}
+                    <option value="{{ country }}"{% if form_values.country == country %} selected{% endif %}>{{ country }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div class="field">
+            <label class="label" for="id_network">{{ _("Network") }}</label>
+            <div class="control">
+              <div class="select">
+                <select name="network" id="id_network" required>
+                  <option value="">---------</option>
+                  {% for network in networks %}
+                    <option value="{{ network }}"{% if form_values.network == network %} selected{% endif %}>{{ network }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div class="field">
+            <label class="label" for="id_email">{{ _("Email") }}</label>
+            <div class="control">
+              <input type="email" name="email" class="input" id="id_email" value="{{ form_values.email }}" required>
+            </div>
+            <p class="help">{{ _("A public email address, as this will be published") }}</p>
+          </div>
+
+          <div class="field">
+            <label class="label" for="id_phone_number">{{ _("Phone number") }}</label>
+            <div class="control">
+              <input type="text" name="phone_number" class="input" id="id_phone_number" value="{{ form_values.phone_number }}" required>
+            </div>
+            <p class="help">{{ _("A public phone number, as this will be published") }}</p>
+          </div>
+
+          <div class="field">
+            <label class="label" for="id_charity_number">{{ _("Charity number") }}</label>
+            <div class="control">
+              <input type="text" name="charity_number" class="input" id="id_charity_number" value="{{ form_values.charity_number }}">
+            </div>
+            <p class="help">{{ _("Optional. E.g. 1188192 or SC041954") }}</p>
+          </div>
+
+          <div class="field">
+            <label class="label" for="id_website">{{ _("Website") }}</label>
+            <div class="control">
+              <input type="url" name="website" class="input" id="id_website" value="{{ form_values.website }}" required>
+            </div>
+            <p class="help">{{ _("E.g. http://www.sidvalleyfoodbank.org.uk") }}</p>
+          </div>
+
+          <div class="field">
+            <label class="label" for="id_shopping_list_link">{{ _("Shopping list link") }}</label>
+            <div class="control">
+              <input type="url" name="shopping_list_link" class="input" id="id_shopping_list_link" value="{{ form_values.shopping_list_link }}">
+            </div>
+            <p class="help">{{ _("Optional. E.g. http://www.sidvalleyfoodbank.org.uk/shopping-list/") }}</p>
+          </div>
+
+          <div class="field">
+            <label class="label" for="id_facebook">{{ _("Facebook") }}</label>
+            <div class="control">
+              <input type="url" name="facebook" class="input" id="id_facebook" value="{{ form_values.facebook }}">
+            </div>
+            <p class="help">{{ _("Optional. E.g. https://www.facebook.com/SidValleyFoodBank") }}</p>
+          </div>
+
+          <input type="submit" class="button is-link" value="{{ _('Submit') }}">
+          <input type="hidden" name="target" value="{{ url('register_foodbank') }}">
+          <input type="hidden" name="action" value="register-foodbank">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+        </form>
+
+        <br><br><br><br>
+
+      {% endif %}
+
+    </div>
+  </div>
+
+{% endblock %}
