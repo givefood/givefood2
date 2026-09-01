@@ -125,6 +125,13 @@ export const PARAMETERISED: Record<string, (...args: string[]) => string> = {
   "wfbn-md:md_foodbank_nearby": (slug) => `/md/needs/at/${slug}/nearby/`,
   // WP 4.5. gfdash/urls.py's `re_path(r'^deliveries/(count|items|weight|calories)/$', ...)`.
   "dash:deliveries": (metric) => `/dashboard/deliveries/${metric}/`,
+  // WP 4.6. gfwrite/urls.py -- entirely outside i18n_patterns (the
+  // "Untranslated apps" block, same as dash:*), so none of these go in
+  // I18N_SCOPED either.
+  "write:constituency": (slug) => `/write/to/${slug}/`,
+  "write:email": (slug) => `/write/to/${slug}/email/`,
+  "write:send": (slug) => `/write/to/${slug}/email/send/`,
+  "write:done": (slug) => `/write/to/${slug}/email/done/`,
 };
 
 // Route names reached inside Django's i18n_patterns -- `{% url %}` for one

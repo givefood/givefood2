@@ -26,6 +26,13 @@ const QUERYSTRING_RUBBISH = ["utm_source", "utm_medium", "utm_campaign", "y_sour
 // keeping its own copy.
 export const CHARITY_DETAIL_COUNTRIES = new Set(["England", "Wales", "Scotland", "Northern Ireland"]);
 
+// A simple, not-Django's-exact-EmailValidator check -- good enough to
+// reject obviously malformed input server-side. Shared by every route that
+// validates a submitted email address (updates.ts's subscribe action,
+// routes/write/index.ts's two form steps) rather than each keeping its own
+// copy of the same literal.
+export const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 export function fullNameFoodbank(name: string): string {
   if (DONT_APPEND_FOOD_BANK.includes(name)) return name;
   return `${name} Foodbank`;

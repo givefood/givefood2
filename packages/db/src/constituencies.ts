@@ -1,6 +1,6 @@
-import type { Session } from "./types";
+import { coerceBooleans, type Session } from "./types";
 import { mapFoodbankRow, type FoodbankRow } from "./foodbank";
-import { mapLocationRow, type FoodbankLocationRow } from "./locations";
+import { LOCATION_BOOLEAN_COLUMNS, type FoodbankLocationRow } from "./locations";
 
 export interface ConstituencyRow {
   id: number;
@@ -84,6 +84,20 @@ export async function getConstituencyBySlugNarrow(session: Session, slug: string
   return row ? (row as unknown as ConstituencyRowNarrow) : null;
 }
 
+// `foodbanklocation` columns except boundary_geojson (PLAN.md's hard rule:
+// "nothing in the codebase issues SELECT * on parliamentaryconstituency or
+// foodbanklocation", same reasoning as ConstituencyRowNarrow above --
+// boundary_geojson can run to ~1.6 MB/row). Neither of getFoodbanksForConstituency's
+// two callers (wfbnConstituency's schema.org output, writeEmail's food-bank
+// name list) ever reads it.
+export type FoodbankLocationRowNarrow = Omit<FoodbankLocationRow, "boundary_geojson">;
+const LOCATION_COLUMNS_NARROW =
+  "id, uuid, foodbank_id, foodbank_name, foodbank_slug, foodbank_network, foodbank_phone_number, foodbank_email, " +
+  "name, slug, address, postcode, country, lat_lng, latitude, longitude, place_id, plus_code_compound, plus_code_global, " +
+  "place_has_photo, county, district, ward, lsoa, msoa, parliamentary_constituency_id, parliamentary_constituency_name, " +
+  "parliamentary_constituency_slug, mp, mp_party, mp_parl_id, is_closed, is_donation_point, is_mobile, phone_number, " +
+  "email, modified, edited";
+
 // `ParliamentaryConstituency.foodbanks()` -- concatenates the food-bank
 // list and the location list, in that order, with neither sub-list sorted.
 // This is deliberate (frozen bug B3, PLAN.md §7.3): a location entry's
@@ -99,10 +113,12 @@ export async function getConstituencyBySlugNarrow(session: Session, slug: string
 export async function getFoodbanksForConstituency(
   session: Session,
   constituencyId: number,
-): Promise<{ foodbanks: FoodbankRow[]; locations: FoodbankLocationRow[] }> {
+): Promise<{ foodbanks: FoodbankRow[]; locations: FoodbankLocationRowNarrow[] }> {
   const results = await session.batch([
     session.prepare("SELECT * FROM foodbank WHERE parliamentary_constituency_id = ? AND is_closed = 0").bind(constituencyId),
-    session.prepare("SELECT * FROM foodbanklocation WHERE parliamentary_constituency_id = ? AND is_closed = 0").bind(constituencyId),
+    session
+      .prepare(`SELECT ${LOCATION_COLUMNS_NARROW} FROM foodbanklocation WHERE parliamentary_constituency_id = ? AND is_closed = 0`)
+      .bind(constituencyId),
   ]);
   // batch() always returns one result per input statement, in the same
   // order -- exactly 2 here, so these indexes are never actually out of
@@ -111,6 +127,6 @@ export async function getFoodbanksForConstituency(
   const locationsResult = results[1]!;
   return {
     foodbanks: foodbanksResult.results.map((r) => mapFoodbankRow(r as Record<string, unknown>)),
-    locations: locationsResult.results.map((r) => mapLocationRow(r as Record<string, unknown>)),
+    locations: locationsResult.results.map((r) => coerceBooleans<FoodbankLocationRowNarrow>(r as Record<string, unknown>, LOCATION_BOOLEAN_COLUMNS)),
   };
 }

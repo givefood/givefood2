@@ -71,6 +71,7 @@ import { gfdashPricePerKg } from "./routes/dashboards/pricePerKg";
 import { gfdashHeatmap } from "./routes/dashboards/heatmap";
 import { gfdashPricePerCalorie } from "./routes/dashboards/pricePerCalorie";
 import { gfdashPricePerItemCategory } from "./routes/dashboards/pricePerItemCategory";
+import { writeIndex, writeConstituency, writeEmail, writeSend, writeDone } from "./routes/write";
 import { notPortedYet } from "./routes/notPortedYet";
 import { render404 } from "./render404";
 import { render500 } from "./render500";
@@ -380,11 +381,18 @@ app.get("/dashboard/price-per/item-category/", gfdashPricePerItemCategory);
 // gfdash/urls.py's old-URL redirect: RedirectView.as_view(url='/dashboard/price-per/kg/', permanent=True).
 app.get("/dashboard/price-per-kg/", (c) => c.redirect("/dashboard/price-per/kg/", 301));
 
+// gfwrite (WP 4.6) -- entirely outside i18n_patterns, same as gfdash, so
+// no locale loop, matching gfwrite/urls.py exactly.
+app.get("/write/", writeIndex);
+app.get("/write/to/:slug/", writeConstituency);
+app.all("/write/to/:slug/email/", writeEmail); // writeEmail itself 404s anything but POST, matching Django's HttpResponseNotFound()
+app.all("/write/to/:slug/email/send/", writeSend); // writeSend itself 405s anything but POST (R5)
+app.get("/write/to/:slug/email/done/", writeDone);
+
 // Everything below is specified in PLAN.md but not yet built. Each returns
 // 501 so the gap is loud during development. Build order follows PLAN.md
 // §10's phases: wfbn (translated pages) and the APIs next, admin last.
 app.route("/needs", notPortedYet("gfwfbn (translated pages)"));
-app.route("/write", notPortedYet("gfwrite"));
 // The three listing pages (dump_index, dump_type, dump_format) -- unmatched
 // by dumpsApp above, so they fall through to here.
 app.route("/dumps", notPortedYet("gfdumps listing pages"));

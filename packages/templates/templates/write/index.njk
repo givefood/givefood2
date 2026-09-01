@@ -1,0 +1,66 @@
+{% extends "page.njk" %}
+
+{% block head %}
+  <link rel="stylesheet" href="/static/css/wfbn.css?v={{ version }}">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:site" content="@GiveFoodCharity">
+  <meta property="og:title" content="Write to your MP">
+  <meta name="description" content="Ask your MP what they propose to do about food banks in your constituency">
+  <meta property="og:image" content="https://www.givefood.org.uk/static/img/map.png">
+  <meta property="og:image:alt" content="Map of UK food banks">
+{% endblock %}
+
+{% block title %}Write to your MP - Give Food{% endblock %}
+
+{% block body %}
+
+  <div class="columns">
+    <div class="column">
+
+      <div class="columns">
+
+        <div class="column is-4">
+          <a href="{{ url('index') }}" class="logo"><img src="/static/img/logo.svg" alt="Give Food"></a>
+        </div>
+
+      </div>
+
+      <h1>Write to your MP</h1>
+
+      <div class="columns">
+
+          <div class="column">
+
+            <p>Use our tool to send an email to your MP about the UK's increasing reliance on emergency food supplies from food banks.</p>
+            <p>We'll take a few quick details off you, starting with your postcode here, and then send the email on your behalf.</p>
+
+            {% if postcode %}
+              <div class="notification is-warning">
+                Sorry, we couldn't recognise this postcode. Could you try again?
+              </div>
+            {% endif %}
+
+            <form id="postcodeform" action="{{ url('write:index') }}" method="GET">
+              <label id="postcode_label" for="postcode_field" class="label">Postcode</label>
+              <input id="postcode_field" type="text" name="postcode" class="input" placeholder="e.g. EX4 6PX" value="{% if postcode %}{{ postcode }}{% endif %}" required autofocus>
+              <input type="submit" class="button is-light is-info" value="Go">
+            </form>
+
+          </div>
+
+          <div class="column is-6">
+            <div id="map"></div>
+          </div>
+      </div>
+
+    </div>
+  </div>
+
+{% endblock %}
+
+{% block script %}
+
+  {% include "includes/mapconfig.njk" %}
+  <script src="/static/js/wfbn.js?v={{ version }}" defer onload="init()"></script>
+
+{% endblock %}

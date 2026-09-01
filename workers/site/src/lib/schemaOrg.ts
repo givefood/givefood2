@@ -1,4 +1,4 @@
-import { toDashedUuid, type DonationPointRow, type FoodbankLocationRow, type FoodbankWithLatestNeed } from "@givefood/db";
+import { toDashedUuid, type DonationPointRow, type FoodbankLocationRow, type FoodbankLocationRowNarrow, type FoodbankWithLatestNeed } from "@givefood/db";
 import { charityRegisterUrl, emailOrFoodbankEmail, fsaUrl, phoneOrFoodbankPhone } from "./fields";
 
 // givefood/const/general.py -- verbatim.
@@ -130,7 +130,7 @@ export function schemaOrgStr(foodbank: FoodbankWithLatestNeed, fullName: string)
 // sub-property) so it's present here regardless of the flag; only `seeks`
 // is actually gated by it, same as the Foodbank version.
 export function buildLocationSchemaOrg(
-  location: FoodbankLocationRow,
+  location: FoodbankLocationRowNarrow,
   foodbank: FoodbankWithLatestNeed,
   fullName: string,
   locationFullName: string,
@@ -235,7 +235,7 @@ function quotePlus(value: string): string {
 export function buildConstituencySchemaOrg(
   constituency: { name: string | null },
   foodbanks: Array<{ foodbank: FoodbankWithLatestNeed; fullName: string }>,
-  locations: Array<{ location: FoodbankLocationRow; foodbank: FoodbankWithLatestNeed; fullName: string; locationFullName: string }>,
+  locations: Array<{ location: FoodbankLocationRowNarrow; foodbank: FoodbankWithLatestNeed; fullName: string; locationFullName: string }>,
 ): Record<string, unknown> {
   const containsPlace: unknown[] = [
     ...foodbanks.map(({ foodbank, fullName }) => buildFoodbankSchemaOrg(foodbank, fullName, true)),
@@ -255,7 +255,7 @@ export function buildConstituencySchemaOrg(
 export function constituencySchemaOrgStr(
   constituency: { name: string | null },
   foodbanks: Array<{ foodbank: FoodbankWithLatestNeed; fullName: string }>,
-  locations: Array<{ location: FoodbankLocationRow; foodbank: FoodbankWithLatestNeed; fullName: string; locationFullName: string }>,
+  locations: Array<{ location: FoodbankLocationRowNarrow; foodbank: FoodbankWithLatestNeed; fullName: string; locationFullName: string }>,
 ): string {
   return JSON.stringify(buildConstituencySchemaOrg(constituency, foodbanks, locations), null, 2);
 }

@@ -1,0 +1,52 @@
+{% extends "page.njk" %}
+
+{% block head %}
+  <link rel="stylesheet" href="/static/css/wfbn.css?v={{ version }}">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:site" content="@GiveFoodCharity">
+  <meta property="og:title" content="Constituencies">
+  <meta name="description" content="Find what food banks in your MP's constituency are requesting to have donated and take action.">
+  <meta property="og:image" content="https://www.givefood.org.uk/static/img/map.png">
+  <meta property="og:image:alt" content="Map of UK food banks">
+{% endblock %}
+
+{% block title %}Email Sent - Give Food{% endblock %}
+
+{% block body %}
+
+  <div class="columns">
+    <div class="column">
+
+      <div class="columns">
+
+        <div class="column is-4">
+          <a href="{{ url('index') }}" class="logo"><img src="/static/img/logo.svg" alt="Give Food"></a>
+        </div>
+
+      </div>
+
+      <nav class="breadcrumb has-arrow-separator" aria-label="breadcrumbs">
+            <ul>
+                <li><a href="{{ url('index') }}">Home</a></li>
+                <li><a href="{{ url('write:index') }}">Write to your MP</a></li>
+                <li><a href="{{ url('write:constituency', constituency.slug) }}">{{ constituency.name }}</a></li>
+            </ul>
+      </nav>
+
+      <h1>Email Sent</h1>
+
+      <div class="columns">
+
+          <div class="column is-6">
+
+            <p>Thank you, that email has been sent. Hopefully you'll get a response from the MP shortly.</p>
+
+            <p>In the meantime, perhaps you'd like to view the food banks in the <a href="{{ url('wfbn:constituency', constituency.slug) }}">{{ constituency.name }} constituency</a> and see how you could help them?</p>
+
+          </div>
+      </div>
+
+    </div>
+  </div>
+
+{% endblock %}

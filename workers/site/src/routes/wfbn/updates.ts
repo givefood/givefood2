@@ -13,18 +13,15 @@ import { url, urlForLocale } from "@givefood/urls";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
 import { elapsedMs } from "../../middleware/serverTiming";
-import { CHARITY_DETAIL_COUNTRIES, fullNameLocaleAware } from "../../lib/fields";
+import { CHARITY_DETAIL_COUNTRIES, EMAIL_RE, fullNameLocaleAware } from "../../lib/fields";
+import { validateTurnstile } from "../../lib/turnstile";
+import { sendEmail as sendEmailShared } from "../../lib/email";
 
 // gfwfbn `updates` (re_path /needs/at/<slug>/updates/(subscribe|confirm|
 // unsubscribe)/, i18n-patterned, namespace wfbn, route name "updates").
 // Ported from gfwfbn/views.py:1100-1200 -- ONE handler for all three
 // actions via the :action route param, matching Django's single regex +
 // kwarg dispatch rather than three separate Hono routes.
-
-// A simple, not-Django's-exact-EmailValidator check -- good enough to
-// reject obviously malformed input with a 403, same spirit as the task
-// brief's own framing of `validate_email`'s job here.
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 async function sha256Hex(input: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
@@ -43,69 +40,6 @@ async function generateSubUnsubKeys(salt: string): Promise<{ subKey: string; uns
   const subHash = await sha256Hex(`sub-${new Date().toISOString()}-${salt}`);
   const unsubHash = await sha256Hex(`unsub-${new Date().toISOString()}-${salt}`);
   return { subKey: subHash.slice(0, 16), unsubKey: unsubHash.slice(0, 16) };
-}
-
-// givefood/utils/general.py's validate_turnstile() -- POSTs to
-// Cloudflare's siteverify endpoint and returns whether it succeeded.
-async function validateTurnstile(secret: string | undefined, token: string): Promise<boolean> {
-  if (!secret) {
-    // Fails closed (correctly -- validation can't pass without a secret),
-    // but logged same as sendEmail()'s own missing-token case below:
-    // without this, an unset TURNSTILE_SECRET is indistinguishable in the
-    // Workers logs from a real visitor submitting a bad token, and every
-    // subscribe attempt silently fails until someone thinks to check this
-    // specific secret.
-    console.log("TURNSTILE_SECRET not set -- failing validation closed");
-    return false;
-  }
-  try {
-    const response = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
-      method: "POST",
-      body: new URLSearchParams({ secret, response: token }),
-    });
-    const data = (await response.json()) as { success?: boolean };
-    return data.success === true;
-  } catch {
-    return false;
-  }
-}
-
-// givefood/utils/notifications.py's send_email() -- POSTs to Postmark's
-// REST API. Never throws: a failed send (missing token, non-200, network
-// error) is logged and swallowed, exactly like the Python original's own
-// `if result.status_code == 200: return True else: logging.error(...);
-// return False` -- no exception ever reaches the view either side.
-async function sendEmail(
-  c: Context<AppEnv>,
-  params: { to: string; subject: string; textBody: string; htmlBody: string },
-): Promise<void> {
-  const token = c.env.POSTMARK_TOKEN;
-  if (!token) {
-    console.log(`POSTMARK_TOKEN not set -- skipping email to ${params.to}: ${params.subject}`);
-    return;
-  }
-  try {
-    const response = await fetch("https://api.postmarkapp.com/email", {
-      method: "POST",
-      headers: {
-        "X-Postmark-Server-Token": token,
-        Accept: "application/json",
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        From: "mail@givefood.org.uk",
-        To: params.to,
-        Subject: params.subject,
-        TextBody: params.textBody,
-        HtmlBody: params.htmlBody,
-      }),
-    });
-    if (!response.ok) {
-      console.error(`Failed to send email to ${params.to}: ${response.status} - ${await response.text()}`);
-    }
-  } catch (err) {
-    console.error(`Failed to send email to ${params.to}: ${String(err)}`);
-  }
 }
 
 // wfbn/emails/confirm.txt / confirm.html, ported verbatim (copy and
@@ -236,7 +170,7 @@ export async function wfbnFoodbankUpdates(c: Context<AppEnv>): Promise<Response>
         message = "Sorry! That email address is already subscribed to that food bank.";
       } else {
         const { text, html } = confirmEmailBodies(c.env.SITE_DOMAIN, foodbank.name, foodbank.slug, subKey);
-        await sendEmail(c, { to: emailRaw, subject: "Confirm your Give Food subscription", textBody: text, htmlBody: html });
+        await sendEmailShared(c, { to: emailRaw, subject: "Confirm your Give Food subscription", textBody: text, htmlBody: html });
 
         message =
           `Thanks, but we're not quite done yet.\n\n` +
@@ -260,7 +194,7 @@ export async function wfbnFoodbankUpdates(c: Context<AppEnv>): Promise<Response>
       // foodbank.no_donation_points:`. `!== 0` would wrongly treat a null
       // (genuinely unknown count) as "has donation points".
       const { text, html } = confirmedEmailBodies(c.env.SITE_DOMAIN, fullName, foodbank.slug, Boolean(foodbank.no_donation_points));
-      await sendEmail(c, {
+      await sendEmailShared(c, {
         to: sub.email,
         subject: `Thank you for confirming your subscription to ${foodbank.name} Food Bank`,
         textBody: text,

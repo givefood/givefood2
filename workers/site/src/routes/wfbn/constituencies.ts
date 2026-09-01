@@ -6,7 +6,6 @@ import {
   getFoodbanksForConstituency,
   getNeedTranslationsByIds,
   type ConstituencyListRow,
-  type FoodbankLocationRow,
   type FoodbankWithLatestNeed,
 } from "@givefood/db";
 import { buildPageContext, render } from "@givefood/templates";
@@ -80,7 +79,7 @@ export async function wfbnConstituencies(c: Context<AppEnv>): Promise<Response> 
 // boundary review's constituency name (parliamentary_constituency_2024)
 // over the pre-2024 one, falling back to it only when the 2024 field is
 // absent, matching Django's exact preference order.
-async function constituencySlugFromPostcode(postcode: string): Promise<string | null> {
+export async function constituencySlugFromPostcode(postcode: string): Promise<string | null> {
   const response = await fetch(`https://api.postcodes.io/postcodes/${encodeURIComponent(postcode)}?decache=true`);
   if (!response.ok) return null;
   const json = (await response.json()) as { result?: { parliamentary_constituency_2024?: string | null; parliamentary_constituency?: string | null } };
@@ -249,7 +248,7 @@ export async function wfbnConstituency(c: Context<AppEnv>): Promise<Response> {
       const parentFb = byId.get(loc.foodbank_id);
       if (!parentFb) return null;
       const fullName = fullNamesByFoodbankId.get(parentFb.id) ?? parentFb.name;
-      return { location: loc as FoodbankLocationRow, foodbank: parentFb, fullName, locationFullName: `${loc.name}, ${fullName}` };
+      return { location: loc, foodbank: parentFb, fullName, locationFullName: `${loc.name}, ${fullName}` };
     })
     .filter((v): v is NonNullable<typeof v> => v !== null);
 
@@ -285,7 +284,7 @@ export async function wfbnConstituency(c: Context<AppEnv>): Promise<Response> {
 }
 
 // ParliamentaryConstituency.mp_photo_url() -- givefood/models/political.py:47-48.
-function mpPhotoUrl(mpParlId: number): string {
+export function mpPhotoUrl(mpParlId: number): string {
   return `https://photos.givefood.org.uk/2024-mp/${mpParlId}.jpg`;
 }
 

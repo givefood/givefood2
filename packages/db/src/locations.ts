@@ -1,6 +1,10 @@
 import { coerceBooleans, queryCoordinates, sortByName, type CoordinateRow, type Session } from "./types";
 
-const BOOLEAN_COLUMNS = ["place_has_photo", "is_closed", "is_donation_point", "is_mobile"] as const;
+// Exported so other narrow, boundary_geojson-excluding row shapes (e.g.
+// constituencies.ts's getFoodbanksForConstituency) can coerce the same
+// boolean columns without a second copy of this list.
+export const LOCATION_BOOLEAN_COLUMNS = ["place_has_photo", "is_closed", "is_donation_point", "is_mobile"] as const;
+const BOOLEAN_COLUMNS = LOCATION_BOOLEAN_COLUMNS;
 
 export interface FoodbankLocationRow {
   id: number;

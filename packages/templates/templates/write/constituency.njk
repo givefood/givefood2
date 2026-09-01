@@ -1,0 +1,134 @@
+{% extends "page.njk" %}
+
+{% block head %}
+  <link rel="stylesheet" href="/static/css/wfbn.css?v={{ version }}">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:site" content="@GiveFoodCharity">
+  <meta property="og:title" content="Write to {{ constituency.mp }}">
+  <meta name="description" content="Ask {{ constituency.mp }} what they are doing about food banks in {{ constituency.name }}">
+  <meta property="og:image" content="{{ constituency.mp_photo_url }}">
+  <meta property="og:image:alt" content="{{ constituency.mp }}">
+{% endblock %}
+
+{% block title %}Write to {{ constituency.mp }} about food banks - Give Food{% endblock %}
+
+{% block body %}
+
+  <div class="columns">
+    <div class="column">
+
+      <div class="columns">
+
+        <div class="column is-4">
+          <a href="{{ url('index') }}" class="logo"><img src="/static/img/logo.svg" alt="Give Food"></a>
+        </div>
+
+      </div>
+
+      <nav class="breadcrumb has-arrow-separator" aria-label="breadcrumbs">
+            <ul>
+                <li><a href="{{ url('index') }}">Home</a></li>
+                <li><a href="{{ url('write:index') }}">Write to your MP</a></li>
+                <li><a href="{{ url('write:constituency', constituency.slug) }}">{{ constituency.name }}</a></li>
+            </ul>
+      </nav>
+
+      <h1>{{ constituency.name }}</h1>
+
+      <div class="columns">
+
+          <div class="column is-4">
+
+            {% if postcode %}
+                <p>Your postcode {{ postcode|upper }} is in <a href="{{ url('wfbn:constituency', constituency.slug) }}">{{ constituency.name }}</a> constituency, and your MP is {{ constituency.mp }}.</p>
+            {% else %}
+                <p>The MP for <a href="{{ url('wfbn:constituency', constituency.slug) }}">{{ constituency.name }}</a> is {{ constituency.mp }}.</p>
+            {% endif %}
+
+            <img src="{{ constituency.mp_photo_url }}" alt="{{ constituency.mp }}" class="mp_photo">
+
+            <div id="map" class="sidemap"></div>
+            {% set show_service_area = false %}{% include "includes/maplegend.njk" %}
+
+          </div>
+
+          <div class="column is-6">
+
+            {% if constituency.email %}
+
+              {% if turnstilefail %}
+                <div class="notification is-danger">
+                  <p>Sorry, the security check failed. Please try again.</p>
+                </div>
+              {% endif %}
+              {% if form_error %}
+                <div class="notification is-danger">
+                  <p>Sorry, please check the details below and try again.</p>
+                </div>
+              {% endif %}
+
+              <p>To write to {{ constituency.mp }} we'll need a few more details. You'll then be able to view the email before we send it for you.</p>
+
+              <form method="post" action="{{ url('write:email', constituency.slug) }}">
+
+                <div class="field">
+                  <label class="label" for="id_name">Your Name</label>
+                  <div class="control">
+                    <input type="text" name="name" maxlength="100" class="input" id="id_name" value="{% if form_values %}{{ form_values.name }}{% endif %}" required>
+                  </div>
+                  <p class="help">E.g. Amy Baker or Tom Smith</p>
+                </div>
+
+                <div class="field">
+                  <label class="label" for="id_address">Your Full Address</label>
+                  <div class="control">
+                    <textarea name="address" cols="40" rows="10" class="textarea" id="id_address" required>{% if form_values %}{{ form_values.address }}{% endif %}</textarea>
+                  </div>
+                  <p class="help">Lay out the address using multiple lines and please include your postcode</p>
+                </div>
+
+                <div class="field">
+                  <label class="label" for="id_email">Your Email Address</label>
+                  <div class="control">
+                    <input type="email" name="email" class="input" id="id_email" value="{% if form_values %}{{ form_values.email }}{% endif %}" required>
+                  </div>
+                  <p class="help">We'll send you a copy, and also hopefully needed so the candidate is able to respond</p>
+                </div>
+
+                <div class="field">
+                  <div class="control">
+                    <label class="checkbox" for="id_subscribe">
+                      <input type="checkbox" name="subscribe" id="id_subscribe" checked>
+                      Keep me up to date with very occasional emails about helping food banks
+                    </label>
+                  </div>
+                </div>
+
+                <div class="cf-turnstile" data-sitekey="{{ turnstile_sitekey }}"></div>
+                <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input type="submit" class="button is-link" value="Continue">
+
+              </form>
+
+            {% else %}
+
+              <p>Sorry, we don't have an email address for {{ constituency.mp }}, so this service is unavailable in your area.</p>
+
+            {% endif %}
+
+          </div>
+      </div>
+
+    </div>
+  </div>
+
+{% endblock %}
+
+{% block script %}
+
+  {% include "includes/mapconfig.njk" %}
+  <script src="/static/js/wfbn.js?v={{ version }}" defer onload="init()"></script>
+
+{% endblock %}

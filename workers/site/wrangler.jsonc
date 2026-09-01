@@ -138,6 +138,8 @@
     // SUBSCRIBER_SALT: routes/wfbn/updates.ts's sub_key/unsub_key generation.
     // All four added by WP 3.7, set 2026-08-31 (confirmed via `wrangler
     // secret list`) -- safe to list as required now.
+    // CSRF_SECRET: lib/csrf.ts's signed double-submit token (routes/write/*,
+    // WP 4.6 R3). Set 2026-09-01, confirmed via `wrangler secret list`.
     //
     // "required" is enforced for real by `wrangler deploy` (not just
     // `wrangler dev`) -- confirmed the hard way earlier the same day:
@@ -147,7 +149,7 @@
     // main until reverted. `wrangler deploy --dry-run` does NOT perform
     // this check, so it looks safe locally when it isn't. Move a name
     // into "required" only in the same change that actually sets it.
-    "required": ["GMAP_GEOCODE_KEY", "VAPID_PUBLIC_KEY", "TURNSTILE_SECRET", "POSTMARK_TOKEN", "SUBSCRIBER_SALT"]
+    "required": ["GMAP_GEOCODE_KEY", "VAPID_PUBLIC_KEY", "TURNSTILE_SECRET", "POSTMARK_TOKEN", "SUBSCRIBER_SALT", "CSRF_SECRET"]
     // GOOGLE_OAUTH_CLIENT_SECRET, SESSION_HMAC_KEY -- auth (§3.5)
     // GMAP_STATIC_KEY, GMAP_PLACES_KEY -- media backfill, queued not inline
     // (§3.7) -- this Worker never calls Google directly; see
