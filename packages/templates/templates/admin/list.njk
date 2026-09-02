@@ -1,0 +1,45 @@
+{% extends "admin/page.njk" %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block body %}
+<div class="columns">
+  <div class="column">
+    <h1 class="title">{{ title }} ({{ total }})</h1>
+
+    <div class="buttons">
+      {% if new_url %}<a href="{{ new_url }}" class="button is-link is-light">New</a>{% endif %}
+      {% if csv_url %}<a href="{{ csv_url }}" class="button is-light">Export CSV</a>{% endif %}
+    </div>
+
+    <table class="table is-fullwidth">
+      <thead>
+        <tr>
+          {% for col in columns %}
+          <th>
+            {% if col.sort %}<a href="?sort={{ col.sort }}&amp;page={{ page }}">{{ col.label }}</a>{% if sort == col.sort %} &darr;{% endif %}{% else %}{{ col.label }}{% endif %}
+          </th>
+          {% endfor %}
+          {% if row_actions %}<th></th>{% endif %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+        <tr>
+          {% for cell in row.cells %}<td>{{ cell | safe }}</td>{% endfor %}
+          {% if row_actions %}<td>{{ row.actions | safe }}</td>{% endif %}
+        </tr>
+        {% else %}
+        <tr><td colspan="{{ columns.length + 1 }}">None</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <nav class="pagination" role="navigation" aria-label="pagination">
+      {% if page > 1 %}<a class="pagination-previous" href="?page={{ page - 1 }}{% if sort %}&amp;sort={{ sort }}{% endif %}">Previous</a>{% endif %}
+      {% if has_next %}<a class="pagination-next" href="?page={{ page + 1 }}{% if sort %}&amp;sort={{ sort }}{% endif %}">Next page</a>{% endif %}
+      <span class="pagination-list">Page {{ page }} of {{ total_pages }}</span>
+    </nav>
+  </div>
+</div>
+{% endblock %}

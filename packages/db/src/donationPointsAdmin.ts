@@ -56,6 +56,13 @@ export interface UpsertDonationPointParams {
   placeId: string | null;
 }
 
+// gfadmin/views.py:1865 donationpoint_delete -- no @require_POST in
+// Django (WP 6.6 research flagged this), but this route is POST-only
+// regardless, matching WP 6.3's carried-forward requirement.
+export async function deleteDonationPoint(session: Session, id: number): Promise<void> {
+  await session.prepare("DELETE FROM foodbankdonationpoint WHERE id = ?").bind(id).run();
+}
+
 export async function upsertDonationPoint(session: Session, params: UpsertDonationPointParams, existingId: number | undefined): Promise<string> {
   const slug = slugify(params.name);
   const companySlug = params.company ? slugify(params.company) : null;

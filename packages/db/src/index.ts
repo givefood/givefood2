@@ -20,6 +20,7 @@ export * from "./foodbankAdmin";
 export * from "./locationsAdmin";
 export * from "./donationPointsAdmin";
 export * from "./parlconAdmin";
+export * from "./adminLists";
 export * from "./aac";
 export * from "./articles";
 export * from "./charity";

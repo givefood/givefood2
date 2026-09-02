@@ -18,6 +18,13 @@
         </div>
       </div>
     </form>
+
+    {% if delete_url %}
+    <form method="post" action="{{ delete_url }}" onsubmit="return confirm('Are you sure you want to DELETE?')">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="button is-danger is-light">Delete</button>
+    </form>
+    {% endif %}
   </div>
 </div>
 {% endblock %}

@@ -58,6 +58,15 @@ export async function setDiscrepancyStatus(session: Session, id: number, status:
   await session.prepare("UPDATE foodbankdiscrepancy SET status = ?, modified = ? WHERE id = ?").bind(status, new Date().toISOString(), id).run();
 }
 
+// gfadmin/views.py:431-442 needs_csv() -- frozen column order: id,
+// created, foodbank, needs, excess, input_method. ALL needs regardless of
+// published/nonpertinent status, unlike the review queue (WP 6.4) or the
+// unfiltered-but-200-capped /needs/ list -- this export is unbounded.
+export async function getAllNeedsForCsv(session: Session): Promise<FoodbankChangeRow[]> {
+  const result = await session.prepare("SELECT * FROM foodbankchange ORDER BY created DESC").all();
+  return result.results.map((r) => mapNeedRow(r as Record<string, unknown>));
+}
+
 // gfadmin/views.py:1774-1791 need()'s prev_published/prev_nonpert lookups
 // -- the latest PRIOR need (created strictly before the one being viewed),
 // not simply "the latest" (getLastPublishedNeed in needcheck.ts answers a

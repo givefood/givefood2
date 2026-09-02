@@ -1,5 +1,5 @@
 import type { Context } from "hono";
-import { getFoodbankBySlug, getDonationPointBySlugs, upsertDonationPoint } from "@givefood/db";
+import { getFoodbankBySlug, getDonationPointBySlugs, upsertDonationPoint, deleteDonationPoint } from "@givefood/db";
 import { render } from "@givefood/templates";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
@@ -64,6 +64,24 @@ export async function adminDonationPointForm(c: Context<AppEnv>): Promise<Respon
     fields: FOODBANK_DONATION_POINT_FIELDS,
     data,
     back_url: `/admin/foodbank/${foodbank.slug}/edit/`,
+    delete_url: existing ? `/admin/foodbank/${foodbank.slug}/donationpoint/${existing.slug}/delete/` : null,
   });
   return c.html(html);
+}
+
+// gfadmin/views.py:1865 donationpoint_delete.
+export async function adminDonationPointDelete(c: Context<AppEnv>): Promise<Response> {
+  const slug = c.req.param("slug")!;
+  const dpSlug = c.req.param("dpSlug")!;
+  const db = dbSession(c);
+
+  const existing = await getDonationPointBySlugs(db, slug, dpSlug);
+  if (!existing) return c.notFound();
+
+  const body = await c.req.parseBody();
+  const csrfToken = typeof body.csrf_token === "string" ? body.csrf_token : undefined;
+  if (!(await verifyCsrf(c, c.env.CSRF_SECRET, csrfToken))) return c.text("Forbidden", 403);
+
+  await deleteDonationPoint(db, existing.id);
+  return c.redirect(`/admin/foodbank/${slug}/edit/`, 302);
 }

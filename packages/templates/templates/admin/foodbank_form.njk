@@ -18,6 +18,20 @@
         </div>
       </div>
     </form>
+
+    {% if foodbank.slug %}
+      <div class="buttons">
+        <a href="/admin/foodbank/{{ foodbank.slug }}/location/new/" class="button is-light is-small">New Location</a>
+        <a href="/admin/foodbank/{{ foodbank.slug }}/donationpoint/new/" class="button is-light is-small">New Donation Point</a>
+      </div>
+
+      {% if show_delete %}
+      <form method="post" action="/admin/foodbank/{{ foodbank.slug }}/delete/" onsubmit="return confirm('Are you sure you want to DELETE this food bank and everything under it? This cannot be undone.')">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit" class="button is-danger is-light">Delete Foodbank</button>
+      </form>
+      {% endif %}
+    {% endif %}
   </div>
 
   {% if show_proxy %}

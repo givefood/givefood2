@@ -1,5 +1,5 @@
 import type { Context } from "hono";
-import { getFoodbankBySlug, getFoodbankLocationBySlugs, upsertLocation } from "@givefood/db";
+import { getFoodbankBySlug, getFoodbankLocationBySlugs, upsertLocation, deleteLocation } from "@givefood/db";
 import { render } from "@givefood/templates";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
@@ -68,6 +68,24 @@ export async function adminFoodbankLocationForm(c: Context<AppEnv>): Promise<Res
     fields: FOODBANK_LOCATION_FIELDS,
     data,
     back_url: `/admin/foodbank/${foodbank.slug}/edit/`,
+    delete_url: existing ? `/admin/foodbank/${foodbank.slug}/location/${existing.slug}/delete/` : null,
   });
   return c.html(html);
+}
+
+// gfadmin/views.py:1741 fblocation_delete, @require_POST.
+export async function adminFoodbankLocationDelete(c: Context<AppEnv>): Promise<Response> {
+  const slug = c.req.param("slug")!;
+  const locSlug = c.req.param("locSlug")!;
+  const db = dbSession(c);
+
+  const existing = await getFoodbankLocationBySlugs(db, slug, locSlug);
+  if (!existing) return c.notFound();
+
+  const body = await c.req.parseBody();
+  const csrfToken = typeof body.csrf_token === "string" ? body.csrf_token : undefined;
+  if (!(await verifyCsrf(c, c.env.CSRF_SECRET, csrfToken))) return c.text("Forbidden", 403);
+
+  await deleteLocation(db, existing.id);
+  return c.redirect(`/admin/foodbank/${slug}/edit/`, 302);
 }

@@ -151,3 +151,13 @@ export async function upsertLocation(session: Session, params: UpsertLocationPar
   }
   return slug;
 }
+
+// gfadmin/views.py:1741 fblocation_delete, @require_POST. Django's
+// FoodbankLocation.delete() override also resaves the parent Foodbank
+// afterwards purely to re-trigger its decache side effect
+// (foodbank.py:929-933) -- no decache consumer exists in this port yet
+// (PLAN.md §3.6's own already-tracked gap, not something this WP
+// introduces), so there is nothing for a resave to actually do here.
+export async function deleteLocation(session: Session, id: number): Promise<void> {
+  await session.prepare("DELETE FROM foodbanklocation WHERE id = ?").bind(id).run();
+}

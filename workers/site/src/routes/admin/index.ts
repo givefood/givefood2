@@ -11,11 +11,22 @@ import { adminPageContext } from "./pageContext";
 import { adminProxy } from "./proxy";
 import { adminNeedDetail, adminNeedPublish, adminNeedUnpublish, adminNeedNonpertinent, adminNeedDelete, adminNeedsDeleteAll, adminNeedCategorise, adminNeedTranslations, adminNeedEditForm } from "./needs";
 import { adminDiscrepancyDetail, adminDiscrepancyAction } from "./discrepancies";
-import { adminFoodbankEdit, adminFoodbankPoliticsEdit, adminFoodbankPartialEdit } from "./foodbank";
+import { adminFoodbankEdit, adminFoodbankPoliticsEdit, adminFoodbankPartialEdit, adminFoodbankNew, adminFoodbankDelete } from "./foodbank";
 import { adminFoodbankUrlsEdit } from "./foodbankUrls";
-import { adminFoodbankLocationForm } from "./foodbankLocation";
-import { adminDonationPointForm } from "./donationPoint";
+import { adminFoodbankLocationForm, adminFoodbankLocationDelete } from "./foodbankLocation";
+import { adminDonationPointForm, adminDonationPointDelete } from "./donationPoint";
 import { adminParlconForm } from "./parlcon";
+import {
+  adminFoodbanksList,
+  adminFoodbanksCsv,
+  adminLocationsList,
+  adminDonationPointsList,
+  adminParlconsList,
+  adminParlconsCsv,
+  adminOrdersList,
+  adminOrdersCsv,
+  adminNeedsCsv,
+} from "./lists";
 
 // gfadmin (WP 6.1/6.2 scaffolding only -- the real index page, need-review
 // queue etc. are WP 6.4+). `adminApp` is where every actual admin feature
@@ -59,6 +70,11 @@ adminApp.post("/need/:id/edit/", adminNeedEditForm);
 // (address/phone/email/fsa-id -- lib/adminFormFields.ts's
 // FOODBANK_PARTIAL_FORMS); /edit/urls/ stays its own route since it isn't
 // one of the 4 (routes/admin/foodbankUrls.ts's own comment).
+adminApp.get("/foodbanks/", adminFoodbanksList);
+adminApp.get("/foodbanks/csv/", adminFoodbanksCsv);
+adminApp.get("/foodbank/new/", adminFoodbankNew);
+adminApp.post("/foodbank/new/", adminFoodbankNew);
+adminApp.post("/foodbank/:slug/delete/", adminFoodbankDelete);
 adminApp.get("/foodbank/:slug/edit/", adminFoodbankEdit);
 adminApp.post("/foodbank/:slug/edit/", adminFoodbankEdit);
 adminApp.get("/foodbank/:slug/politics/edit/", adminFoodbankPoliticsEdit);
@@ -72,16 +88,28 @@ adminApp.get("/foodbank/:slug/location/new/", adminFoodbankLocationForm);
 adminApp.post("/foodbank/:slug/location/new/", adminFoodbankLocationForm);
 adminApp.get("/foodbank/:slug/location/:locSlug/edit/", adminFoodbankLocationForm);
 adminApp.post("/foodbank/:slug/location/:locSlug/edit/", adminFoodbankLocationForm);
+adminApp.post("/foodbank/:slug/location/:locSlug/delete/", adminFoodbankLocationDelete);
 
 adminApp.get("/foodbank/:slug/donationpoint/new/", adminDonationPointForm);
 adminApp.post("/foodbank/:slug/donationpoint/new/", adminDonationPointForm);
 adminApp.get("/foodbank/:slug/donationpoint/:dpSlug/edit/", adminDonationPointForm);
 adminApp.post("/foodbank/:slug/donationpoint/:dpSlug/edit/", adminDonationPointForm);
+adminApp.post("/foodbank/:slug/donationpoint/:dpSlug/delete/", adminDonationPointDelete);
+
+adminApp.get("/locations/", adminLocationsList);
+adminApp.get("/donationpoints/", adminDonationPointsList);
 
 adminApp.get("/parlcon/new/", adminParlconForm);
 adminApp.post("/parlcon/new/", adminParlconForm);
 adminApp.get("/parlcon/:slug/edit/", adminParlconForm);
 adminApp.post("/parlcon/:slug/edit/", adminParlconForm);
+adminApp.get("/politics/", adminParlconsList);
+adminApp.get("/politics/csv/", adminParlconsCsv);
+
+adminApp.get("/orders/", adminOrdersList);
+adminApp.get("/orders/csv/", adminOrdersCsv);
+
+adminApp.get("/needs/csv/", adminNeedsCsv);
 
 function enrichNeedRow(row: FoodbankChangeRow): FoodbankChangeRow & { input_method_emoji: string } {
   return { ...row, input_method_emoji: inputMethodEmoji(row.input_method) };
