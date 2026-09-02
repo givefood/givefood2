@@ -183,7 +183,24 @@
     // .com); SESSION_HMAC_KEY is self-generated (any random 32+ byte
     // value, this Worker invents it, no external source). Both set
     // 2026-09-02, confirmed via `wrangler secret list`.
-    "required": ["GMAP_GEOCODE_KEY", "VAPID_PUBLIC_KEY", "TURNSTILE_SECRET", "POSTMARK_TOKEN", "SUBSCRIBER_SALT", "CSRF_SECRET", "WHATSAPP_WEBHOOKVERIFYTOKEN", "WHATSAPP_APP_SECRET", "GOOGLE_OAUTH_CLIENT_SECRET", "SESSION_HMAC_KEY"]
+    //
+    // MAPIT_KEY: routes/admin/foodbankLocationArea.ts's "New Location
+    // Area" form (mapit.mysociety.org's area/geometry + area.geojson
+    // calls). Already named in PLAN.md §10.2.7's own secrets table. Set
+    // 2026-09-02, confirmed via `wrangler secret list`.
+    "required": [
+      "GMAP_GEOCODE_KEY",
+      "VAPID_PUBLIC_KEY",
+      "TURNSTILE_SECRET",
+      "POSTMARK_TOKEN",
+      "SUBSCRIBER_SALT",
+      "CSRF_SECRET",
+      "WHATSAPP_WEBHOOKVERIFYTOKEN",
+      "WHATSAPP_APP_SECRET",
+      "GOOGLE_OAUTH_CLIENT_SECRET",
+      "SESSION_HMAC_KEY",
+      "MAPIT_KEY"
+    ]
     // GMAP_STATIC_KEY, GMAP_PLACES_KEY -- media backfill, queued not inline
     // (§3.7) -- this Worker never calls Google directly; see
     // workers/jobs/wrangler.jsonc for where GMAP_STATIC_KEY actually lives.
