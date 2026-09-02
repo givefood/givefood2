@@ -5,6 +5,7 @@
 {% block body %}
 <h1 class="title">Check: {{ foodbank.name }}</h1>
 <p><a href="/admin/foodbank/{{ foodbank.slug }}/">&larr; Back</a></p>
+<p><a href="/admin/foodbanks/next/" class="button is-link is-light is-small">Next</a></p>
 
 {% if not job %}
   <form method="post" action="/admin/foodbank/{{ foodbank.slug }}/check/">
@@ -41,7 +42,12 @@
       <table class="table is-fullwidth">
         <thead><tr><th></th><th>Ours</th><th>Found</th><th></th></tr></thead>
         <tbody>
-          <tr><td>Address</td><td>{{ foodbank.address }}</td><td>{{ result.aiResponse.details.address }}</td><td></td></tr>
+          <tr class="{% if result.detailChanges.address %}check-changed{% endif %}">
+            <td>Address</td>
+            <td>{{ foodbank.address }}<br>{{ foodbank.postcode }}</td>
+            <td>{{ result.aiResponse.details.address }}<br>{{ result.aiResponse.details.postcode }}</td>
+            <td></td>
+          </tr>
           {% for field in use_ai_fields %}
           <tr class="{% if result.detailChanges[field] %}check-changed{% endif %}">
             <td>{{ field }}</td>
@@ -65,7 +71,7 @@
       <p><strong>Ours</strong></p>
       <ul>
         {% for loc in result.ourLocations %}
-        <li>{{ loc.name }} ({{ loc.postcode }}){% if loc.discrepancy %} <span class="tag is-warning is-light">not found</span>{% endif %}</li>
+        <li>{{ loc.name }}{% if loc.address %} -- {{ loc.address }}{% endif %} ({{ loc.postcode }}){% if loc.discrepancy %} <span class="tag is-warning is-light">not found</span>{% endif %}</li>
         {% else %}
         <li>None</li>
         {% endfor %}
@@ -73,7 +79,7 @@
       <p><strong>Found</strong></p>
       <ul>
         {% for loc in result.foundLocations %}
-        <li>{{ loc.name }} ({{ loc.postcode }}){% if loc.discrepancy %} <span class="tag is-info is-light">new</span> <a href="/admin/foodbank/{{ foodbank.slug }}/location/new/?name={{ loc.name | urlencode }}" target="_blank" rel="noopener" class="button is-small is-light">Add</a>{% endif %}</li>
+        <li>{{ loc.name }}{% if loc.address %} -- {{ loc.address }}{% endif %} ({{ loc.postcode }}){% if loc.discrepancy %} <span class="tag is-info is-light">new</span> <a href="/admin/foodbank/{{ foodbank.slug }}/location/new/?name={{ loc.name | urlencode }}&amp;postcode={{ loc.postcode | urlencode }}" target="_blank" rel="noopener" class="button is-small is-light">Add</a>{% endif %}</li>
         {% else %}
         <li>None</li>
         {% endfor %}
@@ -83,7 +89,7 @@
       <p><strong>Ours</strong></p>
       <ul>
         {% for dp in result.ourDonationPoints %}
-        <li>{{ dp.name }} ({{ dp.postcode }}){% if dp.discrepancy %} <span class="tag is-warning is-light">not found</span>{% endif %}</li>
+        <li>{{ dp.name }}{% if dp.address %} -- {{ dp.address }}{% endif %} ({{ dp.postcode }}){% if dp.discrepancy %} <span class="tag is-warning is-light">not found</span>{% endif %}</li>
         {% else %}
         <li>None</li>
         {% endfor %}
@@ -91,7 +97,7 @@
       <p><strong>Found</strong></p>
       <ul>
         {% for dp in result.foundDonationPoints %}
-        <li>{{ dp.name }} ({{ dp.postcode }}){% if dp.discrepancy %} <span class="tag is-info is-light">new</span> <a href="/admin/foodbank/{{ foodbank.slug }}/donationpoint/new/?name={{ dp.name | urlencode }}" target="_blank" rel="noopener" class="button is-small is-light">Add</a>{% endif %}</li>
+        <li>{{ dp.name }}{% if dp.address %} -- {{ dp.address }}{% endif %} ({{ dp.postcode }}){% if dp.discrepancy %} <span class="tag is-info is-light">new</span> <a href="/admin/foodbank/{{ foodbank.slug }}/donationpoint/new/?name={{ dp.name | urlencode }}&amp;postcode={{ dp.postcode | urlencode }}" target="_blank" rel="noopener" class="button is-small is-light">Add</a>{% endif %}</li>
         {% else %}
         <li>None</li>
         {% endfor %}

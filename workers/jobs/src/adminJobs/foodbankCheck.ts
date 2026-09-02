@@ -41,9 +41,9 @@ export interface FoodbankCheckResult {
   aiResponse: FoodbankCheckAiResponse;
   fetchedPages: { name: string; url: string; found: boolean; proxyField: string }[];
   detailChanges: Record<string, boolean>;
-  ourLocations: { slug: string; name: string; postcode: string | null; discrepancy: boolean }[];
+  ourLocations: { slug: string; name: string; address: string | null; postcode: string | null; discrepancy: boolean }[];
   foundLocations: { name: string; address: string; postcode: string; discrepancy: boolean }[];
-  ourDonationPoints: { slug: string; name: string; postcode: string; discrepancy: boolean }[];
+  ourDonationPoints: { slug: string; name: string; address: string | null; postcode: string; discrepancy: boolean }[];
   foundDonationPoints: { name: string; address: string; postcode: string; discrepancy: boolean }[];
 }
 
@@ -150,10 +150,20 @@ export async function handleFoodbankCheckJob(env: Env, jobId: string, foodbankSl
 
     const detailChanges: Record<string, boolean> = {};
     for (const [field, foundValue] of Object.entries(aiResponse.details)) {
-      if (field === "name" || field === "address" || field === "country") continue;
-      const ours = field === "postcode" ? foodbank.postcode : (foodbank as unknown as Record<string, string | null>)[field];
+      if (field === "name" || field === "address" || field === "postcode" || field === "country") continue;
+      const ours = (foodbank as unknown as Record<string, string | null>)[field];
       detailChanges[field] = normaliseAiString(foundValue as string) !== (ours ?? "").trim() && normaliseAiString(foundValue as string) !== "";
     }
+    // gfadmin/views.py:1190-1194 -- "address" in Django's detail_changes is
+    // address+postcode combined (joined by a newline) and compared as a
+    // plain string, not run through the AI-nullish/empty-string handling
+    // the other 10 fields get above. Previously skipped here entirely
+    // (never computed at all), which is why the Details table's Address
+    // row never highlighted on a real change and postcode was silently
+    // dropped from the comparison.
+    const oursAddress = `${foodbank.address ?? ""}\n${foodbank.postcode ?? ""}`.trim();
+    const foundAddress = `${aiResponse.details.address ?? ""}\n${aiResponse.details.postcode ?? ""}`.trim();
+    detailChanges.address = oursAddress !== foundAddress;
 
     // Django also excludes the delivery-address postcode from this set;
     // this D1 schema has no separate `delivery_postcode` column to
@@ -170,12 +180,12 @@ export async function handleFoodbankCheckJob(env: Env, jobId: string, foodbankSl
       aiResponse,
       fetchedPages,
       detailChanges,
-      ourLocations: locations.map((l) => ({ slug: l.slug, name: l.name, postcode: l.postcode, discrepancy: !foundLocationPostcodes.has(normalisePostcode(l.postcode)) })),
+      ourLocations: locations.map((l) => ({ slug: l.slug, name: l.name, address: l.address, postcode: l.postcode, discrepancy: !foundLocationPostcodes.has(normalisePostcode(l.postcode)) })),
       foundLocations: aiResponse.locations.map((l) => ({
         ...l,
         discrepancy: !ourLocationPostcodes.has(normalisePostcode(l.postcode)) && !ourAddressPostcodes.has(normalisePostcode(l.postcode)),
       })),
-      ourDonationPoints: donationPoints.map((d) => ({ slug: d.slug, name: d.name, postcode: d.postcode, discrepancy: !foundDonationPointPostcodes.has(normalisePostcode(d.postcode)) })),
+      ourDonationPoints: donationPoints.map((d) => ({ slug: d.slug, name: d.name, address: d.address, postcode: d.postcode, discrepancy: !foundDonationPointPostcodes.has(normalisePostcode(d.postcode)) })),
       foundDonationPoints: aiResponse.donation_points.map((d) => ({
         ...d,
         discrepancy: !ourDonationPointPostcodes.has(normalisePostcode(d.postcode)) && !ourAddressPostcodes.has(normalisePostcode(d.postcode)),

@@ -56,7 +56,8 @@ export async function adminDonationPointForm(c: Context<AppEnv>): Promise<Respon
   }
 
   const nameFromQuery = c.req.query("name");
-  const data = existing ?? (nameFromQuery ? { name: nameFromQuery } : {});
+  const postcodeFromQuery = c.req.query("postcode");
+  const data = existing ?? (nameFromQuery || postcodeFromQuery ? { name: nameFromQuery, postcode: postcodeFromQuery } : {});
 
   const html = await render("admin/generic_form.njk", {
     ...(await adminPageContext(c, "foodbanks")),

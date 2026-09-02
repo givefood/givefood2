@@ -72,3 +72,12 @@ export async function getAdminDashboardStats(session: Session, now: Date): Promi
     latestNeedCrawlSetId: latestNeedCrawlSet?.id ?? null,
   };
 }
+
+// gfadmin/views.py:361-366 foodbanks_next() -- the check page's "Next"
+// button, working through the review queue oldest-edited-first. Same
+// query as this file's own oldestEdit stat, standalone since that one is
+// read-only display and this needs just the slug to redirect with.
+export async function getOldestEditedFoodbankSlug(session: Session): Promise<string | null> {
+  const row = await session.prepare("SELECT slug FROM foodbank WHERE is_closed = 0 ORDER BY edited ASC LIMIT 1").first<{ slug: string }>();
+  return row?.slug ?? null;
+}

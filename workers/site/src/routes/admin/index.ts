@@ -28,6 +28,7 @@ import { adminOrderDetail } from "./order";
 import {
   adminFoodbanksList,
   adminFoodbanksCsv,
+  adminFoodbanksNext,
   adminLocationsList,
   adminDonationPointsList,
   adminParlconsList,
@@ -85,6 +86,7 @@ adminApp.post("/need/:id/edit/", adminNeedEditForm);
 // one of the 4 (routes/admin/foodbankUrls.ts's own comment).
 adminApp.get("/foodbanks/", adminFoodbanksList);
 adminApp.get("/foodbanks/csv/", adminFoodbanksCsv);
+adminApp.get("/foodbanks/next/", adminFoodbanksNext);
 adminApp.get("/foodbank/new/", adminFoodbankNew);
 adminApp.post("/foodbank/new/", adminFoodbankNew);
 adminApp.post("/foodbank/:slug/delete/", adminFoodbankDelete);

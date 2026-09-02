@@ -24,6 +24,7 @@ import {
   deleteSubscription,
   type SubscriptionType,
   getFoodbanksWithoutNeedPage,
+  getOldestEditedFoodbankSlug,
   totalPages,
   type PageResult,
 } from "@givefood/db";
@@ -172,6 +173,15 @@ export async function adminFoodbanksCsv(c: Context<AppEnv>): Promise<Response> {
     ["name", "postcode", "charity_number", "country", "last_order", "last_need", "no_locations", "network", "closed", "url", "created", "modified"],
     rows.map((fb) => [fb.name, fb.postcode, fb.charity_number, fb.country, fb.last_order, fb.last_need, fb.no_locations, fb.network, fb.is_closed, fb.url, fb.created, fb.modified]),
   );
+}
+
+// gfadmin/views.py:361-366 foodbanks_next -- the check page's "Next"
+// button, redirecting to the open foodbank with the oldest edited date
+// (falling back to the foodbanks list itself, matching Django, if none
+// exist at all -- an empty D1 table, not a realistic production state).
+export async function adminFoodbanksNext(c: Context<AppEnv>): Promise<Response> {
+  const slug = await getOldestEditedFoodbankSlug(dbSession(c));
+  return c.redirect(slug ? `/admin/foodbank/${slug}/` : "/admin/foodbanks/", 302);
 }
 
 // gfadmin/views.py:2138-2220 locations()/donationpoints() -- both
