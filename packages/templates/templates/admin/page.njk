@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+  <link rel="stylesheet" href="/static/css/bulma.min.css?v={{ version }}">
+  <link rel="stylesheet" href="/static/css/materialdesignicons.min.css?v={{ version }}">
+  <link rel="stylesheet" href="/static/css/gf.css?v={{ version }}">
+  <link rel="stylesheet" href="/static/css/admin.css?v={{ version }}">
+  <script src="/static/js/htmx.js?v={{ version }}"></script>
+  <meta name="theme-color" content="#F2DECB">
+  <link rel="icon" type="image/png" sizes="32x32" href="/static/img/favicon.png">
+  <title>{% block title %}{% endblock %} - Give Food Admin</title>
+  {% block head %}{% endblock %}
+</head>
+<body data-instant-allow-query-string data-instant-allow-external-links>
+
+  <nav class="navbar is-light" role="navigation" aria-label="main navigation">
+    <div class="navbar-brand">
+      <a class="navbar-item" href="/admin/">
+        <img src="/static/img/logo.svg" alt="Give Food" class="logo">
+      </a>
+    </div>
+    <div class="navbar-menu">
+      <a class="navbar-item{% if section == "needs" %} is-active{% endif %}" href="/admin/">Needs</a>
+    </div>
+    <div class="navbar-end">
+      <div class="navbar-item">
+        {% if admin_user %}
+          {% if admin_user.picture %}<img src="{{ admin_user.picture }}" alt="{{ admin_user.givenName }}" class="admin-avatar">{% endif %}
+          {{ admin_user.email }}
+          <a href="/auth/sign-out/">Sign out</a>
+        {% endif %}
+      </div>
+    </div>
+  </nav>
+
+  <div class="main">
+    {% block body %}{% endblock %}
+  </div>
+
+  {% block script %}{% endblock %}
+
+  <script src="/static/js/admin.js?v={{ version }}" defer></script>
+
+</body>
+</html>

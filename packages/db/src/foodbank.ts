@@ -184,6 +184,27 @@ export async function getFoodbankSlugByUuid(session: Session, uuid: string): Pro
   return row ? row.slug : null;
 }
 
+// WP 6.4: the need-review queue's detail page has `foodbank_id` (a plain
+// FK on foodbankchange) and needs the food bank's `slug` for its
+// WP-6.3-allowlisted proxy preview link -- same `.only("slug")`-style
+// projection as getFoodbankSlugByUuid above, just keyed by the numeric id
+// instead of the public uuid.
+export async function getFoodbankSlugById(session: Session, id: number): Promise<string | null> {
+  const row = await session.prepare("SELECT slug FROM foodbank WHERE id = ?").bind(id).first<{ slug: string }>();
+  return row ? row.slug : null;
+}
+
+// WP 6.4: the discrepancy-review page's preview iframe needs to know
+// whether `discrepancy.url` is actually THIS food bank's own `url` field
+// (the only one of WP 6.3's 5 proxyable fields a discrepancy is ever
+// about, per that WP's research) before it can safely offer a preview
+// through the WP-6.3-allowlisted proxy -- same slug/url pair as
+// getFoodbankSlugById, both projected in one query rather than two.
+export async function getFoodbankSlugAndUrlById(session: Session, id: number): Promise<{ slug: string; url: string } | null> {
+  const row = await session.prepare("SELECT slug, url FROM foodbank WHERE id = ?").bind(id).first<{ slug: string; url: string }>();
+  return row ?? null;
+}
+
 // wfbn-generic `mobsub`/`delete_mobsub` -- the mobile app's shipped
 // contract identifies a food bank by `Foodbank.uuid`, not by slug (see
 // `get_object_or_404(Foodbank, uuid=foodbank_uuid)` in

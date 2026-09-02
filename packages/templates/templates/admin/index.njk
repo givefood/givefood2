@@ -1,0 +1,48 @@
+{% extends "admin/page.njk" %}
+
+{% block title %}Dashboard{% endblock %}
+
+{% block body %}
+<div class="columns">
+  <div class="column">
+    <h1 class="title">Needs to review ({{ unpublished_needs.length }})</h1>
+    {% if unpublished_needs.length %}
+    <form method="post" action="/admin/needs/delete-all/" onsubmit="return confirm('Delete all ' + {{ unpublished_needs.length }} + ' unreviewed needs?');">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      {% for need in unpublished_needs %}<input type="hidden" name="need_id" value="{{ need.need_id }}">{% endfor %}
+      <button type="submit" class="button is-small is-danger is-light">Delete all</button>
+    </form>
+    {% endif %}
+    {% set needs = unpublished_needs %}
+    {% include "admin/includes/needtable.njk" %}
+  </div>
+</div>
+
+<div class="columns">
+  <div class="column">
+    <h2 class="title is-4">Recently published</h2>
+    {% set needs = published_needs %}
+    {% include "admin/includes/needtable.njk" %}
+  </div>
+</div>
+
+<div class="columns">
+  <div class="column">
+    <h2 class="title is-4">Open discrepancies ({{ discrepancies.length }})</h2>
+    <table class="table is-fullwidth">
+      <tbody>
+        {% for d in discrepancies %}
+        <tr>
+          <td>{{ d.foodbank_name or "Unknown" }}</td>
+          <td>{{ d.discrepancy_type }}</td>
+          <td><a href="/admin/discrepancy/{{ d.id }}/">{{ d.discrepancy_text }}</a></td>
+          <td>{{ d.created }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="4">None</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

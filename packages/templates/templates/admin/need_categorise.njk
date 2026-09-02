@@ -1,0 +1,39 @@
+{% extends "admin/page.njk" %}
+
+{% block title %}Categorise{% endblock %}
+
+{% block body %}
+<div class="columns">
+  <div class="column is-half">
+    <h2 class="title is-4">{{ need.need_id }}</h2>
+
+    <form action="/admin/need/{{ need.need_id }}/categorise/" method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <table class="table is-fullwidth">
+        <thead><tr><th>Item</th><th>Type</th><th>Category</th></tr></thead>
+        <tbody>
+          {% for line in lines %}
+          <tr>
+            <td>{{ line.item }}</td>
+            <td>{{ line.type }}</td>
+            <td>
+              <input type="hidden" name="item_{{ loop.index0 }}" value="{{ line.item }}">
+              <input type="hidden" name="type_{{ loop.index0 }}" value="{{ line.type }}">
+              <div class="select is-small">
+                <select name="category_{{ loop.index0 }}">
+                  <option value="">-- choose --</option>
+                  {% for category in categories %}
+                  <option value="{{ category }}"{% if category == line.category %} selected{% endif %}>{{ category }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <input type="submit" class="button is-link is-light" value="Submit">
+    </form>
+  </div>
+</div>
+{% endblock %}

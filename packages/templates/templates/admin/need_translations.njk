@@ -1,0 +1,47 @@
+{% extends "admin/page.njk" %}
+
+{% block title %}Translations{% endblock %}
+
+{% block body %}
+<div class="columns">
+  <div class="column">
+    <dl>
+      <dt>ID</dt>
+      <dd><a href="/admin/need/{{ need.need_id }}/">{{ need.need_id }}</a></dd>
+      <dt>Food Bank</dt>
+      <dd>{{ need.foodbank_name or "Unknown" }}</dd>
+      <dt>Input Method</dt>
+      <dd>{{ need.input_method_human }}</dd>
+      <dt>Created</dt>
+      <dd><time datetime="{{ need.created }}">{{ need.created }}</time></dd>
+    </dl>
+  </div>
+
+  <div class="column is-three-quarters">
+    <h2 class="title is-4">English</h2>
+    <dl>
+      <dt>Needs</dt>
+      <dd>{{ need.change_text | linebreaksbr | safe }}</dd>
+      {% if need.excess_change_text %}
+        <dt>Excess</dt>
+        <dd>{{ need.excess_change_text | linebreaksbr | safe }}</dd>
+      {% endif %}
+    </dl>
+
+    <h2 class="title is-4">Translations</h2>
+    {% for translation in translations %}
+      <h3 class="title is-5">{{ translation.language }}</h3>
+      <dl>
+        <dt>Needs</dt>
+        <dd>{{ translation.change_text | linebreaksbr | safe }}</dd>
+        {% if translation.excess_change_text %}
+          <dt>Excess</dt>
+          <dd>{{ translation.excess_change_text | linebreaksbr | safe }}</dd>
+        {% endif %}
+      </dl>
+    {% else %}
+      <p>No translations yet.</p>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

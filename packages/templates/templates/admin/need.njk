@@ -1,0 +1,171 @@
+{% extends "admin/page.njk" %}
+
+{% block title %}{{ need.foodbank_name or "Unknown" }} need{% endblock %}
+
+{% block body %}
+<div class="columns">
+
+  <div class="column">
+    <dl>
+      <dt>ID</dt>
+      <dd>{{ need.need_id }}</dd>
+      <dt>Food Bank</dt>
+      <dd>{{ need.foodbank_name or "Unknown" }}</dd>
+      <dt>Input Method</dt>
+      <dd>{{ need.input_method_human }}</dd>
+      <dt>Created</dt>
+      <dd><time datetime="{{ need.created }}">{{ need.created }}</time></dd>
+      <dt>Modified</dt>
+      <dd><time datetime="{{ need.modified }}">{{ need.modified }}</time></dd>
+      {% if need.uri %}
+        <dt>URL</dt>
+        <dd><a href="{{ need.uri }}">{{ need.uri | truncatechars(35) }}</a></dd>
+      {% endif %}
+      <dt>Food Bank Subs</dt>
+      <dd>
+        {{ subscriber_count }}
+        {% if subscriber_counts.email or subscriber_counts.whatsapp or subscriber_counts.webpush or subscriber_counts.mobile %}
+          <br>
+          {% if subscriber_counts.email %}<span class="mdi mdi-email"></span>&nbsp;{{ subscriber_counts.email }}&ensp;{% endif %}
+          {% if subscriber_counts.whatsapp %}<span class="mdi mdi-whatsapp"></span>&nbsp;{{ subscriber_counts.whatsapp }}&ensp;{% endif %}
+          {% if subscriber_counts.webpush %}<span class="mdi mdi-bell"></span>&nbsp;{{ subscriber_counts.webpush }}&ensp;{% endif %}
+          {% if subscriber_counts.mobile %}<span class="mdi mdi-cellphone"></span>&nbsp;{{ subscriber_counts.mobile }}{% endif %}
+        {% endif %}
+      </dd>
+    </dl>
+
+    {% if crawl_set %}
+      <h3>Crawl Set</h3>
+      <time datetime="{{ crawl_set.start }}">{{ crawl_set.start }}</time> ({{ crawl_set.crawl_type }})
+    {% endif %}
+
+    {% if prev_published or prev_nonpert %}
+      <h3>Previous</h3>
+      <dl>
+        {% if prev_published %}
+          <dt>Published</dt>
+          <dd>
+            <time datetime="{{ prev_published.created }}">{{ prev_published.created }}</time>
+            <br><a href="/admin/need/{{ prev_published.need_id }}/">{{ prev_published.need_id }}</a>
+          </dd>
+        {% endif %}
+        {% if prev_nonpert %}
+          <dt>Non Pertinent</dt>
+          <dd>
+            <time datetime="{{ prev_nonpert.created }}">{{ prev_nonpert.created }}</time>
+            <br><a href="/admin/need/{{ prev_nonpert.need_id }}/">{{ prev_nonpert.need_id }}</a>
+          </dd>
+        {% endif %}
+      </dl>
+    {% endif %}
+
+    <h3>Workflow</h3>
+    <table class="table is-fullwidth">
+      <tr>
+        <td>{% if need.published %}<span style="color:green">&check;</span>{% else %}<span style="color:red">&times;</span>{% endif %}</td>
+        <td>Publish</td>
+        <td>
+          {% if need.published %}
+            <form action="/admin/need/{{ need.need_id }}/unpublish/" method="post">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <input type="submit" class="button is-warning is-pulled-right is-small is-light" value="Unpublish" onclick="this.form.submit();this.disabled = true;">
+            </form>
+          {% else %}
+            <form action="/admin/need/{{ need.need_id }}/publish/" method="post">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <input type="submit" class="button is-warning is-pulled-right is-small is-light" value="Publish" onclick="this.form.submit();this.disabled = true;">
+            </form>
+          {% endif %}
+        </td>
+      </tr>
+      <tr>
+        <td>{% if need.is_categorised %}<span style="color:green">&check;</span>{% else %}<span style="color:red">&times;</span>{% endif %}</td>
+        <td>Categorise</td>
+        <td>
+          {% if need.published %}
+            <a href="/admin/need/{{ need.need_id }}/categorise/" class="button is-link is-pulled-right is-small is-light">Categorise</a>
+          {% endif %}
+        </td>
+      </tr>
+      <tr>
+        <td>{% if need.notified %}<span style="color:green">&check;</span>{% else %}<span style="color:red">&times;</span>{% endif %}</td>
+        <td>Notify</td>
+        <td>
+          {% if need.published %}<span class="has-text-grey is-pulled-right">Not yet available</span>{% endif %}
+        </td>
+      </tr>
+    </table>
+
+    {% if need.published %}
+      <a href="/admin/need/{{ need.need_id }}/translations/">Translations <span class="tag is-info is-normal is-light">{{ translation_count }}</span></a>
+    {% endif %}
+
+    <h3><span class="mdi mdi-alert"></span> Danger Zone</h3>
+    <form action="/admin/need/{{ need.need_id }}/nonpertinent/" method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="submit" class="button is-warning is-light" value="Nonpertinent">
+    </form>
+    <br>
+    <form action="/admin/need/{{ need.need_id }}/delete/" method="post" onsubmit="return confirm('Are you sure you want to DELETE?')">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="submit" class="button is-danger is-light" value="Delete">
+    </form>
+  </div>
+
+  <div class="column is-half">
+    <div class="columns">
+      <div class="column">
+        <h3>Need</h3>
+        <div class="box"><p>{{ need.change_text | linebreaksbr | safe }}</p></div>
+      </div>
+      <div class="column">
+        <h3>Excess</h3>
+        <div class="box"><p>{{ need.excess_change_text | linebreaksbr | safe }}</p></div>
+      </div>
+    </div>
+
+    {% if prev_published or prev_nonpert %}
+      <div class="tabs is-boxed">
+        <ul role="tablist" aria-label="Need comparison">
+          <li class="is-active" role="presentation"><a data-tab="published" role="tab" aria-selected="true" id="published-tab"><span>Published</span></a></li>
+          <li role="presentation"><a data-tab="nonpert" role="tab" aria-selected="false" id="nonpert-tab"><span>Non Pertinent</span></a></li>
+        </ul>
+      </div>
+
+      <div class="columns sections">
+        {% if prev_published %}
+          <div class="published column is-half tabcontent">
+            <div class="box">{% if diff_from_pub %}<p>{{ diff_from_pub | safe }}</p>{% else %}<p class="nochange">No change</p>{% endif %}</div>
+          </div>
+          <div class="published column is-half tabcontent">
+            <div class="box">{% if diff_from_pub_excess %}<p>{{ diff_from_pub_excess | safe }}</p>{% else %}<p class="nochange">No change</p>{% endif %}</div>
+          </div>
+        {% else %}
+          <div class="published column tabcontent">No previous published need</div>
+        {% endif %}
+
+        {% if prev_nonpert %}
+          <div class="nonpert column is-half is-hidden tabcontent">
+            <div class="box">{% if diff_from_nonpert %}<p>{{ diff_from_nonpert | safe }}</p>{% else %}<p class="nochange">No change</p>{% endif %}</div>
+          </div>
+          <div class="nonpert column is-half is-hidden tabcontent">
+            <div class="box">{% if diff_from_nonpert_excess %}<p>{{ diff_from_nonpert_excess | safe }}</p>{% else %}<p class="nochange">No change</p>{% endif %}</div>
+          </div>
+        {% else %}
+          <div class="nonpert column is-hidden tabcontent">No previous non-pertinent need</div>
+        {% endif %}
+      </div>
+    {% endif %}
+
+    {% if show_proxy %}
+      <h3>Preview</h3>
+      <iframe class="preview-frame" src="/admin/proxy/?foodbank={{ foodbank_slug }}&amp;field=shopping_list_url" style="width:100%;height:1000px;border:none;" loading="lazy"></iframe>
+    {% endif %}
+  </div>
+
+</div>
+{% endblock %}
+
+{% block script %}
+<script src="/static/js/tabber.js?v={{ version }}" defer></script>
+{% endblock %}

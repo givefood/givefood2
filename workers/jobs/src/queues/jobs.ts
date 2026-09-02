@@ -1,11 +1,13 @@
 import type { Env } from "../../worker-configuration";
 import { backfillMapImage, isMapImageKey } from "../mediaBackfill/mapImage";
+import { handleTranslateNeed, type TranslateNeedMessage } from "./translateNeed";
 
 // Consumer for the "jobs" queue (binding JOBS_Q) -- admin-triggered and
 // on-miss work, per PLAN.md §3.3's binding map: "article crawl,
 // notifications, photo backfill". This is the other end of the message
-// routes/media.ts sends when a media request misses R2.
-type JobMessage = { type: "media-backfill"; key: string } | { type: string; [k: string]: unknown };
+// routes/media.ts sends when a media request misses R2, and (WP 6.4) the
+// other end of the admin's need_publish handler's translate enqueue.
+type JobMessage = { type: "media-backfill"; key: string } | TranslateNeedMessage | { type: string; [k: string]: unknown };
 
 export async function handleJobsQueue(batch: MessageBatch<JobMessage>, env: Env): Promise<void> {
   for (const message of batch.messages) {
@@ -23,6 +25,8 @@ async function dispatch(body: JobMessage, env: Env): Promise<void> {
   switch (body.type) {
     case "media-backfill":
       return handleMediaBackfill(body as { type: "media-backfill"; key: string }, env);
+    case "translate-need":
+      return handleTranslateNeed(body as TranslateNeedMessage, env);
     default:
       throw new Error(`unknown job type: ${body.type}`);
   }

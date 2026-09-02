@@ -153,7 +153,13 @@ function escapeHtml(value: string): string {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
-export function linebreaks(value: string): string {
+// Django's template filters treat None as "" (StringifyToText coerces it),
+// not a TypeError -- WP 6.4's need.excess_change_text (nullable) was the
+// first caller to actually hit this, but the guard belongs here rather
+// than at each call site: every future `| linebreaks(br)` on a nullable
+// column should get the same safe-empty behaviour, not a 500.
+export function linebreaks(value: string | null | undefined): string {
+  if (!value) return "";
   const paragraphs = escapeHtml(value).split(/\n{2,}/);
   return paragraphs.map((p) => `<p>${p.replace(/\n/g, "<br>")}</p>`).join("\n\n");
 }
@@ -161,7 +167,8 @@ export function linebreaks(value: string): string {
 // django's `linebreaksbr` -- NOT the same as linebreaks above: no <p>
 // wrapping/paragraph grouping at all, just a flat escape-then-replace of
 // every newline with <br>.
-export function linebreaksbr(value: string): string {
+export function linebreaksbr(value: string | null | undefined): string {
+  if (!value) return "";
   return escapeHtml(value.replace(/\r\n|\r/g, "\n")).replace(/\n/g, "<br>");
 }
 

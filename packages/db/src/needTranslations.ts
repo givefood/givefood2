@@ -42,3 +42,40 @@ export async function getNeedTranslationsByIds(session: Session, needIds: readon
     .all<{ need_id: number; change_text: string | null; excess_change_text: string | null }>();
   return new Map(result.results.map((row) => [row.need_id, { change_text: row.change_text, excess_change_text: row.excess_change_text }]));
 }
+
+// WP 6.4: givefood/utils/general.py:203-221 translate_need() -- delete
+// any existing (need, language) row then insert the fresh translation.
+// Delete-then-insert, not upsert-on-conflict: Django has no unique
+// constraint on (need_id, language) either (that module's own top
+// comment already notes the dedup here is purely "the write path always
+// clears first", not a DB guarantee), so this matches exactly rather
+// than introducing a stricter invariant D1 alone would enforce.
+export async function replaceNeedTranslation(
+  session: Session,
+  params: { needId: number; foodbankId: number | null; language: Locale; changeText: string | null; excessChangeText: string | null },
+): Promise<void> {
+  await session.prepare("DELETE FROM foodbankchangetranslation WHERE need_id = ? AND language = ?").bind(params.needId, params.language).run();
+  await session
+    .prepare("INSERT INTO foodbankchangetranslation (need_id, foodbank_id, language, change_text, excess_change_text) VALUES (?, ?, ?, ?, ?)")
+    .bind(params.needId, params.foodbankId, params.language, params.changeText, params.excessChangeText)
+    .run();
+}
+
+export interface NeedTranslationForDisplay {
+  language: Locale;
+  change_text: string | null;
+  excess_change_text: string | null;
+}
+
+// WP 6.4: gfadmin/views.py:2011-2020 need_translations -- the admin's
+// read-only "every stored translation for this need" viewer, unlike the
+// two lookups above (which are always scoped to the CURRENT request's one
+// locale). Only cy/ga/gd rows ever exist (this module's own top comment),
+// so this never returns more than 3 rows.
+export async function getAllTranslationsForNeed(session: Session, needId: number): Promise<NeedTranslationForDisplay[]> {
+  const result = await session
+    .prepare("SELECT language, change_text, excess_change_text FROM foodbankchangetranslation WHERE need_id = ? ORDER BY language")
+    .bind(needId)
+    .all<NeedTranslationForDisplay>();
+  return result.results;
+}
