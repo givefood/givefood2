@@ -9,8 +9,13 @@ import { dbSession } from "../../lib/session";
 import { inputMethodEmoji } from "../../lib/needAdminDisplay";
 import { adminPageContext } from "./pageContext";
 import { adminProxy } from "./proxy";
-import { adminNeedDetail, adminNeedPublish, adminNeedUnpublish, adminNeedNonpertinent, adminNeedDelete, adminNeedsDeleteAll, adminNeedCategorise, adminNeedTranslations } from "./needs";
+import { adminNeedDetail, adminNeedPublish, adminNeedUnpublish, adminNeedNonpertinent, adminNeedDelete, adminNeedsDeleteAll, adminNeedCategorise, adminNeedTranslations, adminNeedEditForm } from "./needs";
 import { adminDiscrepancyDetail, adminDiscrepancyAction } from "./discrepancies";
+import { adminFoodbankEdit, adminFoodbankPoliticsEdit, adminFoodbankPartialEdit } from "./foodbank";
+import { adminFoodbankUrlsEdit } from "./foodbankUrls";
+import { adminFoodbankLocationForm } from "./foodbankLocation";
+import { adminDonationPointForm } from "./donationPoint";
+import { adminParlconForm } from "./parlcon";
 
 // gfadmin (WP 6.1/6.2 scaffolding only -- the real index page, need-review
 // queue etc. are WP 6.4+). `adminApp` is where every actual admin feature
@@ -46,6 +51,37 @@ adminApp.get("/need/:id/translations/", adminNeedTranslations);
 
 adminApp.get("/discrepancy/:id/", adminDiscrepancyDetail);
 adminApp.post("/discrepancy/:id/action/", adminDiscrepancyAction);
+
+adminApp.get("/need/:id/edit/", adminNeedEditForm);
+adminApp.post("/need/:id/edit/", adminNeedEditForm);
+
+// WP 6.5: Foodbank forms. /edit/:form/ is the 4 collapsed partials
+// (address/phone/email/fsa-id -- lib/adminFormFields.ts's
+// FOODBANK_PARTIAL_FORMS); /edit/urls/ stays its own route since it isn't
+// one of the 4 (routes/admin/foodbankUrls.ts's own comment).
+adminApp.get("/foodbank/:slug/edit/", adminFoodbankEdit);
+adminApp.post("/foodbank/:slug/edit/", adminFoodbankEdit);
+adminApp.get("/foodbank/:slug/politics/edit/", adminFoodbankPoliticsEdit);
+adminApp.post("/foodbank/:slug/politics/edit/", adminFoodbankPoliticsEdit);
+adminApp.get("/foodbank/:slug/edit/urls/", adminFoodbankUrlsEdit);
+adminApp.post("/foodbank/:slug/edit/urls/", adminFoodbankUrlsEdit);
+adminApp.get("/foodbank/:slug/edit/:form/", adminFoodbankPartialEdit);
+adminApp.post("/foodbank/:slug/edit/:form/", adminFoodbankPartialEdit);
+
+adminApp.get("/foodbank/:slug/location/new/", adminFoodbankLocationForm);
+adminApp.post("/foodbank/:slug/location/new/", adminFoodbankLocationForm);
+adminApp.get("/foodbank/:slug/location/:locSlug/edit/", adminFoodbankLocationForm);
+adminApp.post("/foodbank/:slug/location/:locSlug/edit/", adminFoodbankLocationForm);
+
+adminApp.get("/foodbank/:slug/donationpoint/new/", adminDonationPointForm);
+adminApp.post("/foodbank/:slug/donationpoint/new/", adminDonationPointForm);
+adminApp.get("/foodbank/:slug/donationpoint/:dpSlug/edit/", adminDonationPointForm);
+adminApp.post("/foodbank/:slug/donationpoint/:dpSlug/edit/", adminDonationPointForm);
+
+adminApp.get("/parlcon/new/", adminParlconForm);
+adminApp.post("/parlcon/new/", adminParlconForm);
+adminApp.get("/parlcon/:slug/edit/", adminParlconForm);
+adminApp.post("/parlcon/:slug/edit/", adminParlconForm);
 
 function enrichNeedRow(row: FoodbankChangeRow): FoodbankChangeRow & { input_method_emoji: string } {
   return { ...row, input_method_emoji: inputMethodEmoji(row.input_method) };

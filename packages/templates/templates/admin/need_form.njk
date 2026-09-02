@@ -1,0 +1,50 @@
+{% extends "admin/page.njk" %}
+
+{% block title %}Edit Need{% endblock %}
+
+{% block body %}
+<div class="columns">
+  <div class="column is-half">
+    <h1 class="title">Edit Need</h1>
+    <p><a href="/admin/need/{{ need.need_id }}/">&larr; Back</a></p>
+
+    <form method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+      <div class="field">
+        <label class="label">Food Bank Slug</label>
+        <div class="control">
+          <input class="input" type="text" name="foodbank_slug" value="{{ foodbank_slug }}" placeholder="(none)">
+        </div>
+        <p class="help">Leave blank to leave this need unassigned to any food bank.</p>
+      </div>
+
+      <div class="field">
+        <label class="label">Needs</label>
+        <div class="control">
+          <textarea class="textarea" name="change_text" rows="6">{{ need.change_text }}</textarea>
+        </div>
+      </div>
+
+      <div class="field">
+        <label class="label">Excess</label>
+        <div class="control">
+          <textarea class="textarea" name="excess_change_text" rows="6">{{ need.excess_change_text }}</textarea>
+        </div>
+      </div>
+
+      <div class="field">
+        <div class="control">
+          <label class="checkbox"><input type="checkbox" name="published" value="1"{% if need.published %} checked{% endif %}> Published</label>
+        </div>
+      </div>
+
+      <div class="field">
+        <div class="control">
+          <button type="submit" class="button is-link is-light">Save</button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

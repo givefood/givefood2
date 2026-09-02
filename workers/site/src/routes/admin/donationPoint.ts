@@ -1,0 +1,69 @@
+import type { Context } from "hono";
+import { getFoodbankBySlug, getDonationPointBySlugs, upsertDonationPoint } from "@givefood/db";
+import { render } from "@givefood/templates";
+import type { AppEnv } from "../../types";
+import { dbSession } from "../../lib/session";
+import { verifyCsrf } from "../../lib/csrf";
+import { FOODBANK_DONATION_POINT_FIELDS, parseAdminFields } from "../../lib/adminFormFields";
+import { adminPageContext } from "./pageContext";
+
+// gfadmin/views.py:1834-1862 donationpoint_form -- create (no :dpSlug) and
+// edit (with :dpSlug) in one handler. POST redirect appends `#donationpoints`
+// in Django (targeting a tab on the not-yet-built `admin:foodbank` page);
+// this redirects to the edit form instead, same reasoning as
+// foodbankLocation.ts's own comment.
+export async function adminDonationPointForm(c: Context<AppEnv>): Promise<Response> {
+  const slug = c.req.param("slug")!;
+  const dpSlug = c.req.param("dpSlug");
+  const db = dbSession(c);
+
+  const foodbank = await getFoodbankBySlug(db, slug);
+  if (!foodbank) return c.notFound();
+
+  const existing = dpSlug ? await getDonationPointBySlugs(db, slug, dpSlug) : null;
+  if (dpSlug && !existing) return c.notFound();
+
+  if (c.req.method === "POST") {
+    const body = await c.req.parseBody();
+    const csrfToken = typeof body.csrf_token === "string" ? body.csrf_token : undefined;
+    if (!(await verifyCsrf(c, c.env.CSRF_SECRET, csrfToken))) return c.text("Forbidden", 403);
+
+    const parsed = parseAdminFields(FOODBANK_DONATION_POINT_FIELDS, body as Record<string, unknown>);
+    if (!parsed.ok) return c.text(parsed.error, 400);
+
+    await upsertDonationPoint(
+      db,
+      {
+        foodbankId: foodbank.id,
+        foodbank: { name: foodbank.name, slug: foodbank.slug, network: foodbank.network },
+        name: String(parsed.values.name),
+        address: String(parsed.values.address),
+        postcode: String(parsed.values.postcode),
+        phoneNumber: parsed.values.phone_number as string | null,
+        openingHours: parsed.values.opening_hours as string | null,
+        wheelchairAccessible: parsed.values.wheelchair_accessible as number | null,
+        url: parsed.values.url as string | null,
+        inStoreOnly: Number(parsed.values.in_store_only),
+        company: parsed.values.company as string | null,
+        storeId: parsed.values.store_id as string | null,
+        notes: parsed.values.notes as string | null,
+        latLng: String(parsed.values.lat_lng),
+        placeId: parsed.values.place_id as string | null,
+      },
+      existing?.id,
+    );
+    return c.redirect(`/admin/foodbank/${foodbank.slug}/edit/`, 302);
+  }
+
+  const nameFromQuery = c.req.query("name");
+  const data = existing ?? (nameFromQuery ? { name: nameFromQuery } : {});
+
+  const html = await render("admin/generic_form.njk", {
+    ...(await adminPageContext(c, "foodbanks")),
+    title: existing ? `Edit ${foodbank.name} Donation Point` : `New ${foodbank.name} Donation Point`,
+    fields: FOODBANK_DONATION_POINT_FIELDS,
+    data,
+    back_url: `/admin/foodbank/${foodbank.slug}/edit/`,
+  });
+  return c.html(html);
+}

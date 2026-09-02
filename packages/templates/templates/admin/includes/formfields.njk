@@ -1,0 +1,41 @@
+{# Shared field renderer for every admin*.njk edit form -- driven by the
+   AdminFieldSpec descriptors in lib/adminFormFields.ts (and its per-model
+   siblings), not per-template hand-written inputs. #}
+{% macro field(spec, value) %}
+<div class="field">
+  <label class="label">{{ spec.label }}{% if spec.required %} *{% endif %}</label>
+  <div class="control">
+    {% if spec.kind == "textarea" %}
+      <textarea class="textarea" name="{{ spec.name }}"{% if spec.required %} required{% endif %}>{{ value }}</textarea>
+    {% elif spec.kind == "checkbox" %}
+      <label class="checkbox"><input type="checkbox" name="{{ spec.name }}" value="1"{% if value %} checked{% endif %}> {{ spec.helpText or spec.label }}</label>
+    {% elif spec.kind == "tristate" %}
+      <div class="select">
+        <select name="{{ spec.name }}">
+          <option value=""{% if value != 0 and value != 1 %} selected{% endif %}>Unknown</option>
+          <option value="1"{% if value == 1 %} selected{% endif %}>Yes</option>
+          <option value="0"{% if value == 0 %} selected{% endif %}>No</option>
+        </select>
+      </div>
+    {% elif spec.kind == "select" %}
+      <div class="select">
+        <select name="{{ spec.name }}"{% if spec.required %} required{% endif %}>
+          {% if not spec.required %}<option value="">-- none --</option>{% endif %}
+          {% for opt in spec.options %}
+          <option value="{{ opt }}"{% if opt == value %} selected{% endif %}>{{ opt }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    {% else %}
+      <input class="input" type="{{ spec.kind }}" name="{{ spec.name }}" value="{{ value }}"{% if spec.required %} required{% endif %}>
+    {% endif %}
+  </div>
+  {% if spec.helpText and spec.kind != "checkbox" %}<p class="help">{{ spec.helpText }}</p>{% endif %}
+</div>
+{% endmacro %}
+
+{% macro fieldset(specs, data) %}
+  {% for spec in specs %}
+    {{ field(spec, data[spec.name]) }}
+  {% endfor %}
+{% endmacro %}

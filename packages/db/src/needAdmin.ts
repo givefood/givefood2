@@ -224,6 +224,36 @@ export async function deleteNeedByUuid(session: Session, needId: string): Promis
   return true;
 }
 
+// gfadmin/views.py:1916-1946 need_form (givefood/forms.py:231-236 NeedForm)
+// -- the only fields NeedForm actually exposes once its own `exclude` and
+// every editable=False field on FoodbankChange are accounted for (WP 6.5
+// research): `foodbank`, `change_text`, `excess_change_text`, `published`.
+// Reassigning `foodbank` moves which food bank's `latest_need`/`last_need`
+// this need counts toward, so both the old and new food bank (when they
+// differ) get recomputed, not just one.
+export interface UpdateNeedRawFieldsParams {
+  changeText: string;
+  excessChangeText: string | null;
+  published: boolean;
+  foodbankId: number | null;
+  foodbankName: string | null;
+}
+
+export async function updateNeedRawFields(session: Session, needId: string, params: UpdateNeedRawFieldsParams): Promise<boolean> {
+  const need = await session.prepare("SELECT foodbank_id FROM foodbankchange WHERE need_id = ?").bind(needId).first<{ foodbank_id: number | null }>();
+  if (!need) return false;
+
+  const now = new Date().toISOString();
+  await session
+    .prepare("UPDATE foodbankchange SET change_text = ?, excess_change_text = ?, published = ?, foodbank_id = ?, foodbank_name = ?, modified = ? WHERE need_id = ?")
+    .bind(params.changeText, params.excessChangeText, params.published ? 1 : 0, params.foodbankId, params.foodbankName, now, needId)
+    .run();
+
+  const affected = new Set([need.foodbank_id, params.foodbankId].filter((id): id is number => id !== null));
+  for (const foodbankId of affected) await recomputeFoodbankNeedFields(session, foodbankId);
+  return true;
+}
+
 // gfadmin/views.py:423-428 needs_deleteall -- the dashboard's bulk-delete-
 // backlog form. Django's version is a QuerySet `.delete()`, which bypasses
 // the model's delete() override entirely: no foodbank recompute for any

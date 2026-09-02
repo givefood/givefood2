@@ -17,6 +17,8 @@ import {
   upsertNeedLine,
   ITEM_CATEGORIES,
   getAllTranslationsForNeed,
+  updateNeedRawFields,
+  getFoodbankBySlug,
 } from "@givefood/db";
 import { render } from "@givefood/templates";
 import type { AppEnv } from "../../types";
@@ -223,6 +225,56 @@ export async function adminNeedTranslations(c: Context<AppEnv>): Promise<Respons
     ...(await adminPageContext(c, "needs")),
     need: { ...need, input_method_human: inputMethodHuman(need.input_method) },
     translations,
+  });
+  return c.html(html);
+}
+
+// gfadmin/views.py:1916-1946 need_form (givefood/forms.py:231-236
+// NeedForm) -- edit-only (Django's "new" branch is dead: `newneed`'s URL
+// exists but nothing links to it, and creating a need outside the
+// needcheck pipeline has no real use case). Once `exclude` and every
+// editable=False FoodbankChange field are accounted for, the form only
+// ever exposes 4 fields: foodbank, change_text, excess_change_text,
+// published -- see needAdmin.ts's updateNeedRawFields. `foodbank` is a
+// slug text input here rather than Django's 1000+-row `<select>` (its
+// ModelChoiceField has no scoping at all, `Foodbank.objects.filter()` --
+// every food bank, open or closed).
+export async function adminNeedEditForm(c: Context<AppEnv>): Promise<Response> {
+  const db = dbSession(c);
+  const need = await getNeedByUuid(db, c.req.param("id")!);
+  if (!need) return c.notFound();
+
+  if (c.req.method === "POST") {
+    const body = await c.req.parseBody();
+    const csrfToken = typeof body.csrf_token === "string" ? body.csrf_token : undefined;
+    if (!(await verifyCsrf(c, c.env.CSRF_SECRET, csrfToken))) return c.text("Forbidden", 403);
+
+    const changeText = typeof body.change_text === "string" ? body.change_text : "";
+    const excessChangeText = typeof body.excess_change_text === "string" && body.excess_change_text.trim() !== "" ? body.excess_change_text : null;
+    const published = !!body.published;
+    const foodbankSlug = typeof body.foodbank_slug === "string" ? body.foodbank_slug.trim() : "";
+
+    let foodbankId: number | null = null;
+    let foodbankName: string | null = need.foodbank_name;
+    if (foodbankSlug) {
+      const foodbank = await getFoodbankBySlug(db, foodbankSlug);
+      if (!foodbank) return c.text(`No food bank with slug "${foodbankSlug}"`, 400);
+      foodbankId = foodbank.id;
+      foodbankName = foodbank.name;
+    } else {
+      foodbankName = null;
+    }
+
+    const updated = await updateNeedRawFields(db, need.need_id, { changeText, excessChangeText, published, foodbankId, foodbankName });
+    if (!updated) return c.notFound();
+    return c.redirect(`/admin/need/${need.need_id}/`, 302);
+  }
+
+  const foodbankSlug = need.foodbank_id !== null ? await getFoodbankSlugById(db, need.foodbank_id) : null;
+  const html = await render("admin/need_form.njk", {
+    ...(await adminPageContext(c, "needs")),
+    need,
+    foodbank_slug: foodbankSlug,
   });
   return c.html(html);
 }

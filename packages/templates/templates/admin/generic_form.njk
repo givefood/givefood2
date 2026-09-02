@@ -1,0 +1,23 @@
+{% extends "admin/page.njk" %}
+{% from "admin/includes/formfields.njk" import fieldset %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block body %}
+<div class="columns">
+  <div class="column is-half">
+    <h1 class="title">{{ title }}</h1>
+    {% if back_url %}<p><a href="{{ back_url }}">&larr; Back</a></p>{% endif %}
+
+    <form method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      {{ fieldset(fields, data) }}
+      <div class="field">
+        <div class="control">
+          <button type="submit" class="button is-link is-light">Save</button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
