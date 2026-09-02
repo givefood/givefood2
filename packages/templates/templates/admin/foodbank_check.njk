@@ -1,0 +1,126 @@
+{% extends "admin/page.njk" %}
+
+{% block title %}Check{% endblock %}
+
+{% block body %}
+<h1 class="title">Check: {{ foodbank.name }}</h1>
+<p><a href="/admin/foodbank/{{ foodbank.slug }}/">&larr; Back</a></p>
+
+{% if not job %}
+  <form method="post" action="/admin/foodbank/{{ foodbank.slug }}/check/">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button type="submit" class="button is-link is-light">Run Check</button>
+  </form>
+
+{% elif job.status == "queued" or job.status == "running" %}
+  <div id="job-status" hx-get="/admin/job/{{ job.id }}/" hx-trigger="every 2s" hx-swap="outerHTML">
+    <div class="loading"><span class="loader"></span></div>
+    <p>{{ job.status }}&hellip;</p>
+  </div>
+
+{% elif job.status == "failed" %}
+  <div class="notification is-danger is-light">{{ job.error }}</div>
+  <form method="post" action="/admin/foodbank/{{ foodbank.slug }}/check/">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button type="submit" class="button is-link is-light">Retry</button>
+  </form>
+
+{% else %}
+  <p>
+    <a href="?job={{ job.id }}&amp;debug=prompt">Prompt</a> &middot;
+    <a href="?job={{ job.id }}&amp;debug=json">Raw JSON</a> &middot;
+    <form method="post" action="/admin/foodbank/{{ foodbank.slug }}/check/" style="display:inline">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="button is-small is-light">Re-run</button>
+    </form>
+  </p>
+
+  <div class="columns">
+    <div class="column is-half">
+      <h3 class="title is-5">Details</h3>
+      <table class="table is-fullwidth">
+        <thead><tr><th></th><th>Ours</th><th>Found</th><th></th></tr></thead>
+        <tbody>
+          <tr><td>Address</td><td>{{ foodbank.address }}</td><td>{{ result.aiResponse.details.address }}</td><td></td></tr>
+          {% for field in use_ai_fields %}
+          <tr class="{% if result.detailChanges[field] %}check-changed{% endif %}">
+            <td>{{ field }}</td>
+            <td>{{ foodbank[field] or "" }}</td>
+            <td>{{ result.aiResponse.details[field] }}</td>
+            <td>
+              {% if result.detailChanges[field] %}
+              <form method="post" action="/admin/foodbank/{{ foodbank.slug }}/use-ai/{{ field }}/" style="display:inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input type="hidden" name="value" value="{{ result.aiResponse.details[field] }}">
+                <button type="submit" class="button is-small is-success is-light" hx-post="/admin/foodbank/{{ foodbank.slug }}/use-ai/{{ field }}/" hx-include="closest form" hx-swap="outerHTML">Use</button>
+              </form>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+
+      <h3 class="title is-5">Locations</h3>
+      <p><strong>Ours</strong></p>
+      <ul>
+        {% for loc in result.ourLocations %}
+        <li>{{ loc.name }} ({{ loc.postcode }}){% if loc.discrepancy %} <span class="tag is-warning is-light">not found</span>{% endif %}</li>
+        {% else %}
+        <li>None</li>
+        {% endfor %}
+      </ul>
+      <p><strong>Found</strong></p>
+      <ul>
+        {% for loc in result.foundLocations %}
+        <li>{{ loc.name }} ({{ loc.postcode }}){% if loc.discrepancy %} <span class="tag is-info is-light">new</span> <a href="/admin/foodbank/{{ foodbank.slug }}/location/new/?name={{ loc.name | urlencode }}" target="_blank" rel="noopener" class="button is-small is-light">Add</a>{% endif %}</li>
+        {% else %}
+        <li>None</li>
+        {% endfor %}
+      </ul>
+
+      <h3 class="title is-5">Donation Points</h3>
+      <p><strong>Ours</strong></p>
+      <ul>
+        {% for dp in result.ourDonationPoints %}
+        <li>{{ dp.name }} ({{ dp.postcode }}){% if dp.discrepancy %} <span class="tag is-warning is-light">not found</span>{% endif %}</li>
+        {% else %}
+        <li>None</li>
+        {% endfor %}
+      </ul>
+      <p><strong>Found</strong></p>
+      <ul>
+        {% for dp in result.foundDonationPoints %}
+        <li>{{ dp.name }} ({{ dp.postcode }}){% if dp.discrepancy %} <span class="tag is-info is-light">new</span> <a href="/admin/foodbank/{{ foodbank.slug }}/donationpoint/new/?name={{ dp.name | urlencode }}" target="_blank" rel="noopener" class="button is-small is-light">Add</a>{% endif %}</li>
+        {% else %}
+        <li>None</li>
+        {% endfor %}
+      </ul>
+    </div>
+
+    <div class="column is-half">
+      <h3 class="title is-5">Pages fetched</h3>
+      <div class="tabs is-boxed">
+        <ul role="tablist">
+          {% for page in result.fetchedPages %}
+          <li class="{% if loop.first %}is-active{% endif %}" role="presentation"><a data-tab="checkpage-{{ page.name }}" role="tab"><span>{{ page.name }}</span></a></li>
+          {% endfor %}
+        </ul>
+      </div>
+      {% for page in result.fetchedPages %}
+      <div class="column checkpage-{{ page.name }} tabcontent{% if not loop.first %} is-hidden{% endif %}">
+        {% if page.found %}
+          <iframe class="preview-frame" src="/admin/proxy/?foodbank={{ foodbank.slug }}&amp;field={{ page.proxyField }}" style="width:100%;height:800px;border:none;" loading="lazy"></iframe>
+        {% else %}
+          <p>Could not fetch {{ page.url }}</p>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+{% endif %}
+{% endblock %}
+
+{% block script %}
+<script src="/static/js/tabber.js?v={{ version }}" defer></script>
+{% endblock %}

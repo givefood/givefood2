@@ -19,6 +19,8 @@ import { adminParlconForm } from "./parlcon";
 import { adminFoodbankDetail, adminFoodbankTab, adminFoodbankTouch } from "./foodbankDetail";
 import { adminArticleToggleFeatured } from "./articles";
 import { adminCrawlSetJson } from "./crawlSet";
+import { adminFoodbankCheck, adminJobStatus } from "./foodbankCheck";
+import { adminFoodbankUseAiDetail } from "./useAi";
 import {
   adminFoodbanksList,
   adminFoodbanksCsv,
@@ -90,6 +92,11 @@ adminApp.post("/foodbank/:slug/edit/urls/", adminFoodbankUrlsEdit);
 adminApp.get("/foodbank/:slug/edit/:form/", adminFoodbankPartialEdit);
 adminApp.post("/foodbank/:slug/edit/:form/", adminFoodbankPartialEdit);
 
+// WP 6.8: enqueue-and-poll check flow.
+adminApp.get("/foodbank/:slug/check/", adminFoodbankCheck);
+adminApp.post("/foodbank/:slug/check/", adminFoodbankCheck);
+adminApp.post("/foodbank/:slug/use-ai/:field/", adminFoodbankUseAiDetail);
+
 adminApp.get("/foodbank/:slug/location/new/", adminFoodbankLocationForm);
 adminApp.post("/foodbank/:slug/location/new/", adminFoodbankLocationForm);
 adminApp.get("/foodbank/:slug/location/:locSlug/edit/", adminFoodbankLocationForm);
@@ -125,6 +132,10 @@ adminApp.post("/article/:id/toggle-featured/", adminArticleToggleFeatured);
 // separate literal text, so the id+suffix is captured together and split
 // in the handler instead.
 adminApp.get("/crawl-set/:idJson{[0-9]+\\.json}", adminCrawlSetJson);
+
+// WP 6.8 (PLAN.md §9.4.4): the generic admin_job poll endpoint -- kind-
+// agnostic, any enqueued job type polls through here.
+adminApp.get("/job/:id/", adminJobStatus);
 
 function enrichNeedRow(row: FoodbankChangeRow): FoodbankChangeRow & { input_method_emoji: string } {
   return { ...row, input_method_emoji: inputMethodEmoji(row.input_method) };

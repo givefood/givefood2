@@ -36,4 +36,5 @@ export interface Env {
   GMAP_GEOCODE_KEY: string;
   CF_API_KEY: string;
   CF_ZONE_ID: string;
+  GEMINI_API_KEY: string;
 }

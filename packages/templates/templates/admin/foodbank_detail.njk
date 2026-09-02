@@ -4,7 +4,7 @@
 
 {% block body %}
 <h1 class="title">{{ foodbank.name }}</h1>
-<p><a href="/admin/foodbank/{{ foodbank.slug }}/edit/">Edit</a></p>
+<p><a href="/admin/foodbank/{{ foodbank.slug }}/edit/">Edit</a> &middot; <a href="/admin/foodbank/{{ foodbank.slug }}/check/">Check</a></p>
 
 <form action="/admin/foodbank/{{ foodbank.slug }}/touch/" method="post" style="margin-top:10px">
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">

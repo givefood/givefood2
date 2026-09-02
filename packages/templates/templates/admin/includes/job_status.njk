@@ -1,0 +1,5 @@
+{# WP 6.8: htmx hx-trigger="every 2s" poll fragment -- foodbank_check.njk's own job-status div re-fetches this. Still queued/running: same shell, poll continues. Done/failed: the route sets HX-Redirect instead of rendering this, so this template only ever needs the two in-progress states. #}
+<div id="job-status" hx-get="/admin/job/{{ job.id }}/" hx-trigger="every 2s" hx-swap="outerHTML">
+  <div class="loading"><span class="loader"></span></div>
+  <p>{{ job.status }}&hellip;</p>
+</div>

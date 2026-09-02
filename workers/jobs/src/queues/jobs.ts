@@ -1,13 +1,14 @@
 import type { Env } from "../../worker-configuration";
 import { backfillMapImage, isMapImageKey } from "../mediaBackfill/mapImage";
 import { handleTranslateNeed, type TranslateNeedMessage } from "./translateNeed";
+import { handleFoodbankCheckJob } from "../adminJobs/foodbankCheck";
 
 // Consumer for the "jobs" queue (binding JOBS_Q) -- admin-triggered and
 // on-miss work, per PLAN.md §3.3's binding map: "article crawl,
 // notifications, photo backfill". This is the other end of the message
 // routes/media.ts sends when a media request misses R2, and (WP 6.4) the
 // other end of the admin's need_publish handler's translate enqueue.
-type JobMessage = { type: "media-backfill"; key: string } | TranslateNeedMessage | { type: string; [k: string]: unknown };
+type JobMessage = { type: "media-backfill"; key: string } | TranslateNeedMessage | { type: "foodbank-check"; jobId: string; foodbankSlug: string } | { type: string; [k: string]: unknown };
 
 export async function handleJobsQueue(batch: MessageBatch<JobMessage>, env: Env): Promise<void> {
   for (const message of batch.messages) {
@@ -27,6 +28,15 @@ async function dispatch(body: JobMessage, env: Env): Promise<void> {
       return handleMediaBackfill(body as { type: "media-backfill"; key: string }, env);
     case "translate-need":
       return handleTranslateNeed(body as TranslateNeedMessage, env);
+    case "foodbank-check": {
+      const msg = body as { type: "foodbank-check"; jobId: string; foodbankSlug: string };
+      // handleFoodbankCheckJob catches its own errors and records them on
+      // the admin_job row rather than throwing -- a failed AI check is a
+      // result the polling page shows, not something Cloudflare Queues
+      // should retry (a retry would just re-run the same paid Gemini
+      // call against the same failure).
+      return handleFoodbankCheckJob(env, msg.jobId, msg.foodbankSlug);
+    }
     default:
       throw new Error(`unknown job type: ${body.type}`);
   }

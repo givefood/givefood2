@@ -124,7 +124,16 @@
     "EW_CHARITY_KEY", "SCOT_CHARITY_KEY", "POSTMARK_TOKEN", "WHATSAPP_TOKEN",
     "FIREBASE_SERVICE_ACCOUNT", "VAPID_PRIVATE_KEY", "VAPID_PUBLIC_KEY",
     "VAPID_ADMIN_EMAIL", "GMAP_STATIC_KEY", "GMAP_PLACES_KEY", "GMAP_GEOCODE_KEY",
-    "CF_API_KEY", "CF_ZONE_ID"
+    "CF_API_KEY", "CF_ZONE_ID",
+    // WP 6.8: foodbank_check's Gemini call (queues/foodbankCheck.ts).
+    // givefood/utils/ai.py's gemini() reads a GfCredential named
+    // "gemini_api_key" -- same underlying secret, new binding name here,
+    // matching this file's existing NAME_LIKE_THIS convention. Not yet
+    // set on the real account (this Worker has no Workers Build project
+    // connected at all yet, per this file's own top comment) -- added
+    // here consistent with every other name in this list, all equally
+    // unverified until the Worker is actually deployed.
+    "GEMINI_API_KEY"
     ]
   },
 
