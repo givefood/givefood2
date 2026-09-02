@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { LOCALES } from "@givefood/templates";
 import type { AppEnv } from "./types";
-import { adminNoStore } from "./middleware/noStore";
+import { noStore } from "./middleware/noStore";
 import { serverTiming } from "./middleware/serverTiming";
 import { slugRedirect } from "./middleware/slugRedirect";
 import { resolveLanguage } from "./middleware/resolveLanguage";
@@ -119,10 +119,14 @@ app.use("*", geoJsonPreload); // was GeoJSONPreload (runs after routing)
 // Four patterns, not one: Hono matches "/admin/*" against the SUBPATHS only,
 // so the bare mount points "/admin" and "/auth" need their own entries or the
 // dashboard itself goes uncovered.
-app.use("/admin", adminNoStore);
-app.use("/admin/*", adminNoStore);
-app.use("/auth", adminNoStore);
-app.use("/auth/*", adminNoStore);
+app.use("/admin", noStore);
+app.use("/admin/*", noStore);
+app.use("/auth", noStore);
+app.use("/auth/*", noStore);
+// Same root cause, public routes: two GET endpoints that mutate and one that
+// echoes a visitor's own email address. See middleware/noStore.ts.
+app.use("/needs/at/*/updates/*", noStore);
+app.use("/write/to/*/email/done/*", noStore);
 
 // Media routes are registered at givefood/urls.py:14 -> gfwfbn/urls/generic.py,
 // OUTSIDE i18n_patterns -- one URL each, never language-prefixed. This is
