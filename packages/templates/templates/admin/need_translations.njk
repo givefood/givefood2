@@ -7,13 +7,15 @@
   <div class="column">
     <dl>
       <dt>ID</dt>
-      <dd><a href="/admin/need/{{ need.need_id }}/">{{ need.need_id }}</a></dd>
+      <dd><a href="/admin/need/{{ need.need_id }}/">{{ need.need_id_short }}</a></dd>
       <dt>Food Bank</dt>
-      <dd>{{ need.foodbank_name or "Unknown" }}</dd>
+      <dd>{% if foodbank_slug %}<a href="/admin/foodbank/{{ foodbank_slug }}/">{{ need.foodbank_name }}</a>{% else %}{{ need.foodbank_name or "Unknown" }}{% endif %}</dd>
       <dt>Input Method</dt>
-      <dd>{{ need.input_method_human }}</dd>
+      <dd>{{ need.input_method_emoji }} {{ need.input_method_human }}</dd>
       <dt>Created</dt>
-      <dd><time datetime="{{ need.created }}">{{ need.created }}</time></dd>
+      <dd><time datetime="{{ need.created }}" title="{{ need.created }}">{{ need.created_timesince }}</time></dd>
+      <dt>Modified</dt>
+      <dd><time datetime="{{ need.modified }}" title="{{ need.modified }}">{{ need.modified_timesince }}</time></dd>
     </dl>
   </div>
 

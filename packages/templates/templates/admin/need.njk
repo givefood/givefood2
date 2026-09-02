@@ -8,15 +8,15 @@
   <div class="column">
     <dl>
       <dt>ID</dt>
-      <dd>{{ need.need_id }}</dd>
+      <dd>{{ need.need_id_short }}</dd>
       <dt>Food Bank</dt>
-      <dd>{{ need.foodbank_name or "Unknown" }}</dd>
+      <dd>{% if foodbank_slug %}<a href="/admin/foodbank/{{ foodbank_slug }}/">{{ need.foodbank_name }}</a>{% else %}{{ need.foodbank_name or "Unknown" }}{% endif %}</dd>
       <dt>Input Method</dt>
-      <dd>{{ need.input_method_human }}</dd>
+      <dd>{{ need.input_method_emoji }} {{ need.input_method_human }}</dd>
       <dt>Created</dt>
-      <dd><time datetime="{{ need.created }}">{{ need.created }}</time></dd>
+      <dd><time datetime="{{ need.created }}" title="{{ need.created }}">{{ need.created_timesince }}</time></dd>
       <dt>Modified</dt>
-      <dd><time datetime="{{ need.modified }}">{{ need.modified }}</time></dd>
+      <dd><time datetime="{{ need.modified }}" title="{{ need.modified }}">{{ need.modified_timesince }}</time></dd>
       {% if need.uri %}
         <dt>URL</dt>
         <dd><a href="{{ need.uri }}">{{ need.uri | truncatechars(35) }}</a></dd>
@@ -36,7 +36,9 @@
 
     {% if crawl_set %}
       <h3>Crawl Set</h3>
-      <time datetime="{{ crawl_set.start }}">{{ crawl_set.start }}</time> ({{ crawl_set.crawl_type }})
+      <time datetime="{{ crawl_set.start }}" title="{{ crawl_set.start }}">{{ crawl_set.start_timesince }}</time>
+      <br>
+      <a href="/admin/crawl-set/{{ crawl_set.crawl_set_id }}.json">{{ crawl_set.start }}</a>
     {% endif %}
 
     {% if prev_published or prev_nonpert %}
@@ -45,15 +47,15 @@
         {% if prev_published %}
           <dt>Published</dt>
           <dd>
-            <time datetime="{{ prev_published.created }}">{{ prev_published.created }}</time>
-            <br><a href="/admin/need/{{ prev_published.need_id }}/">{{ prev_published.need_id }}</a>
+            <time datetime="{{ prev_published.created }}" title="{{ prev_published.created }}">{{ prev_published.created_timesince }}</time>
+            <br><a href="/admin/need/{{ prev_published.need_id }}/">{{ prev_published.need_id_short }}</a>
           </dd>
         {% endif %}
         {% if prev_nonpert %}
           <dt>Non Pertinent</dt>
           <dd>
-            <time datetime="{{ prev_nonpert.created }}">{{ prev_nonpert.created }}</time>
-            <br><a href="/admin/need/{{ prev_nonpert.need_id }}/">{{ prev_nonpert.need_id }}</a>
+            <time datetime="{{ prev_nonpert.created }}" title="{{ prev_nonpert.created }}">{{ prev_nonpert.created_timesince }}</time>
+            <br><a href="/admin/need/{{ prev_nonpert.need_id }}/">{{ prev_nonpert.need_id_short }}</a>
           </dd>
         {% endif %}
       </dl>
@@ -61,6 +63,11 @@
 
     <h3>Workflow</h3>
     <table class="table is-fullwidth">
+      <tr>
+        <td></td>
+        <td>Edit</td>
+        <td><a href="/admin/need/{{ need.need_id }}/edit/" class="button is-link is-pulled-right is-small is-light">Edit</a></td>
+      </tr>
       <tr>
         <td>{% if need.published %}<span style="color:green">&check;</span>{% else %}<span style="color:red">&times;</span>{% endif %}</td>
         <td>Publish</td>

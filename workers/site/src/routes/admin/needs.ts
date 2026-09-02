@@ -25,7 +25,8 @@ import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
 import { verifyCsrf } from "../../lib/csrf";
 import { diffHtml } from "../../lib/needDiff";
-import { inputMethodHuman } from "../../lib/needAdminDisplay";
+import { inputMethodHuman, inputMethodEmoji } from "../../lib/needAdminDisplay";
+import { timesince } from "../../lib/timesince";
 import { adminPageContext } from "./pageContext";
 
 const TRANSLATE_LANGUAGES = ["cy", "ga", "gd"] as const;
@@ -53,20 +54,28 @@ export async function adminNeedDetail(c: Context<AppEnv>): Promise<Response> {
   // "bankthefood.org" not in need.uri` gate -- neither source can be
   // framed/isn't worth proxying.
   const showProxy = !!foodbankSlug && !!need.uri && !need.uri.includes("facebook.com") && !need.uri.includes("bankthefood.org");
+  const now = new Date();
 
   const html = await render("admin/need.njk", {
     ...(await adminPageContext(c, "needs")),
-    need: { ...need, input_method_human: inputMethodHuman(need.input_method) },
+    need: {
+      ...need,
+      need_id_short: need.need_id.slice(0, 7),
+      input_method_human: inputMethodHuman(need.input_method),
+      input_method_emoji: inputMethodEmoji(need.input_method),
+      created_timesince: `${timesince(need.created, now)} ago`,
+      modified_timesince: `${timesince(need.modified, now)} ago`,
+    },
     foodbank_slug: foodbankSlug,
-    prev_published: prevPublished,
-    prev_nonpert: prevNonpert,
+    prev_published: prevPublished ? { ...prevPublished, need_id_short: prevPublished.need_id.slice(0, 7), created_timesince: `${timesince(prevPublished.created, now)} ago` } : null,
+    prev_nonpert: prevNonpert ? { ...prevNonpert, need_id_short: prevNonpert.need_id.slice(0, 7), created_timesince: `${timesince(prevNonpert.created, now)} ago` } : null,
     diff_from_pub: prevPublished ? diffHtml(prevPublished.change_text.split("\n"), changeList) : "",
     diff_from_pub_excess: prevPublished ? diffHtml(prevPublished.excess_change_text ? prevPublished.excess_change_text.split("\n") : [], excessList) : "",
     diff_from_nonpert: prevNonpert ? diffHtml(prevNonpert.change_text.split("\n"), changeList) : "",
     diff_from_nonpert_excess: prevNonpert ? diffHtml(prevNonpert.excess_change_text ? prevNonpert.excess_change_text.split("\n") : [], excessList) : "",
     subscriber_counts: subscriberCounts,
     subscriber_count: subscriberCounts.email + subscriberCounts.webpush + subscriberCounts.mobile + subscriberCounts.whatsapp,
-    crawl_set: crawlSet,
+    crawl_set: crawlSet ? { ...crawlSet, start_timesince: `${timesince(crawlSet.start, now)} ago` } : null,
     translation_count: translationCount,
     show_proxy: showProxy,
   });
@@ -220,10 +229,22 @@ export async function adminNeedTranslations(c: Context<AppEnv>): Promise<Respons
   const need = await getNeedByUuid(db, c.req.param("id")!);
   if (!need) return c.notFound();
 
-  const translations = await getAllTranslationsForNeed(db, need.id);
+  const [translations, foodbankSlug] = await Promise.all([
+    getAllTranslationsForNeed(db, need.id),
+    need.foodbank_id !== null ? getFoodbankSlugById(db, need.foodbank_id) : Promise.resolve(null),
+  ]);
+  const now = new Date();
   const html = await render("admin/need_translations.njk", {
     ...(await adminPageContext(c, "needs")),
-    need: { ...need, input_method_human: inputMethodHuman(need.input_method) },
+    need: {
+      ...need,
+      need_id_short: need.need_id.slice(0, 7),
+      input_method_human: inputMethodHuman(need.input_method),
+      input_method_emoji: inputMethodEmoji(need.input_method),
+      created_timesince: `${timesince(need.created, now)} ago`,
+      modified_timesince: `${timesince(need.modified, now)} ago`,
+    },
+    foodbank_slug: foodbankSlug,
     translations,
   });
   return c.html(html);
