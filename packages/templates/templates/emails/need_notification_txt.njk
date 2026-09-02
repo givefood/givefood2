@@ -1,0 +1,42 @@
+{# gfwfbn/templates/wfbn/emails/notification.txt -- the plain-text half of
+   the subscriber need-notification email, served by
+   GET /admin/need/:id/email/ (any format other than the exact string
+   "html"), and by the send path when that lands.
+
+   WRAPPED IN {% autoescape false %}. This package's Environment sets
+   autoescape: true globally (src/env.ts:45), which would ship "Tea &amp;
+   Coffee" into a plain-text body. Django escapes here too, which is why
+   the original writes |safe on full_name; switching the whole file off is
+   the equivalent, and covers change_text and the item loop as well.
+
+   Byte-faithful to the original, INCLUDING:
+     * the blank lines the {% if %}/{% for %} tags leave behind (Django
+       does not trim block newlines and neither does nunjucks by default),
+     * "http://" -- not https -- on the unsubscribe link (line 21),
+     * NO utm params anywhere (the TXT original has none, unlike the HTML),
+     * NO article published_date (the TXT original omits it),
+     * the single trailing space and absent final newline at end of file.
+   This body is in 5,855 already-delivered inboxes; do not tidy it.
+
+   `{% if articles.length %}`, not `{% if articles %}`: an empty JS array
+   is truthy in nunjucks, an empty Django queryset is not. #}{% autoescape false %}We've found a new list of items requested by {{ full_name }}. They are...
+
+{{ change_text }}{% if has_excess %}
+
+{{ full_name }} currently doesn't need anymore of these items: {% for item in excess_list %}{{ item }}{% if not loop.last %}, {% endif %}{% endfor %}.{% endif %}
+
+{% if articles.length %}
+News from {{ full_name }}...
+{% for article in articles %}
+{{ article.title_captialised }}
+{{ article.url_with_ref }}
+{% endfor %}
+{% endif %}
+You can find more details at https://www.givefood.org.uk/needs/at/{{ foodbank_slug }}/
+
+{% if show_donation_points %}🛒 Find donation points https://www.givefood.org.uk/needs/at/{{ foodbank_slug }}/donationpoints/{% endif %}
+🗺️ See other nearby food banks https://www.givefood.org.uk/needs/at/{{ foodbank_slug }}/nearby/
+
+Download our app to get notifications when you are at a donation point https://www.givefood.org.uk/apps/
+
+You're getting these emails because you subscribed to them at www.givefood.org.uk on {{ subscriber_created_date }} at {{ subscriber_created_time }}. To unsubscribe visit http://www.givefood.org.uk/needs/at/{{ foodbank_slug }}/updates/unsubscribe/?key={{ unsub_key }} {% endautoescape %}

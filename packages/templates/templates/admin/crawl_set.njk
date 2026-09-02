@@ -1,0 +1,171 @@
+{% extends "admin/page.njk" %}
+
+{% block title %}Crawl Set{% endblock %}
+
+{% block body %}
+<h1 class="title">Crawl Set</h1>
+
+<div class="columns">
+  <div class="column">
+
+    <dl>
+      <dt>Crawl Type</dt>
+      <dd>{{ crawl_set.crawl_type_icon | safe }} {{ crawl_set.crawl_type }}</dd>
+      <dt>Start</dt>
+      <dd>{{ crawl_set.start|date("N j, Y, P") }}</dd>
+      <dt>Finish</dt>
+      <dd id="crawl-set-finish">
+        {% if crawl_set.finish %}{{ crawl_set.finish|date("N j, Y, P") }}{% else %}<span style="color:red;">Unfinished</span>{% endif %}
+      </dd>
+      {% if crawl_set.finish %}
+      <dt id="crawl-set-time-taken-dt">Time Taken</dt>
+      <dd id="crawl-set-time-taken">{{ crawl_set.time_taken }}</dd>
+      {% else %}
+      <dt id="crawl-set-time-taken-dt" style="display:none;">Time Taken</dt>
+      <dd id="crawl-set-time-taken" style="display:none;">&nbsp;</dd>
+      {% endif %}
+      <dt>Items</dt>
+      <dd id="crawl-set-item-count">{{ crawl_set.item_count }}</dd>
+      <dt>Objects</dt>
+      <dd id="crawl-set-object-count">{{ crawl_set.object_count }}</dd>
+    </dl>
+
+    <br>
+
+    <table class="table is-fullwidth is-hoverable">
+      <thead>
+        <tr>
+          <th>Foodbank</th>
+          <th>Start</th>
+          <th>Finish</th>
+          <th>Time Taken</th>
+          <th>URL</th>
+          <th>Object</th>
+        </tr>
+      </thead>
+      <tbody id="crawl-items-tbody">
+        {% for item in crawl_items %}
+        <tr>
+          <td><a href="/admin/foodbank/{{ item.foodbank_slug }}/">{{ item.foodbank_name }}</a></td>
+          <td>{{ item.start|date("N j, Y, P") }}</td>
+          <td>{% if item.finish %}{{ item.finish|date("N j, Y, P") }}{% else %}<span style="color:red;">Unfinished</span>{% endif %}</td>
+          <td>{% if item.time_taken_ms != null %}{{ item.time_taken_ms }} ms{% endif %}</td>
+          <td>{% if item.url %}<a href="{{ item.url }}" target="_blank" rel="noopener">{{ item.url | truncatechars(30) }}</a>{% endif %}</td>
+          <td>
+            {% if item.object %}
+              {% if item.object.status == "deleted" %}
+                <span style="color:red;">Deleted</span>
+              {% else %}
+                <a href="{{ item.object.url }}">{{ item.object.need_id_short }}</a><br>
+                {% if item.object.nonpertinent %}Nonpertinent{% endif %}
+                {% if item.object.published %}<span style="color:darkgreen;">&#10003; Published</span>{% endif %}
+              {% endif %}
+            {% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6">None</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+  </div>
+</div>
+{% endblock %}
+
+{% block script %}
+{% if not crawl_set.finish %}
+{# Ported from crawl_set.html's own inline poll loop. The JSON endpoint it
+   polls (/admin/crawl-set/<id>.json) already existed -- WP 6.7 built it
+   standalone precisely because this page was deferred. Kept as plain
+   setInterval + fetch rather than rewritten onto htmx, matching Django, since
+   the endpoint returns JSON (not an HTML fragment htmx could swap). #}
+<script>
+  var pollInterval = setInterval(function() {
+    fetch("/admin/crawl-set/{{ crawl_set.id }}.json")
+      .then(function(response) { return response.json(); })
+      .then(function(data) {
+
+        document.getElementById("crawl-set-item-count").textContent = data.item_count;
+        document.getElementById("crawl-set-object-count").textContent = data.object_count;
+
+        if (data.finish) {
+          document.getElementById("crawl-set-finish").textContent = data.finish;
+          document.getElementById("crawl-set-time-taken").textContent = data.time_taken;
+          document.getElementById("crawl-set-time-taken-dt").style.display = "";
+          document.getElementById("crawl-set-time-taken").style.display = "";
+          clearInterval(pollInterval);
+        }
+
+        var tbody = document.getElementById("crawl-items-tbody");
+        tbody.innerHTML = "";
+        for (var i = 0; i < data.items.length; i++) {
+          var item = data.items[i];
+          var tr = document.createElement("tr");
+
+          var tdFoodbank = document.createElement("td");
+          var a = document.createElement("a");
+          a.href = "/admin/foodbank/" + item.foodbank_slug + "/";
+          a.textContent = item.foodbank_name;
+          tdFoodbank.appendChild(a);
+          tr.appendChild(tdFoodbank);
+
+          var tdStart = document.createElement("td");
+          tdStart.textContent = item.start;
+          tr.appendChild(tdStart);
+
+          var tdFinish = document.createElement("td");
+          if (item.finish) {
+            tdFinish.textContent = item.finish;
+          } else {
+            tdFinish.innerHTML = '<span style="color:red;">Unfinished</span>';
+          }
+          tr.appendChild(tdFinish);
+
+          var tdTimeTaken = document.createElement("td");
+          if (item.time_taken_ms !== null) {
+            tdTimeTaken.textContent = item.time_taken_ms + " ms";
+          }
+          tr.appendChild(tdTimeTaken);
+
+          var tdUrl = document.createElement("td");
+          if (item.url) {
+            var urlLink = document.createElement("a");
+            urlLink.href = item.url;
+            urlLink.target = "_blank";
+            urlLink.textContent = item.url.length > 30 ? item.url.substring(0, 27) + "..." : item.url;
+            tdUrl.appendChild(urlLink);
+          }
+          tr.appendChild(tdUrl);
+
+          var tdObject = document.createElement("td");
+          if (item.object) {
+            if (item.object.status === "deleted") {
+              tdObject.innerHTML = '<span style="color:red;">Deleted</span>';
+            } else {
+              var objLink = document.createElement("a");
+              objLink.href = item.object.url;
+              objLink.textContent = item.object.need_id_short;
+              tdObject.appendChild(objLink);
+              if (item.object.nonpertinent) {
+                tdObject.appendChild(document.createElement("br"));
+                tdObject.appendChild(document.createTextNode("Nonpertinent"));
+              }
+              if (item.object.published) {
+                tdObject.appendChild(document.createElement("br"));
+                var pub = document.createElement("span");
+                pub.style.color = "darkgreen";
+                pub.textContent = "✓ Published";
+                tdObject.appendChild(pub);
+              }
+            }
+          }
+          tr.appendChild(tdObject);
+
+          tbody.appendChild(tr);
+        }
+      });
+  }, 2000);
+</script>
+{% endif %}
+{% endblock %}

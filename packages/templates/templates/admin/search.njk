@@ -1,0 +1,159 @@
+{% extends "admin/page.njk" %}
+
+{% block title %}Search{% endblock %}
+
+{% block body %}
+
+  {# gfadmin/templates/admin/search.html:7-22 -- the in-page form, in
+     addition to the navbar one, pre-filled with the current query. #}
+  <div class="columns">
+    <div class="column">
+      <form action="/admin/search/" method="get" role="search" aria-label="Search">
+        <div class="field has-addons">
+          <div class="control">
+            <input class="input" type="text" name="q" value="{{ q }}" aria-label="Search query" autofocus>
+          </div>
+          <div class="control">
+            <button class="button is-info is-light">Search</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  {# search.html:24 -- every result group is a sibling .column inside ONE
+     columns row, so up to six render side by side. Not is-multiline, same
+     as Django. #}
+  <div class="columns">
+
+    {% if not searched %}
+      {# Django 500s on a bare /admin/search/ and dumps ~600 arbitrary rows
+         on `?q=` -- see routes/admin/search.ts for both. Neither happens
+         here; this prompt does. #}
+      <div class="column"><p>Search food banks, locations, donation points, constituencies, need text and subscriptions.</p></div>
+    {% elif too_short %}
+      <div class="column"><p>Search for at least {{ min_query_length }} characters.</p></div>
+    {% elif too_long %}
+      {# D1 caps LIKE patterns at 50 bytes (PLAN.md line 10198) -- an
+         over-long query would throw rather than return nothing. #}
+      <div class="column"><p>That search is too long, try something shorter.</p></div>
+    {% elif results.total == 0 %}
+      {# search.html:26-30, copied verbatim. #}
+      <div class="column"><p>No results, have another go</p></div>
+    {% endif %}
+
+    {% if results.foodbanks.length %}
+      {# search.html:32-44. The plain <h2> and unclassed <ul>/<li> are
+         Django's own markup, kept. The closed tag is NOT Django's: its
+         search returns closed food banks with nothing to distinguish them
+         from open ones, and the same indicator already exists on
+         foodbank_detail.njk:8. #}
+      <div class="column">
+        <h2>Food Banks</h2>
+        <ul>
+          {% for foodbank in results.foodbanks %}
+            <li>
+              <a href="/admin/foodbank/{{ foodbank.slug }}/">{{ foodbank.name }}</a>{% if foodbank.is_closed %} <span class="tag is-danger">Closed</span>{% endif %}
+              <a href="/admin/foodbank/{{ foodbank.slug }}/edit/" class="button is-light is-small">Edit</a>
+            </li>
+          {% endfor %}
+        </ul>
+      </div>
+    {% endif %}
+
+    {% if results.locations.length %}
+      {# search.html:46-58. The first link goes to the PARENT food bank's
+         detail page, not to the location -- Django's own choice, kept. #}
+      <div class="column">
+        <h2>Locations</h2>
+        <ul>
+          {% for location in results.locations %}
+            <li>
+              <a href="/admin/foodbank/{{ location.foodbank_slug }}/">{{ location.name }}</a> ({{ location.foodbank_name }}){% if location.is_closed %} <span class="tag is-danger">Closed</span>{% endif %}
+              <a href="/admin/foodbank/{{ location.foodbank_slug }}/location/{{ location.slug }}/edit/" class="button is-light is-small">Edit</a>
+            </li>
+          {% endfor %}
+        </ul>
+      </div>
+    {% endif %}
+
+    {% if results.donationpoints.length %}
+      {# search.html:60-72. The #donationpoints fragment deep-links the
+         detail page's donation points tab -- foodbank_detail.njk:21 has the
+         matching data-tab and tabber.js's opendeeplinkedtab() opens it on
+         load. Kept verbatim. #}
+      <div class="column">
+        <h2>Donation Points</h2>
+        <ul>
+          {% for donationpoint in results.donationpoints %}
+            <li>
+              <a href="/admin/foodbank/{{ donationpoint.foodbank_slug }}/#donationpoints">{{ donationpoint.name }}</a> ({{ donationpoint.foodbank_name }}){% if donationpoint.is_closed %} <span class="tag is-danger">Closed</span>{% endif %}
+              <a href="/admin/foodbank/{{ donationpoint.foodbank_slug }}/donationpoint/{{ donationpoint.slug }}/edit/" class="button is-light is-small">Edit</a>
+            </li>
+          {% endfor %}
+        </ul>
+      </div>
+    {% endif %}
+
+    {% if results.constituencies.length %}
+      {# search.html:74-83. No Edit button -- the link IS the edit form. The
+         MP is searched but never displayed, same as Django. `name` is
+         nullable (0001_core.sql:131) and a row can match on `mp` alone, so
+         the slug stands in rather than rendering an empty, unclickable
+         link -- Django's own `{{ constituency }}` would raise TypeError
+         here, __str__ returning None. #}
+      <div class="column">
+        <h2>Constituencies</h2>
+        <ul>
+          {% for constituency in results.constituencies %}
+            <li><a href="/admin/parlcon/{{ constituency.slug }}/edit/">{{ constituency.name or constituency.slug }}</a></li>
+          {% endfor %}
+        </ul>
+      </div>
+    {% endif %}
+
+    {% if results.needs.length %}
+      {# search.html:85-94. Django orders these by -created but displays
+         `modified`; both kept. The comma between name and date is literal
+         text in Django's template, not markup. #}
+      <div class="column">
+        <h2>Needs</h2>
+        <ul>
+          {% for need in results.needs %}
+            <li><a href="/admin/need/{{ need.need_id }}/">{{ need.need_id_short }}</a> {{ need.foodbank_name }}, {{ need.modified|date("N j, Y, P") }}</li>
+          {% endfor %}
+        </ul>
+      </div>
+    {% endif %}
+
+    {% if results.subscriptions.length %}
+      {# search.html:96-114 -- a table, not a list, and with no <thead>/
+         <tbody>: the header <tr> is a direct child of <table> in Django's
+         markup. No Created column and no Delete action here, unlike
+         /admin/subscriptions/. The inline white-space:nowrap keeps each
+         icon on the same line as its word. Django's icon markup arrives
+         through `|safe`; here the template builds the <span> from a
+         whitelisted name instead, so nothing on this page bypasses
+         autoescaping. #}
+      <div class="column">
+        <h2>Subscriptions</h2>
+        <table class="table is-fullwidth is-hoverable">
+          <tr>
+            <th>Type</th>
+            <th>Identifier</th>
+            <th>Foodbank</th>
+          </tr>
+          {% for subscription in results.subscriptions %}
+            <tr>
+              <td style="white-space:nowrap"><span class="mdi mdi-{{ subscription.icon }}"></span> {{ subscription.type|django_title }}</td>
+              <td>{{ subscription.identifier }}</td>
+              <td><a href="/admin/foodbank/{{ subscription.foodbank_slug }}/">{{ subscription.foodbank_name }}</a></td>
+            </tr>
+          {% endfor %}
+        </table>
+      </div>
+    {% endif %}
+
+  </div>
+
+{% endblock %}

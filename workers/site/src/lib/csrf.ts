@@ -42,6 +42,34 @@ export async function issueCsrfToken(c: Context<AppEnv>, secret: string | undefi
     console.log("CSRF_SECRET not set -- issuing no token (every mutating submission will be rejected)");
     return "";
   }
+
+  // REUSE a still-valid cookie rather than minting on every render. Minting
+  // unconditionally was a real bug, not just churn: the cookie name and path
+  // are constant, so each render REPLACED the previous cookie, and
+  // verifyCsrf() below requires the submitted field to equal the cookie's raw
+  // token exactly. That meant only the most recently rendered admin page
+  // could ever submit -- open a food bank in a second tab, go back to the
+  // first, press Save, get a 403. Every admin page calls this (via
+  // adminPageContext), so any two-tab workflow broke, as did submitting a
+  // form left open while an htmx tab-load refreshed the cookie underneath it.
+  //
+  // Reusing costs nothing in strength: the signature still proves the server
+  // minted the token, and the double-submit still binds the form to the
+  // cookie. It is also what Django's own CsrfViewMiddleware does -- one
+  // stable token per session, rotated on login, not per response.
+  const existing = parseCookie(c.req.header("Cookie"), COOKIE_NAME);
+  if (existing) {
+    const dot = existing.indexOf(".");
+    if (dot !== -1) {
+      const existingRaw = existing.slice(0, dot);
+      const expected = await hmacSha256Hex(secret, existingRaw);
+      // Signature must verify -- an attacker-planted cookie from a sibling
+      // subdomain must not be adopted and echoed back into the page as a
+      // valid-looking field.
+      if (timingSafeEqual(existing.slice(dot + 1), expected)) return existingRaw;
+    }
+  }
+
   const raw = randomHex(RAW_TOKEN_BYTES);
   const signature = await hmacSha256Hex(secret, raw);
   // __Host- requires Secure + Path=/ + no Domain attribute (browser-enforced).

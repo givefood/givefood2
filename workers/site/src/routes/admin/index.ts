@@ -10,6 +10,8 @@ import { inputMethodEmoji } from "../../lib/needAdminDisplay";
 import { timesince } from "../../lib/timesince";
 import { adminPageContext } from "./pageContext";
 import { adminProxy } from "./proxy";
+import { adminGmapProxy } from "./gmapProxy";
+import { adminSettings } from "./settings";
 import { adminNeedDetail, adminNeedPublish, adminNeedUnpublish, adminNeedNonpertinent, adminNeedDelete, adminNeedsDeleteAll, adminNeedCategorise, adminNeedTranslations, adminNeedEditForm } from "./needs";
 import { adminDiscrepancyDetail, adminDiscrepancyAction } from "./discrepancies";
 import { adminFoodbankEdit, adminFoodbankPoliticsEdit, adminFoodbankPartialEdit, adminFoodbankNew, adminFoodbankDelete } from "./foodbank";
@@ -21,11 +23,26 @@ import { adminParlconForm } from "./parlcon";
 import { adminFoodbankDetail, adminFoodbankTab, adminFoodbankTouch } from "./foodbankDetail";
 import { adminArticleToggleFeatured } from "./articles";
 import { adminCrawlSetJson } from "./crawlSet";
+import { adminCrawlSetsList, adminCrawlSetDetail } from "./crawlSets";
 import { adminFoodbankCheck, adminJobStatus } from "./foodbankCheck";
 import { adminFoodbankUseAiDetail } from "./useAi";
 import { adminQueryConsole } from "./query";
 import { adminFoodbankForceCheck, adminFoodbankForceArticleCrawl, adminFoodbankForceCharityCrawl } from "./foodbankForceCrawl";
 import { adminOrderDetail } from "./order";
+import { adminSearch } from "./search";
+import { adminQuarterStats, adminEditStats, adminOrderStats, adminSubscriberStats, adminSubscriberGraph, adminNeedStats } from "./stats";
+import { adminItemsList, adminItemForm } from "./items";
+import { adminOrderGroupsList, adminOrderGroupDetail, adminOrderGroupForm } from "./orderGroup";
+import { adminSlugRedirectsList, adminSlugRedirectForm, adminSlugRedirectsResync } from "./slugRedirect";
+import { adminMap } from "./map";
+import { adminClearCache } from "./clearCache";
+import { adminOrderForm } from "./orderForm";
+import { adminOrderSendNotification, adminOrderEmailPreview, adminOrderDelete } from "./orderActions";
+import { adminNeedNew } from "./needNew";
+import { adminNeedEmail } from "./needEmail";
+import { adminFoodbanksDupePostcodes } from "./dupePostcodes";
+import { adminFoodbankAddSub } from "./foodbankAddSub";
+import { adminPhotoDelete } from "./photoDelete";
 import {
   adminFoodbanksList,
   adminFoodbanksCsv,
@@ -41,6 +58,7 @@ import {
   adminSubscriptionsList,
   adminDeleteSubscription,
   adminFoodbanksWithoutNeedList,
+  adminNeedsList,
 } from "./lists";
 
 // gfadmin (WP 6.1/6.2 scaffolding only -- the real index page, need-review
@@ -64,7 +82,23 @@ export const adminApp = new Hono<AppEnv>();
 
 adminApp.use("*", requireAdminAuth);
 adminApp.get("/proxy/", adminProxy);
+// gfadmin/urls/core.py's re_path(r'^proxy/gmaps/(textsearch|placedetails)/$')
+// -- the CORS shim admin.js's lookup buttons call. adminGmapProxy 404s any
+// other :type, so the union is enforced in the handler rather than the route.
+adminApp.get("/proxy/gmaps/:type/", adminGmapProxy);
+adminApp.get("/settings/", adminSettings);
 
+// gfadmin/urls/needs.py:10 need_form. MUST precede /need/:id/ below: Hono
+// matches in registration order, so a later literal route loses to an earlier
+// param one and /need/new/ would resolve as need id "new" (a 404). Django is
+// insulated from this because its own /need/<uuid:id>/ converter rejects
+// "new"; Hono's :id matches anything. Registered with and without the
+// trailing slash because Django's URL uniquely omits it there, so both
+// spellings are in circulation.
+adminApp.get("/need/new/", adminNeedNew);
+adminApp.post("/need/new/", adminNeedNew);
+adminApp.get("/need/new", adminNeedNew);
+adminApp.post("/need/new", adminNeedNew);
 adminApp.get("/need/:id/", adminNeedDetail);
 adminApp.post("/need/:id/publish/", adminNeedPublish);
 adminApp.post("/need/:id/unpublish/", adminNeedUnpublish);
@@ -136,6 +170,10 @@ adminApp.get("/politics/", adminParlconsList);
 adminApp.get("/politics/csv/", adminParlconsCsv);
 
 adminApp.get("/orders/", adminOrdersList);
+// Same ordering rule as /need/new/ above -- the literal must come first or
+// /order/new/ resolves as order id "new".
+adminApp.get("/order/new/", adminOrderForm);
+adminApp.post("/order/new/", adminOrderForm);
 adminApp.get("/order/:orderId/", adminOrderDetail);
 adminApp.get("/orders/csv/", adminOrdersCsv);
 
@@ -147,6 +185,9 @@ adminApp.get("/places/", adminPlacesList);
 adminApp.get("/subscriptions/", adminSubscriptionsList);
 adminApp.post("/subscriptions/delete/", adminDeleteSubscription);
 adminApp.get("/foodbanks/without_need/", adminFoodbanksWithoutNeedList);
+adminApp.get("/needs/", adminNeedsList);
+adminApp.get("/crawl-sets/", adminCrawlSetsList);
+adminApp.get("/crawl-set/:id{[0-9]+}/", adminCrawlSetDetail);
 
 // WP 6.10 (PLAN.md §8.13.1 Tier 3): the guarded query console -- the
 // direct replacement for `manage.py shell` against live data. GET renders
@@ -155,6 +196,77 @@ adminApp.get("/foodbanks/without_need/", adminFoodbanksWithoutNeedList);
 // SQL never lands in access logs).
 adminApp.get("/query/", adminQueryConsole);
 adminApp.post("/query/", adminQueryConsole);
+
+
+// ---------------------------------------------------------------------
+// gfadmin URLs that had no port at all until this fidelity pass.
+// Grouped by the Django urls/ submodule each came from.
+// ---------------------------------------------------------------------
+
+// urls/core.py:15 search_results -- the navbar search box on every admin
+// page (admin/page.njk). GET only, no mutation, no CSRF.
+adminApp.get("/search/", adminSearch);
+// urls/core.py:13 admin_map -- MapLibre against the existing public
+// /needs/geo.json; no Google key of any kind (see routes/admin/map.ts).
+adminApp.get("/map/", adminMap);
+// urls/core.py:17 clearcache. POST-only here, unlike Django's plain <a href>
+// GET -- a cache purge is a mutation and a prefetch shouldn't trigger one.
+adminApp.post("/clearcache/", adminClearCache);
+
+// urls/core.py:8-10 slug_redirects / slug_redirect_new / slug_redirect_form,
+// plus one port-only route: the manual D1 -> KV blob rebuild. The literal
+// /slug-redirect/new/ must precede /slug-redirect/:id/edit/ (Hono matches in
+// registration order), same shape as the parlcon/location blocks above.
+adminApp.get("/slug-redirects/", adminSlugRedirectsList);
+adminApp.post("/slug-redirects/resync/", adminSlugRedirectsResync);
+adminApp.get("/slug-redirect/new/", adminSlugRedirectForm);
+adminApp.post("/slug-redirect/new/", adminSlugRedirectForm);
+adminApp.get("/slug-redirect/:id/edit/", adminSlugRedirectForm);
+adminApp.post("/slug-redirect/:id/edit/", adminSlugRedirectForm);
+
+// urls/stats.py:6-11 -- all six are read-only GETs, reached only from
+// /admin/settings/.
+adminApp.get("/stats/quarter/", adminQuarterStats);
+adminApp.get("/stats/orders/", adminOrderStats);
+adminApp.get("/stats/editing/", adminEditStats);
+adminApp.get("/stats/subscribers/", adminSubscriberStats);
+adminApp.get("/stats/subscribers/graph/", adminSubscriberGraph);
+adminApp.get("/stats/needs/", adminNeedStats);
+
+// urls/items.py -- the OrderItem list plus the shared new/edit form.
+// No delete route: Django has none.
+adminApp.get("/items/", adminItemsList);
+adminApp.get("/item/new/", adminItemForm);
+adminApp.post("/item/new/", adminItemForm);
+adminApp.get("/item/:slug/edit/", adminItemForm);
+adminApp.post("/item/:slug/edit/", adminItemForm);
+
+// urls/orders.py:16-19 order groups.
+adminApp.get("/order-groups/", adminOrderGroupsList);
+adminApp.get("/order-groups/new/", adminOrderGroupForm);
+adminApp.post("/order-groups/new/", adminOrderGroupForm);
+adminApp.get("/order-group/:slug/", adminOrderGroupDetail);
+adminApp.get("/order-group/:slug/edit/", adminOrderGroupForm);
+adminApp.post("/order-group/:slug/edit/", adminOrderGroupForm);
+
+// urls/orders.py:6-11 order create/edit/delete/notify/email. GET+POST
+// /order/new/ is registered further up, immediately before the
+// /order/:orderId/ detail route -- see the note there.
+adminApp.get("/order/:orderId/edit/", adminOrderForm);
+adminApp.post("/order/:orderId/edit/", adminOrderForm);
+adminApp.get("/order/:orderId/email/", adminOrderEmailPreview);
+adminApp.post("/order/:orderId/sendnotification/", adminOrderSendNotification);
+adminApp.post("/order/:orderId/delete/", adminOrderDelete);
+
+// urls/needs.py:10 need_form (creation) is registered further up, next to
+// the /need/:id/ detail route -- see the note there.
+adminApp.get("/need/:id/email/", adminNeedEmail);
+
+// urls/foodbanks.py:8,24,37 -- the three small food-bank-scoped pages.
+adminApp.get("/foodbanks/dupe_postcodes/", adminFoodbanksDupePostcodes);
+adminApp.get("/foodbank/:slug/addsub/", adminFoodbankAddSub);
+adminApp.post("/foodbank/:slug/addsub/", adminFoodbankAddSub);
+adminApp.post("/foodbank/:slug/photo/:photoId/delete/", adminPhotoDelete);
 
 adminApp.post("/article/:id/toggle-featured/", adminArticleToggleFeatured);
 
@@ -199,7 +311,11 @@ export async function adminIndex(c: Context<AppEnv>): Promise<Response> {
   ]);
 
   const html = await render("admin/index.njk", {
-    ...(await adminPageContext(c, "needs")),
+    // Django index() sets section "home" (gfadmin/views.py:106), a value
+    // that deliberately matches NO nav item -- the dashboard is reached only
+    // from the logo. Passing "needs" here lit the Needs tab, which now points
+    // at /admin/needs/, a different page.
+    ...(await adminPageContext(c, "home")),
     unpublished_needs: unpublishedNeeds.map((n) => enrichNeedRow(n, now)),
     published_needs: publishedNeeds.map((n) => enrichNeedRow(n, now)),
     discrepancies: discrepancies.map((d) => enrichDiscrepancyRow(d, now)),

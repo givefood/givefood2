@@ -1,0 +1,121 @@
+{% extends "admin/page.njk" %}
+
+{# gfadmin/templates/admin/sub_graph.html -- a stacked bar of new
+   subscriptions per week, split by channel, plus the same numbers as a
+   table. `week_subs` is an ARRAY here, not Django's OrderedDict: see
+   routes/admin/stats.ts for why (Django's key order is email-first rather
+   than chronological, so a week with no email sign-up lands at the far
+   right of the chart whatever its date). The chart reads it forward (oldest
+   left); the table reads it reversed (newest first), matching Django's
+   `{% for ... reversed %}`. The WhatsApp column is present but always 0 --
+   there is no whatsappsubscriber D1 table yet. #}
+
+{% block title %}Subscriber Graph{% endblock %}
+
+{% block body %}
+<div class="columns">
+  <div class="column">
+    <h1 class="title">Subscriber Graph</h1>
+
+    <div id="chart" style="height:500px"></div>
+
+    <table class="table is-striped is-narrow is-fullwidth">
+      <thead>
+        <tr>
+          <th>year-week</th>
+          <th>Email</th>
+          <th>WhatsApp</th>
+          <th>Web Push</th>
+          <th>App</th>
+          <th>Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for week in week_subs|reverse %}
+        <tr>
+          <td>{{ week.week_key }}</td>
+          <td>{{ week.email }}</td>
+          <td>{{ week.whatsapp }}</td>
+          <td>{{ week.webpush }}</td>
+          <td>{{ week.mobile }}</td>
+          <td>{{ week.total }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6">None</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+
+{# Django keeps these two <script> blocks inside the body block; admin/
+   page.njk:103 provides a script slot that renders after the main div, so
+   #chart already exists by the time this runs. echarts.js is the
+   self-hosted Apache ECharts build already served at /static/js/echarts.js
+   and already used by the gfdash charts -- no CDN, no new dependency.
+   Unlike every gfdash chart this one does NOT load chart-colors.js or set
+   `color: gfChartColors`; that difference is Django's and is kept. #}
+{% block script %}
+<script src="/static/js/echarts.js?v={{ version }}"></script>
+<script>
+  var chartDom = document.getElementById('chart');
+  var myChart = echarts.init(chartDom);
+  var option = {
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: {
+        type: 'shadow'
+      }
+    },
+    legend: {
+      data: ['Email', 'WhatsApp', 'Web Push', 'App'],
+      top: 0
+    },
+    grid: {
+      left: '3%',
+      right: '4%',
+      bottom: '15%',
+      containLabel: true
+    },
+    xAxis: {
+      type: 'category',
+      data: [{% for week in week_subs %}'{{ week.week_key }}'{% if not loop.last %},{% endif %}{% endfor %}],
+      axisLabel: {
+        rotate: 45
+      }
+    },
+    yAxis: {
+      type: 'value',
+      name: 'Subscriptions'
+    },
+    series: [
+      {
+        name: 'Email',
+        type: 'bar',
+        stack: 'total',
+        data: [{% for week in week_subs %}{{ week.email }}{% if not loop.last %},{% endif %}{% endfor %}]
+      },
+      {
+        name: 'WhatsApp',
+        type: 'bar',
+        stack: 'total',
+        data: [{% for week in week_subs %}{{ week.whatsapp }}{% if not loop.last %},{% endif %}{% endfor %}]
+      },
+      {
+        name: 'Web Push',
+        type: 'bar',
+        stack: 'total',
+        data: [{% for week in week_subs %}{{ week.webpush }}{% if not loop.last %},{% endif %}{% endfor %}]
+      },
+      {
+        name: 'App',
+        type: 'bar',
+        stack: 'total',
+        data: [{% for week in week_subs %}{{ week.mobile }}{% if not loop.last %},{% endif %}{% endfor %}]
+      }
+    ]
+  };
+  myChart.setOption(option);
+</script>
+{% endblock %}

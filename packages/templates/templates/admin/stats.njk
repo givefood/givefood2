@@ -1,0 +1,29 @@
+{% extends "admin/page.njk" %}
+
+{# gfadmin/templates/admin/stats.html -- one template shared by five of the
+   six stats views (quarter/edit/order/subscriber/need). Django passed a dict
+   and used `{% if value.year %}` as a duck-type test for "is this a
+   datetime?", purely to skip |intcomma on it. The port passes an ordered
+   ARRAY of {label, value, raw} instead: the row order is then explicit
+   rather than depending on JS key-insertion order surviving nunjucks, and
+   every already-formatted value (dates, "£1,234.56", "1,234.57 kg") carries
+   raw=true so it is not thousands-grouped a second time. #}
+
+{% block title %}{{ title }} Stats{% endblock %}
+
+{% block body %}
+<div class="columns">
+  <div class="column">
+    {# Django's bare page-level <h2>, promoted to <h1 class="title"> to match
+       the port's own admin/list.njk and admin/query.njk. #}
+    <h1 class="title">{{ title }} Stats</h1>
+
+    <dl>
+      {% for stat in stats %}
+      <dt>{{ stat.label }}</dt>
+      <dd>{% if stat.raw %}{{ stat.value }}{% else %}{{ stat.value|intcomma }}{% endif %}</dd>
+      {% endfor %}
+    </dl>
+  </div>
+</div>
+{% endblock %}

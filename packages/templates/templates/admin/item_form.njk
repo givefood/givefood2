@@ -1,0 +1,76 @@
+{# gfadmin/templates/admin/form.html rendered with an OrderItemForm
+   (givefood/forms.py:213-216) -- `fields = "__all__"` on a three-field model
+   whose `slug` is editable=False, so Django renders precisely these two
+   inputs, in model-declaration order (givefood/models/orders.py:293-295).
+
+   Its own template rather than admin/generic_form.njk + an AdminFieldSpec
+   list, for two reasons:
+     1. `calories` is a PositiveIntegerField, and Django's widget for one is
+        genuinely <input type="number" min="0"> (IntegerField's default
+        NumberInput + PositiveIntegerField.formfield()'s min_value=0).
+        AdminFieldKind has no "number" member, and widening that shared union
+        for one two-field form is a bigger change than this file.
+     2. This form re-renders itself on a validation failure with the values
+        the admin typed plus an error banner (see routes/admin/items.ts);
+        generic_form.njk has no error slot, and its callers all return a bare
+        text/plain 400 instead.
+   Django's own admin/form.html:22-32 right-hand preview column (`{% if need %}`
+   / `{% if foodbank %}`) never renders for these two screens -- item_form
+   sets neither -- so there is nothing to port there.
+
+   id="id_<name>" matches what Django's `{{ form|bulma }}` emits and what
+   static/js/admin.js selects on (admin.js:97-111); none of its initialisers
+   fire on this form (they are all gated on #id_lat_lng, #id_company or a
+   food-bank/location/donation-point form class), which is correct -- Django's
+   items form has no lookup buttons either. #}
+{% extends "admin/page.njk" %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block body %}
+<div class="columns">
+  <div class="column is-half">
+    <h1 class="title">{{ title }}</h1>
+    <p><a href="/admin/items/">&larr; Back</a></p>
+
+    {# Django's {{ form|bulma }} shows per-field validation errors inline
+       (admin/form.html:16). This port validates in the route, so an invalid
+       submission comes back as one banner plus the values the admin typed --
+       rather than the text/plain 400 the other ported forms return, which
+       throws the typed values away. #}
+    {% if error %}<div class="notification is-danger is-light">{{ error }}</div>{% endif %}
+
+    {# class="form-<slugified title>" matches Django admin/form.html:14's
+       `class="form-{{ page_title|slugify }}"` -- "form-new-item" /
+       "form-edit-item". #}
+    <form method="post" class="form-{{ title | slugify }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+      <div class="field">
+        <label class="label" for="id_name">Name *</label>
+        <div class="control">
+          <input class="input" type="text" id="id_name" name="name" value="{{ data.name }}" maxlength="100" required>
+        </div>
+      </div>
+
+      <div class="field">
+        <label class="label" for="id_calories">Calories *</label>
+        <div class="control">
+          <input class="input" type="number" id="id_calories" name="calories" value="{{ data.calories }}" min="0" step="1" required>
+        </div>
+        {# models/orders.py:295 help_text="Per 100g". #}
+        <p class="help">Per 100g</p>
+      </div>
+
+      <div class="field">
+        <div class="control">
+          <button type="submit" class="button is-link is-light">Save</button>
+        </div>
+      </div>
+    </form>
+
+    {# No delete control: gfadmin/urls/items.py declares no delete route, so
+       there is nothing to port. #}
+  </div>
+</div>
+{% endblock %}

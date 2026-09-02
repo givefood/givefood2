@@ -11,7 +11,8 @@
     <div class="notification is-danger is-light">{{ error }}</div>
     {% endif %}
 
-    <form method="post">
+    {# See generic_form.njk on why the class name matters to admin.js. #}
+    <form method="post" class="form-{{ title | slugify }}">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <div class="field">
         <label class="label">Name</label>

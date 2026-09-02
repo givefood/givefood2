@@ -136,8 +136,19 @@
   "vars": {
     "SITE_DOMAIN": "https://www.givefood.org.uk",
     "GOOGLE_OAUTH_CLIENT_ID": "927281004707-tboi1tsphl4bgtqn72e76rmc7r2q22tk.apps.googleusercontent.com",
-    "TURNSTILE_SITEKEY": "0x4AAAAAAABxtIRWlPcEGwhj"
+    "TURNSTILE_SITEKEY": "0x4AAAAAAABxtIRWlPcEGwhj",
+    // Admin footer only -- the D1 equivalent of Django's DB_HOST, which its
+    // own admin footer shows so an admin with a local and a production tab
+    // open can tell them apart. The binding exposes no name at runtime.
+    "D1_DATABASE_NAME": "givefood"
   },
+
+  // PLAN.md §6507 names this as the replacement for Django's
+  // `os.environ['SOURCE_COMMIT'][:7]`, which supplies BOTH the admin footer's
+  // "Version" and every `?v=` static cache-buster in the page shell. Without
+  // it packages/templates/src/context.ts falls back to the literal string
+  // "dev", so every deploy re-served stale CSS/JS under the same ?v=dev.
+  "version_metadata": { "binding": "CF_VERSION_METADATA" },
 
   // Declares required secret NAMES so `wrangler dev` and deploy both
   // fail loudly if one is missing. Values are set with `wrangler secret put`.

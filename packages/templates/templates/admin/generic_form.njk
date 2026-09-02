@@ -9,7 +9,13 @@
     <h1 class="title">{{ title }}</h1>
     {% if back_url %}<p><a href="{{ back_url }}">&larr; Back</a></p>{% endif %}
 
-    <form method="post">
+    {# class="form-<slugified title>" matches Django admin/form.html:14's
+       `class="form-{{ page_title|slugify }}"`. static/js/admin.js selects on
+       exactly these class names (.form-new-food-bank,
+       .form-new-donation-point, .form-edit-donation-point and
+       form[class*='food-bank-location'], admin.js:105-109) to decide which
+       address-lookup button to inject, so without it none appear. #}
+    <form method="post" class="form-{{ title | slugify }}">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       {{ fieldset(fields, data) }}
       <div class="field">

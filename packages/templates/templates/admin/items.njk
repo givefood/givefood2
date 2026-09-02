@@ -1,0 +1,62 @@
+{# gfadmin/templates/admin/items.html -- the OrderItem list.
+
+   Its own template rather than admin/list.njk + renderList(): Django's page
+   labels its button "New Item" (not list.njk's generic "New"), titles the
+   page "Items" with no row count, and has no CSV/filter controls at all, so
+   it fits none of list.njk's variable bits and would have meant bending the
+   shared template for one caller. The pagination block and table classes
+   below are copied from list.njk so the two pages still look identical.
+
+   Django's items.html `{% load humanize %}` is loaded but NEVER applied --
+   neither cell goes through |intcomma -- so calories renders raw here too.
+   The third <th> is deliberately empty: it heads the Edit-button column
+   (items.html:19). #}
+{% extends "admin/page.njk" %}
+
+{% block title %}Items{% endblock %}
+
+{% block body %}
+<div class="columns">
+  <div class="column">
+    <h1 class="title">Items ({{ total }})</h1>
+
+    <div class="buttons">
+      <a href="/admin/item/new/" class="button is-link is-light">New Item</a>
+    </div>
+
+    <table class="table is-fullwidth is-hoverable">
+      <thead>
+        <tr>
+          {# Sort links are new: Django's headers are plain text (items.html:
+             16-20), which was fine for one unpaginated table and is not once
+             the list is 12 pages long. #}
+          <th>
+            <a href="?sort={{ name_sort }}">Name</a>{% if sort_field == "name" %}{% if direction == "desc" %} &darr;{% else %} &uarr;{% endif %}{% endif %}
+          </th>
+          <th>
+            <a href="?sort={{ calories_sort }}">Calories</a>{% if sort_field == "calories" %}{% if direction == "desc" %} &darr;{% else %} &uarr;{% endif %}{% endif %}
+          </th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in items %}
+        <tr>
+          <td>{{ item.name }}</td>
+          <td>{{ item.calories }}</td>
+          <td><a href="{{ item.edit_url }}" class="button is-small is-light">Edit</a></td>
+        </tr>
+        {% else %}
+        <tr><td colspan="3">None</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <nav class="pagination" role="navigation" aria-label="pagination">
+      {% if page > 1 %}<a class="pagination-previous" href="?page={{ page - 1 }}&amp;sort={{ sort }}">Previous</a>{% endif %}
+      {% if has_next %}<a class="pagination-next" href="?page={{ page + 1 }}&amp;sort={{ sort }}">Next page</a>{% endif %}
+      <span class="pagination-list">Page {{ page }} of {{ total_pages }}</span>
+    </nav>
+  </div>
+</div>
+{% endblock %}

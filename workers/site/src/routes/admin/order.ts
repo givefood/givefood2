@@ -1,5 +1,5 @@
 import type { Context } from "hono";
-import { getOrderDetail, getOrderLines } from "@givefood/db";
+import { getOrderDetail, getOrderLines, getAdminJob } from "@givefood/db";
 import { render } from "@givefood/templates";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
@@ -23,6 +23,8 @@ export async function adminOrderDetail(c: Context<AppEnv>): Promise<Response> {
   if (!order) return c.notFound();
 
   const lines = await getOrderLines(db, order.id);
+  const jobId = c.req.query("job") ?? null;
+  const job = jobId ? await getAdminJob(db, jobId) : null;
   const weightKg = order.weight / 1000;
   const deliveryProviderUrl = order.delivery_provider && order.delivery_provider_id ? DELIVERY_PROVIDER_ORDER_URL[order.delivery_provider]?.(order.delivery_provider_id) : null;
 
@@ -36,6 +38,15 @@ export async function adminOrderDetail(c: Context<AppEnv>): Promise<Response> {
     actual_cost: order.actual_cost ? (order.actual_cost / 100).toFixed(2) : null,
     delivery_provider_url: deliveryProviderUrl,
     notification_email_sent_timesince: order.notification_email_sent ? `${timesince(order.notification_email_sent)} ago` : null,
+    // routes/admin/orderForm.ts redirects here with ?job=<id> after a save.
+    // The order's lines and aggregates are produced by a queue job
+    // (workers/jobs/src/adminJobs/orderLines.ts), so without this the page
+    // shows a just-saved order as 0 items / £0.00 and looks like the save
+    // threw the data away. The id is only ever used to look a row up by
+    // primary key, so an unknown or malformed one simply yields null.
+    job_id: jobId,
+    job_status: job?.status ?? null,
+    job_error: job?.error ?? null,
   });
   return c.html(html);
 }

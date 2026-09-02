@@ -21,6 +21,7 @@
     <li role="presentation"><a data-tab="donationpoints" role="tab" aria-selected="false" aria-controls="donationpoints-panel" id="donationpoints-tab"><span class="icon"><i class="mdi mdi-store"></i></span><span>Donation Points <span class="tag is-info is-normal is-light">{{ counts.donation_points }}</span></span></a></li>
     {% if counts.articles %}<li role="presentation"><a data-tab="articles" role="tab" aria-selected="false" aria-controls="articles-panel" id="articles-tab"><span class="icon"><i class="mdi mdi-newspaper-variant-multiple-outline"></i></span><span>Articles <span class="tag is-info is-normal is-light">{{ counts.articles }}</span></span></a></li>{% endif %}
     <li role="presentation"><a data-tab="subscribers" role="tab" aria-selected="false" aria-controls="subscribers-panel" id="subscribers-tab"><span class="icon"><i class="mdi mdi-bell"></i></span><span>Subscribers <span class="tag is-info is-normal is-light">{{ counts.subscribers }}</span></span></a></li>
+    {% if counts.photos %}<li role="presentation"><a data-tab="photos" role="tab" aria-selected="false" aria-controls="photos-panel" id="photos-tab"><span class="icon"><i class="mdi mdi-image"></i></span><span>Photos <span class="tag is-info is-normal is-light">{{ counts.photos }}</span></span></a></li>{% endif %}
     <li role="presentation"><a data-tab="crawls" role="tab" aria-selected="false" aria-controls="crawls-panel" id="crawls-tab"><span class="icon"><i class="mdi mdi-robot"></i></span><span>Crawls <span class="tag is-info is-normal is-light">{{ counts.crawls }}</span></span></a></li>
   </ul>
 </div>
@@ -149,6 +150,12 @@
     <a href="/admin/foodbank/{{ foodbank.slug }}/location/new/" class="button is-light is-small">New Location</a>
     <a href="/admin/foodbank/{{ foodbank.slug }}/location/new/area/" class="button is-light is-small">New Location Area</a>
 
+    {# gfadmin/templates/admin/foodbank.html:394 and :461 -- Django puts a
+       "New Need" button on this page twice, both carrying ?foodbank=<slug>
+       to pre-select the food bank (views.py:1926-1937's initial=). This is
+       the only entry point the need-creation form has, in either codebase. #}
+    <a href="/admin/need/new/?foodbank={{ foodbank.slug }}" class="button is-link is-light is-pulled-right is-small">New Need</a>
+
     <h3 class="title is-5">Latest Need</h3>
     {% if foodbank.latestNeed %}
       <p>
@@ -162,7 +169,7 @@
     {% endif %}
 
     <h3 class="title is-5">Delete</h3>
-    <form action="/admin/foodbank/{{ foodbank.slug }}/delete/" method="post" onsubmit="return confirm('DELETE {{ foodbank.name }}?');">
+    <form action="/admin/foodbank/{{ foodbank.slug }}/delete/" method="post" data-name="{{ foodbank.name }}" onsubmit="return confirm('DELETE ' + this.dataset.name + '?');">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <button type="submit" class="button is-danger is-light">Delete {{ full_name }}</button>
     </form>
@@ -189,6 +196,13 @@
        hx-get="/admin/foodbank/{{ foodbank.slug }}/tab/subscribers/" hx-trigger="showtab once" hx-swap="innerHTML swap:0.06s">
     <div class="loading"><span class="loader"></span></div>
   </div>
+
+  {% if counts.photos %}
+  <div class="column tabcontent photos is-hidden" id="photos-panel" role="tabpanel" aria-labelledby="photos-tab"
+       hx-get="/admin/foodbank/{{ foodbank.slug }}/tab/photos/" hx-trigger="showtab once" hx-swap="innerHTML swap:0.06s">
+    <div class="loading"><span class="loader"></span></div>
+  </div>
+  {% endif %}
 
   <div class="column tabcontent crawls is-hidden" id="crawls-panel" role="tabpanel" aria-labelledby="crawls-tab"
        hx-get="/admin/foodbank/{{ foodbank.slug }}/tab/crawls/" hx-trigger="showtab once" hx-swap="innerHTML swap:0.06s">

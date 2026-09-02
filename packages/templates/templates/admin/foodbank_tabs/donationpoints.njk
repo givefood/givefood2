@@ -30,7 +30,7 @@
       <td>{% if dp.notes %}{{ dp.notes | linebreaksbr | safe }}{% endif %}</td>
       <td>
         <a href="/admin/foodbank/{{ foodbank_slug }}/donationpoint/{{ dp.slug }}/edit/" class="button is-small is-link is-light">Edit</a>
-        <form action="/admin/foodbank/{{ foodbank_slug }}/donationpoint/{{ dp.slug }}/delete/" method="post" style="display:inline" onsubmit="return confirm('Delete {{ dp.name }}?')">
+        <form action="/admin/foodbank/{{ foodbank_slug }}/donationpoint/{{ dp.slug }}/delete/" method="post" style="display:inline" data-name="{{ dp.name }}" onsubmit="return confirm('Delete ' + this.dataset.name + '?')">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           <button type="submit" class="button is-small is-danger is-light">Delete</button>
         </form>

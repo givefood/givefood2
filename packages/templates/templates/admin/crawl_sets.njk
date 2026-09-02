@@ -1,0 +1,90 @@
+{% extends "admin/page.njk" %}
+
+{% block title %}Crawl Sets{% endblock %}
+
+{% block body %}
+<div class="columns">
+
+  <div class="column is-three-quarters">
+    <h1 class="title">Crawl Sets</h1>
+
+    <div class="field is-pulled-right">
+      <div class="control">
+        <div class="select">
+          <select onchange="javascript:window.location.href=this.value">
+            <option value="?type={% if adhoc_type_filter %}&amp;adhoc_type={{ adhoc_type_filter }}{% endif %}">All Types</option>
+            {% for type in crawl_type_options %}
+            <option value="?type={{ type }}{% if adhoc_type_filter %}&amp;adhoc_type={{ adhoc_type_filter }}{% endif %}"{% if crawl_type_filter == type %} selected{% endif %}>{{ type }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <table class="table is-fullwidth is-hoverable">
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th>Start</th>
+          <th>Finish</th>
+          <th>Time Taken</th>
+          <th>Items</th>
+          <th>Objects</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for cs in crawl_sets %}
+        <tr>
+          <td><a href="/admin/crawl-set/{{ cs.id }}/">{{ cs.crawl_type_icon | safe }} {{ cs.crawl_type }}</a></td>
+          <td>{{ cs.start|date("N j, Y, P") }}</td>
+          <td>{% if cs.finish %}{{ cs.finish|date("N j, Y, P") }}{% else %}<span style="color:red;">Unfinished</span>{% endif %}</td>
+          <td>{% if cs.time_taken %}{{ cs.time_taken }}{% endif %}</td>
+          <td>{{ cs.item_count }}</td>
+          <td>{{ cs.object_count }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6">None</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="column is-one-quarter">
+    <h2 class="title is-4">Ad Hoc Crawls</h2>
+
+    <div class="field is-pulled-right">
+      <div class="control">
+        <div class="select">
+          <select onchange="javascript:window.location.href=this.value">
+            <option value="?{% if crawl_type_filter %}type={{ crawl_type_filter }}&amp;{% endif %}adhoc_type=">All Types</option>
+            {% for type in crawl_type_options %}
+            <option value="?{% if crawl_type_filter %}type={{ crawl_type_filter }}&amp;{% endif %}adhoc_type={{ type }}"{% if adhoc_type_filter == type %} selected{% endif %}>{{ type }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <table class="table is-fullwidth is-hoverable">
+      <thead>
+        <tr><th>Foodbank</th><th>Start</th><th>Type</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for item in orphaned_crawl_items %}
+        <tr>
+          <td style="max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+            <a href="/admin/foodbank/{{ item.foodbank_slug }}/">{{ item.foodbank_name }}</a>
+          </td>
+          <td>{{ item.start|date("Y-m-d H:i") }}</td>
+          <td>{{ item.crawl_type_icon | safe }}&nbsp;{{ item.crawl_type }}</td>
+          <td>{% if item.need_uuid %}<a href="/admin/need/{{ item.need_uuid }}/">&#128279;</a>{% endif %}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="4">None</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+</div>
+{% endblock %}

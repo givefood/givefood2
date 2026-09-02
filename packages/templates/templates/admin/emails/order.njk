@@ -1,0 +1,76 @@
+{# gfadmin/templates/admin/emails/order.html -- the HTML half of the delivery
+   notification. Extends the same shared email shell the need notification
+   uses (templates/emails/page.njk, itself a port of
+   gfadmin/templates/admin/emails/page.html).
+
+   See admin/emails/order_text.njk for why the context is flat values rather
+   than Django's `order.foodbank.*` model walks.
+
+   Django's `|safe` on the name/address fields is deliberately NOT carried
+   over: those are food-bank-supplied strings, and marking them safe here
+   would let a stray "&" or "<" in a food bank's own address break the mail
+   (or worse, inject markup into it). Autoescaping them is the fix; the only
+   place the original genuinely needs markup is the address, which uses
+   |linebreaksbr below exactly as Django does. #}
+{% extends "emails/page.njk" %}
+
+{% block body %}
+  <p>Hello {{ order.foodbank_name }} Food Bank,</p>
+
+  <p>Give Food are sending you an internet shopping delivery via {{ order.delivery_provider }}. The delivery information is below. In the meantime, if you have any suggestions for how we can improve our deliveries do contact us via the following...</p>
+
+  <p>
+    Web: <a href="https://www.givefood.org.uk">https://www.givefood.org.uk</a><br>
+    Twitter: <a href="https://twitter.com/GiveFoodCharity">https://twitter.com/GiveFoodCharity</a><br>
+    Facebook: <a href="https://www.facebook.com/GiveFoodOrgUK">https://www.facebook.com/GiveFoodOrgUK</a><br>
+    Email: <a href="mailto:mail@givefood.org.uk">mail@givefood.org.uk</a>
+  </p>
+
+  <p><strong>Your Information</strong></p>
+
+  <p>
+    We're automatically monitoring your shopping list for changes at:<br>
+    <a href="{{ order.foodbank_shopping_list_url }}">{{ order.foodbank_shopping_list_url }}</a>
+  </p>
+
+  {% if order.source_url %}
+    <p>
+      We also used the information provided here to help with picking items for the order:<br>
+      <a href="{{ order.source_url }}">{{ order.source_url }}</a>
+    </p>
+  {% endif %}
+
+  <p>
+    The details we have for your food bank are over here:<br>
+    <a href="https://www.givefood.org.uk/needs/at/{{ order.foodbank_slug }}/">https://www.givefood.org.uk/needs/at/{{ order.foodbank_slug }}/</a>
+  </p>
+
+  <br><br>
+
+  <p><strong>Delivery Details</strong></p>
+
+  <p>Our order ID: {{ order.order_id }}<br>
+  {{ order.delivery_provider }} order ID: {{ order.delivery_provider_id }}</p>
+
+  <p>The delivery is scheduled for {{ delivery_day_name }}, {{ order.delivery_date|date("N j, Y") }} between {{ order.delivery_hour }}:00 and {{ order.delivery_hour_end }}:00.</p>
+
+  <p>It contains {{ order.no_items }} items, weighs about {{ weight_kg_pkg_0dp }} kg, and contains {{ order.calories|intcomma }} calories - although this may vary based on availability.</p>
+
+  <p>We've given {{ order.delivery_provider }} your phone number {{ order.foodbank_phone_number }}.</p>
+
+  <p>To:<br>
+  {{ order.foodbank_name }} Food Bank<br>
+  {% if order.foodbank_delivery_address %}
+    {{ order.foodbank_delivery_address | linebreaksbr }}
+  {% else %}
+    {{ order.foodbank_address | linebreaksbr }}<br>
+    {{ order.foodbank_postcode }}
+  {% endif %}</p>
+
+  <table>
+    <tr><th></th><th>Qty</th><th>Kg</th></tr>
+    {% for line in lines %}
+      <tr><td>{{ line.name }}</td><td>{{ line.quantity }}</td><td>{{ line.weight_kg }}</td></tr>
+    {% endfor %}
+  </table>
+{% endblock %}

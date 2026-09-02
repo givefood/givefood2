@@ -1,0 +1,95 @@
+{% extends "admin/page.njk" %}
+
+{#
+  Ports gfadmin/templates/admin/foodbanks_dupe_postcodes.html (23 lines):
+  Django renders one bare <ul>, one <li> per duplicated postcode, each
+  linking to {% url 'admin:search_results' %}?q=<postcode>. Five deliberate
+  divergences, each with its reason:
+
+  a) The postcode still links to /admin/search/?q=<postcode>, as Django's
+     does. (An earlier draft of this file dropped that link on the grounds
+     that /admin/search/ was unported -- true when it was written, false
+     since the search page landed in this same pass.) The owning records and
+     their edit forms are linked as WELL, which is the actual improvement.
+  b) Grouped, with the owning food bank / location named inline. Django's
+     list tells you a postcode is duplicated but not WHICH rows hold it, so
+     the only way to find out there is to follow the (here, missing) search
+     link. Naming them is what makes the page actionable.
+  c) A count, and an empty state. Django renders an empty <ul> and no
+     message when there are no duplicates.
+  d) Deterministic order (SQL ORDER BY, not Django's unordered set()).
+  e) NULL/empty postcodes excluded in SQL -- see dupePostcodes.ts. Django
+     lets a NULL location postcode through as a literal "None" row.
+
+  Django's own {% block title %} says "Foodbanks", not what the page is;
+  named properly here.
+#}
+
+{% block title %}Dupe Postcodes{% endblock %}
+
+{% block body %}
+<div class="columns">
+  <div class="column is-three-quarters">
+
+    <h1 class="title">Duplicate Postcodes <span class="tag is-info is-normal is-light">{{ groups.length }}</span></h1>
+
+    <p class="content is-size-7">
+      Postcodes shared by more than one food bank or location. Closed food banks and closed
+      locations are included, matching Django. Donation points are not checked &mdash;
+      <code>gfadmin/views.py:340-358</code> never looks at them. Matching is exact, so
+      &ldquo;SW1A 1AA&rdquo; and &ldquo;SW1A1AA&rdquo; count as different postcodes.
+    </p>
+
+    {% if truncated %}
+    <div class="notification is-warning is-light">
+      Showing the first {{ limit }} duplicated postcodes only. There are more.
+    </div>
+    {% endif %}
+
+    {% if not groups.length %}
+    <p>No duplicate postcodes.</p>
+    {% endif %}
+
+    {% for g in groups %}
+    <h3 class="title is-6" style="margin-bottom:4px">
+      <a href="/admin/search/?q={{ g.postcode | urlencode }}">{{ g.postcode }}</a>
+      <span class="tag is-warning is-light">{{ g.places.length }}</span>
+    </h3>
+    <table class="table is-fullwidth is-hoverable is-narrow" style="margin-bottom:24px">
+      <thead>
+        <tr>
+          <th>Kind</th>
+          <th>Name</th>
+          <th>Food Bank</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in g.places %}
+        <tr>
+          <td style="white-space:nowrap">
+            {% if p.kind == "foodbank" %}
+            <span class="tag is-danger is-light">Food bank</span>
+            {% else %}
+            <span class="tag is-warning is-light">Location</span>
+            {% endif %}
+            {% if p.is_closed %}<span class="tag is-dark is-light">Closed</span>{% endif %}
+          </td>
+          <td>{{ p.name }}</td>
+          <td><a href="/admin/foodbank/{{ p.foodbank_slug }}/">{{ p.foodbank_name }}</a></td>
+          <td style="white-space:nowrap">
+            {% if p.kind == "foodbank" %}
+            <a class="button is-small is-link is-light" href="/admin/foodbank/{{ p.foodbank_slug }}/edit/address/">Edit address</a>
+            {% else %}
+            <a class="button is-small is-link is-light" href="/admin/foodbank/{{ p.foodbank_slug }}/location/{{ p.loc_slug }}/edit/">Edit location</a>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endfor %}
+
+  </div>
+</div>
+{% endblock %}

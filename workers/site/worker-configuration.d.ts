@@ -27,6 +27,10 @@ export interface Env {
   SITE_DOMAIN: string;
   GOOGLE_OAUTH_CLIENT_ID: string;
   TURNSTILE_SITEKEY: string;
+  D1_DATABASE_NAME: string;
+
+  // `version_metadata` binding -- see wrangler.jsonc.
+  CF_VERSION_METADATA: { id: string; tag: string; timestamp: string };
 
   GOOGLE_OAUTH_CLIENT_SECRET: string;
   SESSION_HMAC_KEY: string;

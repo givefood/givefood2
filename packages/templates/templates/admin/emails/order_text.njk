@@ -1,0 +1,66 @@
+{# gfadmin/templates/admin/emails/order.txt -- the plain-text half of the
+   delivery notification, sent alongside admin/emails/order.njk.
+
+   Django reads `order.foodbank` (Foodbank.__str__ == name), `order.lines`
+   and several model properties directly; routes/admin/orderActions.ts's
+   buildOrderEmailContext flattens all of that into the plain values used
+   below, because this port has no ORM objects to walk in a template.
+
+   `|safe` on every name/address in the Django original is a no-op for a
+   text/plain body (there is no HTML to escape into); the values are
+   interpolated bare here for the same reason. Whitespace matters -- this is
+   the literal body of the email -- so the line breaks below match the
+   original exactly.
+
+   {% autoescape false %} wraps the whole body: this is a text/plain part, so
+   there is no HTML to escape INTO. Without it a food bank called
+   "Ann's & Sons" arrives in the reader's inbox as "Ann&#39;s &amp; Sons".
+   Nothing here is interpolated into markup, so turning autoescape off costs
+   no safety -- the HTML sibling (order.njk) keeps it on. #}
+{%- autoescape false -%}
+Hello {{ order.foodbank_name }} Food Bank,
+
+Give Food are sending you an internet shopping delivery via {{ order.delivery_provider }}. The delivery information is below. In the meantime, if you have any suggestions for how we can improve our deliveries do contact us via the following...
+
+Web: https://www.givefood.org.uk
+Twitter: https://twitter.com/GiveFoodCharity
+Facebook: https://www.facebook.com/GiveFoodOrgUK
+Email: mail@givefood.org.uk
+
+
+Your Information
+================
+
+We're automatically monitoring your shopping list for changes at:
+{{ order.foodbank_shopping_list_url }}
+{% if order.source_url %}
+We also used the information provided here to help with picking items for the order:
+{{ order.source_url }}
+{% endif %}
+The details we have for your food bank are over here:
+https://www.givefood.org.uk/needs/at/{{ order.foodbank_slug }}/
+
+
+Delivery Details
+================
+
+Our order ID: {{ order.order_id }}
+{{ order.delivery_provider }} order ID: {{ order.delivery_provider_id }}
+
+The delivery is scheduled for {{ delivery_day_name }}, {{ order.delivery_date|date("N j, Y") }} between {{ order.delivery_hour }}:00 and {{ order.delivery_hour_end }}:00.
+
+It contains {{ order.no_items }} items, weighs about {{ weight_kg_pkg_0dp }} kg, and contains {{ order.calories|intcomma }} calories - although this may vary based on availability.
+
+We've given {{ order.delivery_provider }} your phone number {{ order.foodbank_phone_number }}.
+
+To:
+{{ order.foodbank_name }} Food Bank
+{% if order.foodbank_delivery_address %}{{ order.foodbank_delivery_address }}{% else %}{{ order.foodbank_address }}
+{{ order.foodbank_postcode }}{% endif %}
+
+Items:
+{% for line in lines %}{{ line.quantity }}x {{ line.name }}
+{% endfor %}
+
+Give Food is charity number 1188192, registered in England & Wales.
+{%- endautoescape -%}

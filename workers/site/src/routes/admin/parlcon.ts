@@ -48,7 +48,7 @@ export async function adminParlconForm(c: Context<AppEnv>): Promise<Response> {
   }
 
   const html = await render("admin/generic_form.njk", {
-    ...(await adminPageContext(c, "geography")),
+    ...(await adminPageContext(c, "settings")),
     title: existing ? `Edit ${existing.name}` : "New Parliamentary Constituency",
     fields: PARLCON_FIELDS,
     data: existing ?? {},

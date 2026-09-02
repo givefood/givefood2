@@ -24,6 +24,7 @@ import {
   deleteSubscription,
   type SubscriptionType,
   getFoodbanksWithoutNeedPage,
+  getNeedsPage,
   getOldestEditedFoodbankSlug,
   totalPages,
   type PageResult,
@@ -35,6 +36,7 @@ import { dbSession } from "../../lib/session";
 import { verifyCsrf } from "../../lib/csrf";
 import { adminPageContext } from "./pageContext";
 import { timesince } from "../../lib/timesince";
+import { inputMethodEmoji } from "../../lib/needAdminDisplay";
 
 const PAGE_SIZE = 100;
 
@@ -205,7 +207,7 @@ export async function adminLocationsList(c: Context<AppEnv>): Promise<Response> 
 
   return renderList(c, {
     title: "Locations",
-    section: "foodbanks",
+    section: "locations",
     page,
     sort,
     columns: [
@@ -245,7 +247,7 @@ export async function adminDonationPointsList(c: Context<AppEnv>): Promise<Respo
 
   return renderList(c, {
     title: "Donation Points",
-    section: "foodbanks",
+    section: "donationpoints",
     page,
     sort,
     columns: [
@@ -282,7 +284,7 @@ export async function adminParlconsList(c: Context<AppEnv>): Promise<Response> {
 
   return renderList(c, {
     title: "Parliamentary Constituencies",
-    section: "geography",
+    section: "settings",
     page,
     columns: [
       { label: "Name" },
@@ -400,7 +402,7 @@ export async function adminPlacesList(c: Context<AppEnv>): Promise<Response> {
 
   return renderList(c, {
     title: "Places",
-    section: "geography",
+    section: "settings",
     page,
     sort: sortParam,
     columns: [
@@ -489,5 +491,52 @@ export async function adminFoodbanksWithoutNeedList(c: Context<AppEnv>): Promise
       `<a href="/admin/foodbank/${f.slug}/">${escapeHtml(f.name)}</a>`,
       f.latest_need_id && f.latest_need_created ? `<a href="/admin/need/${f.latest_need_id}/">${escapeHtml(djangoDate(f.latest_need_created, "N j, Y, P"))}</a>` : "Never",
     ],
+  });
+}
+
+// django's `|linebreaksbr` on an autoescaped value: escape first, then turn
+// the newlines into <br>. Inline here rather than imported because list rows
+// are assembled as raw HTML strings in this file, not rendered by nunjucks.
+function linebreaksbrCell(value: string | null): string {
+  return value ? escapeHtml(value).replace(/\r\n|\r|\n/g, "<br>") : "";
+}
+
+// gfadmin/views.py:411-419 needs() + admin/needs.html -- the "Needs" navbar
+// item's own page, which had no port at all (the navbar link pointed at the
+// dashboard instead). Nine columns, matching Django exactly; paginated rather
+// than Django's hard [:200] slice, see getNeedsPage's own comment.
+export async function adminNeedsList(c: Context<AppEnv>): Promise<Response> {
+  const db = dbSession(c);
+  const page = await getNeedsPage(db, parsePage(c), PAGE_SIZE);
+
+  return renderList(c, {
+    title: "Needs",
+    section: "needs",
+    page,
+    columns: [
+      { label: "Published?" },
+      { label: "Input" },
+      { label: "Cat?" },
+      { label: "ID" },
+      { label: "Foodbank" },
+      { label: "Need" },
+      { label: "Excess" },
+      { label: "Created" },
+      { label: "Modified" },
+    ],
+    rowCells: (n) => [
+      n.published ? '<span style="color:green">&#10003;</span>' : '<span style="color:red">x</span>',
+      inputMethodEmoji(n.input_method),
+      n.is_categorised ? "\u{1FAA3}" : "", // bucket, matching needs.html's literal 🪣
+      `<a href="/admin/need/${n.need_id}/">${escapeHtml(n.need_id.slice(0, 7))}</a>`,
+      n.foodbank_slug && n.foodbank_name
+        ? `<a href="/admin/foodbank/${n.foodbank_slug}/">${escapeHtml(n.foodbank_name)}</a>`
+        : escapeHtml(n.foodbank_name ?? "Unknown"),
+      `<span class="is-size-7">${linebreaksbrCell(n.change_text)}</span>`,
+      `<span class="is-size-7">${linebreaksbrCell(n.excess_change_text)}</span>`,
+      plainDateCell(n.created),
+      plainDateCell(n.modified),
+    ],
+    csvUrl: "/admin/needs/csv/",
   });
 }

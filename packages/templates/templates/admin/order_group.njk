@@ -1,0 +1,93 @@
+{# gfadmin/templates/admin/order_group.html -- one order group's aggregate
+   stats and every order in it.
+
+   Django's own `{% block title %}` here is the literal "Order Groups"
+   (copy-pasted from the list template, order_group.html:4); the group's
+   name is used instead, which is what the page is actually about.
+
+   `|floatformat(2)` BEFORE `|intcomma`, never the reverse. Django's
+   template chains them the other way round (order_group.html:59), and once
+   intcomma has inserted a thousands separator floatformat can parse
+   neither Decimal("1,234.56") nor float("1,234.56") and returns "" -- so
+   the Weight cell of any order of 1000 kg or more renders BLANK there. The
+   header's own Weight/Cost totals (:20/:24) get intcomma with no
+   floatformat at all, leaking raw float repr ("1,234.5600000000002kg",
+   "£123.5"). Both fixed by ordering the filters correctly. #}
+{% extends "admin/page.njk" %}
+
+{% block title %}{{ order_group.name }}{% endblock %}
+
+{% block body %}
+<div class="columns">
+  <div class="column">
+
+    {# Django's detail page has no way back to the edit form (you have to
+       go via the list). Added, consistent with every other ported admin
+       detail page. #}
+    <a href="/admin/order-group/{{ order_group.slug }}/edit/" class="button is-link is-light is-pulled-right">Edit</a>
+    <h2>{{ order_group.name }}</h2>
+
+    <dl>
+      <dt>Orders</dt>
+      <dd>{{ no_orders }}</dd>
+      <dt>Items</dt>
+      <dd>{{ items|intcomma }}</dd>
+      <dt>Weight</dt>
+      <dd>{{ weight|floatformat(2)|intcomma }}kg</dd>
+      <dt>Calories</dt>
+      <dd>{{ calories|intcomma }}</dd>
+      <dt>Cost</dt>
+      <dd>&pound;{{ cost|floatformat(2)|intcomma }}</dd>
+      <dt>Public</dt>
+      <dd>
+        {% if order_group.public %}
+          <span style="color:green">&#10003;</span>
+          {# Only linked when a key exists. Django reverses the URL
+             unconditionally here, and a blank key (the form allows one)
+             raises NoReverseMatch -> 500, while a NULL key reverses to the
+             literal "None" -> a dead donor link. #}
+          {% if public_url %}<a href="{{ public_url }}">Link</a>{% endif %}
+        {% else %}
+          <span style="color:red">&#10007;</span>
+        {% endif %}
+      </dd>
+    </dl>
+
+    <table class="table is-fullwidth is-hoverable">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Foodbank</th>
+          <th>Delivery</th>
+          <th>Items</th>
+          <th>Weight (kg)</th>
+          <th>Calories</th>
+          <th>Cost</th>
+          <th>Created</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for order in orders %}
+        <tr>
+          <td><a href="/admin/order/{{ order.order_id }}/">{{ order.order_id }}</a></td>
+          {# Django renders the food bank's name as plain text on this one
+             page while linking it on every other order table. Linked. #}
+          <td>{% if order.foodbank_slug %}<a href="/admin/foodbank/{{ order.foodbank_slug }}/">{{ order.foodbank_name }}</a>{% else %}<em>Unassigned</em>{% endif %}</td>
+          <td>{{ order.delivery_datetime|date("N j, Y, P") }}</td>
+          <td>{{ order.no_items }}</td>
+          <td>{{ order.weight_kg_pkg|floatformat(2)|intcomma }}</td>
+          <td>{{ order.calories|intcomma }}</td>
+          {# Django uses Order.natural_cost() (models/orders.py:74-75), a
+             raw float(cost/100), so "£123.5" rather than "£123.50". #}
+          <td>&pound;{{ order.cost_gbp|floatformat(2)|intcomma }}</td>
+          <td>{{ order.created|date("N j, Y, P") }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="8">None</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+  </div>
+</div>
+{% endblock %}

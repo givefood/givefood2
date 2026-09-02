@@ -1,0 +1,42 @@
+{# gfadmin/templates/admin/map.html, transcribed. The three CSS rules are
+   load-bearing, not decoration: the admin chrome's .main padding and the
+   version/database .footer are removed so the map fills the viewport below
+   page.njk's 52px navbar.
+
+   Django's own title block is "Map - GF Admin"; admin/page.njk hard-codes
+   the " - Give Food Admin" suffix, so this renders "Map - Give Food Admin"
+   -- consistent with every other ported admin page. #}
+{% extends "admin/page.njk" %}
+
+{% block title %}Map{% endblock %}
+
+{% block head %}
+  <style>
+    .main {
+      margin: 0;
+      padding: 0;
+    }
+    .footer {
+      display: none;
+    }
+    #map {
+      width: 100%;
+      height: calc(100vh - 52px);
+    }
+  </style>
+{% endblock %}
+
+{% block body %}
+  <div id="map"></div>
+  {# maplegend.njk's service-area row is gated on
+     `foodbank.has_service_area and show_service_area`, neither of which the
+     admin context defines, so the legend shows exactly the three rows
+     Django's does: Organisation / Location / Donation point. #}
+  {% include "includes/maplegend.njk" %}
+{% endblock %}
+
+{% block script %}
+  {# Emits the maplibre-gl stylesheet + script and window.gfMapConfig. #}
+  {% include "includes/mapconfig.njk" %}
+  <script src="/static/js/wfbn.js?v={{ version }}" defer onload="init()"></script>
+{% endblock %}

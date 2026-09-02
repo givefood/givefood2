@@ -9,6 +9,8 @@ import {
   getSubscribersForFoodbankTab,
   getCrawlItemsForFoodbankTab,
   getFoodbankAdminTotals,
+  getPhotosForFoodbankTab,
+  getFoodbankPhotoCount,
   crawlTypeIcon,
   touchFoodbank,
   type FoodbankRow,
@@ -85,7 +87,11 @@ export async function adminFoodbankDetail(c: Context<AppEnv>): Promise<Response>
   const foodbank = await getFoodbankBySlug(db, c.req.param("slug")!);
   if (!foodbank) return c.notFound();
 
-  const [locations, totals] = await Promise.all([getLocationsByFoodbankId(db, foodbank.id), getFoodbankAdminTotals(db, foodbank.id)]);
+  const [locations, totals, photoCount] = await Promise.all([
+    getLocationsByFoodbankId(db, foodbank.id),
+    getFoodbankAdminTotals(db, foodbank.id),
+    getFoodbankPhotoCount(db, foodbank.id),
+  ]);
 
   const totalWeightKg = totals.totalWeightGrams / 1000;
 
@@ -114,6 +120,9 @@ export async function adminFoodbankDetail(c: Context<AppEnv>): Promise<Response>
       articles: totals.articles,
       subscribers: totals.emailSubscribers + totals.webpushSubscribers + totals.mobileSubscribers,
       crawls: totals.crawls,
+      // gfadmin/templates/admin/foodbank.html:51 gates the Photos tab on this
+      // being non-zero; the tab is hidden entirely for a food bank with none.
+      photos: photoCount,
     },
     no_orders: totals.orders,
     number_subscribers: totals.emailSubscribers,
@@ -159,7 +168,14 @@ export async function adminFoodbankTab(c: Context<AppEnv>): Promise<Response> {
     }
     case "subscribers": {
       const subscribers = await getSubscribersForFoodbankTab(db, foodbank.id);
-      return c.html(await render("admin/foodbank_tabs/subscribers.njk", { subscribers }));
+      return c.html(await render("admin/foodbank_tabs/subscribers.njk", { subscribers, foodbank_slug: foodbank.slug }));
+    }
+    case "photos": {
+      // gfadmin/views.py:730-775 foodbank_photos_tab. Needs a CSRF token of
+      // its own: unlike the other read-only tabs, each row carries a delete
+      // form (routes/admin/photoDelete.ts).
+      const [photos, csrfToken] = await Promise.all([getPhotosForFoodbankTab(db, foodbank.id), issueCsrfToken(c, c.env.CSRF_SECRET)]);
+      return c.html(await render("admin/foodbank_tabs/photos.njk", { photos, foodbank_slug: foodbank.slug, csrf_token: csrfToken }));
     }
     case "crawls": {
       const crawlItems = await getCrawlItemsForFoodbankTab(db, foodbank.id, CRAWLS_TAB_LIMIT);

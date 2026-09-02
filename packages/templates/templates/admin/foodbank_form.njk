@@ -9,7 +9,8 @@
     <h1 class="title">{{ title }}</h1>
     <p class="subtitle">{{ foodbank.name }}{% if foodbank.slug %} -- <a href="/admin/foodbank/{{ foodbank.slug }}/">View</a>{% endif %}</p>
 
-    <form method="post">
+    {# See generic_form.njk on why the class name matters to admin.js. #}
+    <form method="post" class="form-{{ title | slugify }}">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       {{ fieldset(fields, foodbank) }}
       <div class="field">

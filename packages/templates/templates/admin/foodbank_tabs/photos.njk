@@ -1,0 +1,69 @@
+{#
+  Ports the `photos` partial at gfadmin/templates/admin/foodbank.html:672-716
+  (data from views.py:730-775 foodbank_photos_tab) -- lazy-loaded fragment,
+  same shape as the other foodbank_tabs/*.njk files.
+
+  Same four columns, same three tag colours per place type, same 100x100
+  lazily-loaded thumbnail linking to the full image.
+
+  Two changes:
+  - Django's bare htmx <button> becomes a real <form> so the CSRF token
+    rides along, copying foodbank_tabs/donationpoints.njk's delete pattern
+    exactly. (Django has no CSRF middleware enabled at all; this port adds
+    it to every mutation.)
+  - The confirm text says REFRESH, not delete, because that is what the
+    action does. photo_delete leaves the photo re-fetchable: see
+    routes/admin/photoDelete.ts's comment and givefood/utils/geo.py:107-141.
+  The `#generallocations` / `#donationpoints` anchors from Django's markup
+  become this port's panel ids (generallocations-panel /
+  donationpoints-panel, foodbank_detail.njk:19-21).
+#}
+{% if photos.length %}
+<table class="table is-fullwidth is-hoverable">
+  <thead>
+    <tr>
+      <th>Place Name &amp; Type</th>
+      <th>Place ID</th>
+      <th>Photo</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody id="photos-tbody">
+    {% for p in photos %}
+    <tr id="photo-row-{{ p.photo_id }}">
+      <td>
+        {% if p.place_type == "foodbank" %}
+        <a href="#generallocations-panel">{{ p.place_name }}</a><br>
+        <span class="tag is-danger is-light">{{ p.place_type }}</span>
+        {% elif p.place_type == "location" %}
+        <a href="#generallocations-panel">{{ p.place_name }}</a><br>
+        <span class="tag is-warning is-light">{{ p.place_type }}</span>
+        {% elif p.place_type == "donationpoint" %}
+        <a href="#donationpoints-panel">{{ p.place_name }}</a><br>
+        <span class="tag is-info is-light">{{ p.place_type }}</span>
+        {% endif %}
+      </td>
+      <td>{{ p.place_id | truncatechars(25) }}</td>
+      <td>
+        <a href="{{ p.photo_url }}" target="_blank">
+          <img src="{{ p.photo_url }}" alt="{{ p.place_name }}" style="max-width:100px;max-height:100px;" loading="lazy">
+        </a>
+      </td>
+      <td>
+        <form hx-post="/admin/foodbank/{{ foodbank_slug }}/photo/{{ p.photo_id }}/delete/"
+              hx-target="#photo-row-{{ p.photo_id }}"
+              hx-swap="delete"
+              hx-confirm="Refresh this photo? The stored copy is removed; it is re-fetched from Google the next time the page is viewed."
+              hx-on::after:request="decrementPhotoCount()"
+              style="display:inline">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button type="submit" class="button is-small is-danger is-light">Delete</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p style="margin-top:20px;">No photos</p>
+{% endif %}

@@ -1,0 +1,78 @@
+{% extends "admin/page.njk" %}
+
+{#
+  Ports gfadmin/templates/admin/addsub.html (21 lines): one textarea named
+  `emails`, one submit button, a CSRF token, posting to action="".
+
+  Changes, each deliberate:
+  - The page names the food bank. Django computes that title at
+    views.py:1597 and then discards it (template_vars = {} at :1611), so its
+    own page says only "Add Sub" and renders class="form-".
+  - action="" is dropped: a bare method="post" posts to the same URL, and
+    both GET and POST are registered on this path.
+  - The onclick="this.form.submit();this.disabled = true;" double-submit
+    hack is dropped. It was a crude guard against double-clicking a form
+    with no server-side dedupe; the insert now uses ON CONFLICT DO NOTHING,
+    so a double submit is harmless.
+  - A results report, which Django cannot have: it 302s on success
+    (views.py:1609), so it can never tell you what happened.
+  - An explicit consent warning, because confirmed=True (views.py:1606)
+    bypasses the double opt-in the public sign-up form enforces.
+#}
+
+{% block title %}Add Subscribers{% endblock %}
+
+{% block body %}
+<div class="columns">
+  <div class="column is-half">
+
+    <h1 class="title">{{ title }}</h1>
+    <p><a href="/admin/foodbank/{{ foodbank.slug }}/">&larr; Back to {{ foodbank.name }}</a></p>
+
+    {% if results %}
+    <div class="notification is-light" style="margin-top:16px">
+      <strong>{{ results.added }} added</strong>,
+      {{ results.already }} already subscribed,
+      {{ results.invalid_total }} rejected.
+      {% if results.invalid.length %}
+      <ul style="margin-top:8px">
+        {% for bad in results.invalid %}<li><code>{{ bad }}</code></li>{% endfor %}
+      </ul>
+      {% if results.invalid_total > results.invalid.length %}
+      <p class="is-size-7">&hellip; and {{ results.invalid_total - results.invalid.length }} more.</p>
+      {% endif %}
+      {% endif %}
+    </div>
+    {% endif %}
+
+    <form method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <div class="field">
+        <label class="label" for="id_emails">Email addresses</label>
+        <div class="control">
+          <textarea name="emails" id="id_emails" class="textarea" rows="10" placeholder="one@example.com&#10;two@example.com"></textarea>
+        </div>
+        <p class="help">
+          One per line. Blank lines are ignored. Addresses are lowercased and trimmed, and
+          anything that is not a valid email address is rejected and reported rather than saved.
+          An address already subscribed to this food bank is left alone.
+        </p>
+      </div>
+
+      <div class="notification is-warning is-light is-size-7">
+        These subscribers are created <strong>already confirmed</strong> &mdash; they skip the
+        double opt-in the public sign-up form requires. Only paste addresses you have consent
+        for. (<code>gfadmin/views.py:1606</code> sets <code>confirmed = True</code>; this is the
+        intended manual escape hatch, not an accident.)
+      </div>
+
+      <div class="field">
+        <div class="control">
+          <button type="submit" class="button is-link is-light">Add subscribers</button>
+        </div>
+      </div>
+    </form>
+
+  </div>
+</div>
+{% endblock %}

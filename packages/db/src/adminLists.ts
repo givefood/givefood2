@@ -429,4 +429,50 @@ export async function getFoodbanksWithoutNeedPage(session: Session, page: number
   return { rows: result.results, total, page, pageSize, hasNext: offset + pageSize < total };
 }
 
+// gfadmin/views.py:411-419 needs() -- `FoodbankChange.objects.order_by(
+// "-created")[:200]`, rendered by admin/needs.html. Django's hard [:200]
+// slice is a cap, not a page: there is no way to reach need 201 from that
+// screen at all. Paginated here for the same reason every other list in this
+// file is (see the file header), which also makes the whole table reachable.
+//
+// foodbank_slug is LEFT JOINed rather than taken from the denormalised
+// foodbank_name: needs.html links the food bank cell via
+// `need.foodbank_name_slug`, a model property that slugifies the stored name,
+// and a slugified name is not reliably the food bank's real slug. Joining on
+// the real FK gives a link that actually resolves, and NULLs cleanly for an
+// unassigned need (which foodbank_name_slug would render as a broken link).
+export interface NeedListRow {
+  id: number;
+  need_id: string;
+  foodbank_name: string | null;
+  foodbank_slug: string | null;
+  change_text: string;
+  excess_change_text: string | null;
+  published: number;
+  is_categorised: number | null;
+  input_method: string;
+  created: string;
+  modified: string;
+}
+
+export async function getNeedsPage(session: Session, page: number, pageSize: number): Promise<PageResult<NeedListRow>> {
+  const offset = (page - 1) * pageSize;
+  const [countRow, result] = await Promise.all([
+    session.prepare("SELECT COUNT(*) AS n FROM foodbankchange").first<{ n: number }>(),
+    session
+      .prepare(
+        `SELECT n.id, n.need_id, n.foodbank_name, f.slug AS foodbank_slug, n.change_text, n.excess_change_text,
+                n.published, n.is_categorised, n.input_method, n.created, n.modified
+         FROM foodbankchange n
+         LEFT JOIN foodbank f ON f.id = n.foodbank_id
+         ORDER BY n.created DESC
+         LIMIT ? OFFSET ?`,
+      )
+      .bind(pageSize, offset)
+      .all<NeedListRow>(),
+  ]);
+  const total = countRow?.n ?? 0;
+  return { rows: result.results, total, page, pageSize, hasNext: offset + pageSize < total };
+}
+
 export { totalPages };

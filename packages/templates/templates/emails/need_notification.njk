@@ -1,0 +1,55 @@
+{# gfwfbn/templates/wfbn/emails/notification.html -- the HTML half of the
+   subscriber need-notification email. Rendered raw (no admin chrome) by
+   GET /admin/need/:id/email/?format=html, and by the send path when that
+   lands, from the SAME context builder
+   (workers/site/src/lib/needNotificationEmail.ts).
+
+   Django's `{% load humanize %}` on line 2 of the original is a dead
+   import -- no humanize filter appears anywhere in the file -- so there is
+   nothing to port for it.
+
+   `utm` carries a literal "&" (not "&amp;") to stay byte-identical to the
+   Django original's hand-written querystrings, hence |safe on every use.
+
+   `{% if articles.length %}`, not `{% if articles %}`: Django's
+   `{% if need.foodbank.articles_month %}` is false for an empty queryset,
+   but an empty JS array is TRUTHY in nunjucks. #}
+{% extends "emails/page.njk" %}
+
+{% block body %}
+
+    <p>We've found a new list of items requested by <a href="https://www.givefood.org.uk/needs/at/{{ foodbank_slug }}/?{{ utm|safe }}">{{ full_name }}</a>. They are...</p>
+
+    {{ change_text|linebreaks }}
+
+    {% if has_excess %}
+        <p>{{ full_name }} currently doesn't need anymore of these items: {% for item in excess_list %}{{ item }}{% if not loop.last %}, {% endif %}{% endfor %}.</p>
+    {% endif %}
+
+    {% if articles.length %}
+        <b>News from {{ full_name }}</b><br>
+        {% for article in articles %}
+            <a href="{{ article.url_with_ref }}">{{ article.title_captialised }}</a><br><span class="articledate">{{ article.published_date }}</span>
+            <br>
+        {% endfor %}
+        <br>
+    {% endif %}
+
+    <p>You can find more details at <a href="https://www.givefood.org.uk/needs/at/{{ foodbank_slug }}/?{{ utm|safe }}">givefood.org.uk/needs/at/{{ foodbank_slug }}</a></p>
+
+    {% if show_donation_points %}
+        <p>&#128722; Find <a href="https://www.givefood.org.uk/needs/at/{{ foodbank_slug }}/donationpoints/?{{ utm|safe }}">donation points</a></p>
+    {% endif %}
+    <p>&#128506;&#65039; See other <a href="https://www.givefood.org.uk/needs/at/{{ foodbank_slug }}/nearby/?{{ utm|safe }}">nearby food banks</a></p>
+
+    <p>Download our app to get notifications when you are at a donation point <a href="https://www.givefood.org.uk/apps/?{{ utm|safe }}">givefood.org.uk/apps</a></p>
+
+    {# The missing full stop after the subscribe time, and the http:// (not
+       https://) unsubscribe link, are both in the Django original --
+       preserved verbatim rather than tidied, because this paragraph is in
+       5,855 already-delivered inboxes and the unsubscribe URL is the one
+       RFC 8058's List-Unsubscribe header points at. #}
+    <p>You're getting these emails because you subscribed to them at <a href="https://www.givefood.org.uk/?{{ utm|safe }}">givefood.org.uk</a> on {{ subscriber_created_date }} at {{ subscriber_created_time }} You can unsubscribe by <a href="http://www.givefood.org.uk/needs/at/{{ foodbank_slug }}/updates/unsubscribe/?key={{ unsub_key }}">clicking here</a>.</p>
+
+
+{% endblock %}

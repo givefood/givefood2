@@ -134,11 +134,24 @@ export function formatDjangoDateTokens(date: Date, format: string): string {
 // instant) -- the same defensive parsing as parseUtc, duplicated rather
 // than cross-package-imported per this repo's small-shared-shape precedent
 // (see BOT_USER_AGENT/slugify).
-export function djangoDate(value: string, format: string): string {
+export function djangoDate(value: string | null | undefined, format: string): string {
+  // Django's own `|date` on a None/empty value renders "" -- it never raises.
+  // Matching that is not just defensiveness: a nullable timestamp reaching
+  // this filter is NORMAL (foodbank.edited, last_need_check, an order's
+  // actual delivery...), and templates guard on the ROW existing far more
+  // often than on the individual column. Throwing here 500s the whole page
+  // for a null column, which is exactly what happened to the admin dashboard
+  // (`stats.oldest_edit.edited` is null whenever the oldest-edited food bank
+  // has never been edited -- SQLite sorts NULLs first on ORDER BY edited ASC,
+  // so that row is the one the query returns).
+  if (!value) return "";
   const withT = value.includes(" ") ? value.replace(" ", "T") : value;
   const hasTime = withT.includes("T");
   const iso = `${hasTime ? withT.replace(/Z$/, "") : `${withT}T00:00:00`}Z`;
-  return formatDjangoDateTokens(new Date(iso), format);
+  const date = new Date(iso);
+  // An unparseable stored value renders as "" too, rather than the literal
+  // "NaN NaN, NaN" the token substitution would otherwise emit.
+  return Number.isNaN(date.getTime()) ? "" : formatDjangoDateTokens(date, format);
 }
 
 // django's `floatformat:N` -- fixed N decimal places for display. Only the

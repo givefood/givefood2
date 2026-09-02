@@ -1,17 +1,28 @@
 {# Shared field renderer for every admin*.njk edit form -- driven by the
    AdminFieldSpec descriptors in lib/adminFormFields.ts (and its per-model
-   siblings), not per-template hand-written inputs. #}
+   siblings), not per-template hand-written inputs.
+
+   Every control carries id="id_<name>", matching what Django's
+   `{{ form|bulma }}` emits for a form field. That is not cosmetic: the admin's
+   own static/js/admin.js (served byte-identical to Django's copy, loaded by
+   admin/page.njk on every page) selects ALL of its form controls by those ids
+   -- #id_name, #id_lat_lng, #id_place_id, #id_address, #id_postcode,
+   #id_change_text, #id_excess_change_text, #id_company (admin.js:97-111).
+   Without them every one of its six form initialisers silently no-ops, so the
+   "Get Lat/Lng & Place ID", "Lookup Location", "Lookup Donation Point",
+   "Make Titlecase", "CSV to Lines" and "Find & Replace" buttons were never
+   even injected into the page, let alone functional. #}
 {% macro field(spec, value) %}
 <div class="field">
-  <label class="label">{{ spec.label }}{% if spec.required %} *{% endif %}</label>
+  <label class="label" for="id_{{ spec.name }}">{{ spec.label }}{% if spec.required %} *{% endif %}</label>
   <div class="control">
     {% if spec.kind == "textarea" %}
-      <textarea class="textarea" name="{{ spec.name }}"{% if spec.required %} required{% endif %}>{{ value }}</textarea>
+      <textarea class="textarea" id="id_{{ spec.name }}" name="{{ spec.name }}"{% if spec.required %} required{% endif %}>{{ value }}</textarea>
     {% elif spec.kind == "checkbox" %}
-      <label class="checkbox"><input type="checkbox" name="{{ spec.name }}" value="1"{% if value %} checked{% endif %}> {{ spec.helpText or spec.label }}</label>
+      <label class="checkbox"><input type="checkbox" id="id_{{ spec.name }}" name="{{ spec.name }}" value="1"{% if value %} checked{% endif %}> {{ spec.helpText or spec.label }}</label>
     {% elif spec.kind == "tristate" %}
       <div class="select">
-        <select name="{{ spec.name }}">
+        <select id="id_{{ spec.name }}" name="{{ spec.name }}">
           <option value=""{% if value != 0 and value != 1 %} selected{% endif %}>Unknown</option>
           <option value="1"{% if value == 1 %} selected{% endif %}>Yes</option>
           <option value="0"{% if value == 0 %} selected{% endif %}>No</option>
@@ -19,7 +30,7 @@
       </div>
     {% elif spec.kind == "select" %}
       <div class="select">
-        <select name="{{ spec.name }}"{% if spec.required %} required{% endif %}>
+        <select id="id_{{ spec.name }}" name="{{ spec.name }}"{% if spec.required %} required{% endif %}>
           {% if not spec.required %}<option value="">-- none --</option>{% endif %}
           {% for opt in spec.options %}
           <option value="{{ opt }}"{% if opt == value %} selected{% endif %}>{{ opt }}</option>
@@ -27,7 +38,7 @@
         </select>
       </div>
     {% else %}
-      <input class="input" type="{{ spec.kind }}" name="{{ spec.name }}" value="{{ value }}"{% if spec.required %} required{% endif %}>
+      <input class="input" type="{{ spec.kind }}" id="id_{{ spec.name }}" name="{{ spec.name }}" value="{{ value }}"{% if spec.required %} required{% endif %}>
     {% endif %}
   </div>
   {% if spec.helpText and spec.kind != "checkbox" %}<p class="help">{{ spec.helpText }}</p>{% endif %}

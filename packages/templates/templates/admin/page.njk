@@ -8,6 +8,13 @@
   <link rel="stylesheet" href="/static/css/gf.css?v={{ version }}">
   <link rel="stylesheet" href="/static/css/admin.css?v={{ version }}">
   <script src="/static/js/htmx.js?v={{ version }}"></script>
+  {# gf.css's @font-face rules point at these three; Django's own admin
+     page.html preloads exactly this set, and the port serves them from the
+     same /static/fonts/ paths -- without the preload the admin renders a
+     frame of fallback-font text on every navigation. #}
+  <link rel="preload" href="/static/fonts/soehne-buch.woff2" as="font" type="font/woff2" crossorigin="anonymous">
+  <link rel="preload" href="/static/fonts/soehne-kraftig.woff2" as="font" type="font/woff2" crossorigin="anonymous">
+  <link rel="preload" href="/static/fonts/soehne-dreiviertelfett.woff2" as="font" type="font/woff2" crossorigin="anonymous">
   <meta name="theme-color" content="#F2DECB">
   <link rel="icon" type="image/png" sizes="32x32" href="/static/img/favicon.png">
   <title>{% block title %}{% endblock %} - Give Food Admin</title>
@@ -20,17 +27,37 @@
       <a class="navbar-item" href="/admin/">
         <img src="/static/img/logo.svg" alt="Give Food" class="logo">
       </a>
+      {# admin.js's initNavbarBurger() looks for .navbar-burger[data-target]
+         and toggles is-active on both it and the element with that id. The
+         script was already being served; the markup it drives was missing,
+         so the whole nav was simply unreachable below Bulma's 1024px
+         breakpoint. #}
+      <a role="button" class="navbar-burger" aria-label="menu" aria-expanded="false" data-target="navbarMenu">
+        <span aria-hidden="true"></span>
+        <span aria-hidden="true"></span>
+        <span aria-hidden="true"></span>
+        <span aria-hidden="true"></span>
+      </a>
     </div>
-    <div class="navbar-menu">
-      <a class="navbar-item{% if section == "needs" %} is-active{% endif %}" href="/admin/">Needs</a>
-      <a class="navbar-item{% if section == "foodbanks" %} is-active{% endif %}" href="/admin/foodbanks/">Foodbanks</a>
-      <a class="navbar-item{% if section == "geography" %} is-active{% endif %}" href="/admin/politics/">Politics</a>
+    <div id="navbarMenu" class="navbar-menu">
+      <a class="navbar-item{% if section == "foodbanks" %} is-active{% endif %}" href="/admin/foodbanks/">Food Banks</a>
+      <a class="navbar-item{% if section == "locations" %} is-active{% endif %}" href="/admin/locations/">Locations</a>
+      <a class="navbar-item{% if section == "donationpoints" %} is-active{% endif %}" href="/admin/donationpoints/">Donation Points</a>
+      <a class="navbar-item{% if section == "needs" %} is-active{% endif %}" href="/admin/needs/">Needs</a>
       <a class="navbar-item{% if section == "orders" %} is-active{% endif %}" href="/admin/orders/">Orders</a>
+      <a class="navbar-item{% if section == "crawl_sets" %} is-active{% endif %}" href="/admin/crawl-sets/">Crawls</a>
+      <a class="navbar-item{% if section == "settings" %} is-active{% endif %}" href="/admin/settings/">Settings</a>
     </div>
+
     <div class="navbar-end">
       <div class="navbar-item">
+        <form action="/admin/search/" method="get" role="search" aria-label="Search">
+          <input name="q" class="input" type="text" placeholder="Search everything..." aria-label="Search query" value="{{ q or "" }}">
+        </form>
+      </div>
+      <div class="navbar-item">
         {% if admin_user %}
-          {% if admin_user.picture %}<img src="{{ admin_user.picture }}" alt="{{ admin_user.givenName }}" class="admin-avatar">{% endif %}
+          {% if admin_user.picture %}<img src="{{ admin_user.picture }}" alt="{{ admin_user.givenName }}">{% endif %}
           {{ admin_user.email }}
           <a href="/auth/sign-out/">Sign out</a>
         {% endif %}
@@ -42,8 +69,46 @@
     {% block body %}{% endblock %}
   </div>
 
+  {# Django's footer shows the app version and DB_HOST -- "which database am
+     I actually looking at", the question that matters when an admin has a
+     local and a production tab open at once. D1's binding exposes no name at
+     runtime, so the equivalent comes from a wrangler var; render_time_ms is
+     already tracked by adminPageContext and is the closer Workers analogue of
+     the thing Django's own footer was for. #}
+  <footer class="footer">
+    <dl>
+      <dt>Version</dt>
+      <dd>{{ version }}</dd>
+      <dt>Database</dt>
+      <dd>{{ d1_database or "d1" }}</dd>
+      <dt>Rendered in</dt>
+      <dd>{{ render_time_ms }} ms</dd>
+    </dl>
+  </footer>
+
+  {# admin.js is served byte-identical to Django's copy and reads these four
+     globals directly (API_URLS.geolocation/placeSearch/placeDetail/staticMap).
+     Without them every "Get Lat/Lng & Place ID", "Lookup Location" and
+     "Lookup Donation Point" button on the food bank / location / donation
+     point forms threw ReferenceError on click and silently did nothing.
+     Browser-side Google keys, exactly as Django exposes them -- they are
+     referrer-restricted at Google's end, not secret. #}
+  <script>
+    const gmap_key = "{{ gmap_key or "" }}";
+    const gmap_static_key = "{{ gmap_static_key or "" }}";
+    const gmap_geocode_key = "{{ gmap_geocode_key or "" }}";
+    const gmap_places_key = "{{ gmap_places_key or "" }}";
+  </script>
+
   {% block script %}{% endblock %}
 
+  {# Django's admin page.html also loads csi.js here. Deliberately NOT ported:
+     csi.js drives [data-include] elements, and the admin's only one is
+     index.html:117's `outstandingtaskcount` frag -- a django-tasks queue
+     depth. Queues are push-based here and PLAN.md deletes both the task table
+     and that frag, so csi.js would have zero consumers. The one admin page
+     that genuinely polls (crawl_set.html) uses its own inline setInterval
+     against the crawl-set JSON endpoint, not csi.js. #}
   <script src="/static/js/admin.js?v={{ version }}" defer></script>
 
 </body>

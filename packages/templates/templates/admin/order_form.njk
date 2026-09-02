@@ -1,0 +1,156 @@
+{% extends "admin/page.njk" %}
+
+{# gfadmin/views.py:455-491 order_form, rendered through Django's generic
+   admin/form.html with `{{ form|bulma }}` over OrderForm
+   (givefood/forms.py:189-210, `fields = "__all__"` on the Order model).
+
+   Hand-written rather than driven by includes/formfields.njk's fieldset()
+   macro, because three of these controls are not AdminFieldSpec shapes:
+   the food bank and need selects are populated from live querysets, and
+   items_text is the free-text paste that the save path parses into order
+   lines. The field ORDER follows the Order model's own field order, which
+   is what `fields = "__all__"` renders.
+
+   Every control keeps Django's `id_<name>` id -- see
+   includes/formfields.njk's header for why static/js/admin.js depends on
+   exactly those ids. #}
+
+{% block title %}{{ page_title }}{% endblock %}
+
+{% block body %}
+<div class="columns">
+  <div class="column is-half">
+    <h1 class="title">{{ page_title }}</h1>
+    {% if back_url %}<p><a href="{{ back_url }}">&larr; Back</a></p>{% endif %}
+
+    {# A bound Django form re-renders with its errors inline; this port
+       surfaces the first failure as one banner and preserves every submitted
+       value below, which is the same recovery without a per-field error
+       machinery that nothing else in this admin has yet. #}
+    {% if error %}<div class="notification is-danger is-light">{{ error }}</div>{% endif %}
+
+    <form method="post" class="form-{{ page_title | slugify }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+      <div class="field">
+        <label class="label" for="id_foodbank">Food bank</label>
+        <div class="control">
+          <div class="select">
+            <select id="id_foodbank" name="foodbank">
+              {# forms.py:190 -- required=False, so the empty option is real:
+                 an order can exist before it is assigned to a food bank. #}
+              <option value="">-- none --</option>
+              {% for fb in foodbanks %}
+              <option value="{{ fb.id }}"{% if fb.id == data.foodbank_id %} selected{% endif %}>{{ fb.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="field">
+        <label class="label" for="id_need">Need</label>
+        <div class="control">
+          <div class="select">
+            <select id="id_need" name="need">
+              <option value="">-- none --</option>
+              {% for need in needs %}
+              <option value="{{ need.id }}"{% if need.id == data.need_id %} selected{% endif %}>{{ need.label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+        {# forms.py:199-210 narrows this queryset to the selected food bank's
+           own needs; the route does the same, and caps the list. Say so when
+           the cap actually bit, rather than silently truncating. #}
+        {% if needs_capped %}<p class="help">Showing the most recent needs only. Save with a food bank selected to narrow this list.</p>{% endif %}
+      </div>
+
+      <div class="field">
+        <label class="label" for="id_items_text">Items *</label>
+        <div class="control">
+          <textarea class="textarea" id="id_items_text" name="items_text" rows="12" required>{{ data.items_text }}</textarea>
+        </div>
+        <p class="help">One line per item. Parsed into order lines on save.</p>
+      </div>
+
+      <div class="field">
+        <label class="label" for="id_delivery_date">Delivery date *</label>
+        <div class="control">
+          {# forms.py:195-197's `widgets = {'delivery_date': DateInput(type='date')}` #}
+          <input class="input" type="date" id="id_delivery_date" name="delivery_date" value="{{ data.delivery_date }}" required>
+        </div>
+      </div>
+
+      <div class="field">
+        <label class="label" for="id_delivery_hour">Delivery hour *</label>
+        <div class="control">
+          <div class="select">
+            <select id="id_delivery_hour" name="delivery_hour" required>
+              {% for hour in delivery_hours %}
+              <option value="{{ hour }}"{% if hour == data.delivery_hour %} selected{% endif %}>{{ hour }}:00</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="field">
+        <label class="label" for="id_delivery_provider">Delivery provider</label>
+        <div class="control">
+          <div class="select">
+            <select id="id_delivery_provider" name="delivery_provider">
+              <option value="">-- none --</option>
+              {% for provider in delivery_providers %}
+              <option value="{{ provider }}"{% if provider == data.delivery_provider %} selected{% endif %}>{{ provider }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="field">
+        <label class="label" for="id_delivery_provider_id">Delivery provider ID</label>
+        <div class="control">
+          <input class="input" type="text" id="id_delivery_provider_id" name="delivery_provider_id" value="{{ data.delivery_provider_id or "" }}">
+        </div>
+      </div>
+
+      <div class="field">
+        <label class="label" for="id_order_group">Order group</label>
+        <div class="control">
+          <div class="select">
+            <select id="id_order_group" name="order_group">
+              <option value="">-- none --</option>
+              {% for group in order_groups %}
+              <option value="{{ group.id }}"{% if group.id == data.order_group_id %} selected{% endif %}>{{ group.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="field">
+        <label class="label" for="id_source_url">Source URL</label>
+        <div class="control">
+          <input class="input" type="url" id="id_source_url" name="source_url" value="{{ data.source_url or "" }}">
+        </div>
+      </div>
+
+      <div class="field">
+        <label class="label" for="id_actual_cost">Delivered cost (pence)</label>
+        <div class="control">
+          <input class="input" type="number" id="id_actual_cost" name="actual_cost" value="{{ data.actual_cost if data.actual_cost != null else "" }}" min="0" step="1">
+        </div>
+        <p class="help">What the delivery actually cost, once known. Stored in pence, like `cost`.</p>
+      </div>
+
+      <div class="field">
+        <div class="control">
+          <button type="submit" class="button is-link is-light">Save</button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

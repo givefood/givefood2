@@ -1,0 +1,85 @@
+{# gfadmin/templates/admin/form.html, rendered with page_title "New Need"
+   (gfadmin/views.py:1922) -- the create half of Django's one need_form
+   view. admin/need_form.njk in this same directory is the edit half; the
+   two are separate templates here only because they were built in
+   different work packages, and the follow-up that merges them is in the
+   WP 6.8 wiring notes. Field NAMES are identical in both, so one POST
+   handler could serve both the moment they merge.
+
+   Bulma classes are copied from what django-bulma's `{{ form|bulma }}`
+   filter emits for each widget type (div.field > label.label >
+   div.control > .input/.textarea/.checkbox), rather than from the Django
+   template, which only ever writes the filter.
+
+   FIXES admin/form.html:31-37's dead food-bank preview (defect D2):
+   views.py:1926-1928 resolves `foodbank` from `?foodbank=` and then never
+   puts it in template_vars (1941-1945), so the second column that block
+   was written for has never rendered on this page in production. Restored
+   here -- through the port's own safe proxy signature
+   (`?foodbank=<slug>&field=<known field>`, routes/admin/proxy.ts), never
+   Django's raw `?url=` SSRF that WP 6.3 already replaced.
+   `field=url` is the food bank's own website, matching what
+   admin/form.html:33 asked for (`{{ foodbank.url|urlencode }}`). #}
+{% extends "admin/page.njk" %}
+
+{% block title %}{{ page_title }}{% endblock %}
+
+{% block body %}
+<div class="columns">
+  <div class="column is-half">
+    <h1 class="title">{{ page_title }}</h1>
+    {% if form.foodbank_slug %}
+      <p><a href="/admin/foodbank/{{ form.foodbank_slug }}/">&larr; Back</a></p>
+    {% endif %}
+
+    {% if error %}
+      <div class="notification is-danger is-light">{{ error }}</div>
+    {% endif %}
+
+    <form method="post" action="">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+      <div class="field">
+        <label class="label">Food Bank Slug</label>
+        <div class="control">
+          <input class="input" type="text" name="foodbank_slug" value="{{ form.foodbank_slug }}" placeholder="(none)">
+        </div>
+        <p class="help">Leave blank to leave this need unassigned to any food bank. A need cannot be published without one.</p>
+      </div>
+
+      <div class="field">
+        <label class="label">Needs</label>
+        <div class="control">
+          <textarea class="textarea" name="change_text" rows="6">{{ form.change_text }}</textarea>
+        </div>
+        <p class="help">One item per line.</p>
+      </div>
+
+      <div class="field">
+        <label class="label">Excess</label>
+        <div class="control">
+          <textarea class="textarea" name="excess_change_text" rows="6">{{ form.excess_change_text }}</textarea>
+        </div>
+      </div>
+
+      <div class="field">
+        <div class="control">
+          <label class="checkbox"><input type="checkbox" name="published" value="1"{% if form.published %} checked{% endif %}> Published</label>
+        </div>
+      </div>
+
+      <div class="field">
+        <div class="control">
+          <button type="submit" class="button is-link is-light" onclick="this.form.submit();this.disabled = true;">Save</button>
+        </div>
+      </div>
+    </form>
+  </div>
+
+  {% if show_preview %}
+    <div class="column is-half">
+      <iframe class="preview-frame" src="/admin/proxy/?foodbank={{ form.foodbank_slug }}&amp;field=url" style="width:100%;height:1000px;border:none;" loading="lazy"></iframe>
+    </div>
+  {% endif %}
+</div>
+{% endblock %}

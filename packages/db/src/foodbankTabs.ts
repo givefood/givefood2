@@ -10,7 +10,7 @@ import { mapNeedRow, type FoodbankChangeRow } from "./needs";
 // workers/site/src/lib/timesince.ts's parseUtc() -- same root cause
 // (blind "+ Z"), different file. Strips a trailing "Z" first so it's
 // safe to re-append regardless of whether the input already has one.
-function parseD1Timestamp(value: string): number {
+export function parseD1Timestamp(value: string): number {
   return new Date(`${value.replace(/Z$/, "")}Z`).getTime();
 }
 
