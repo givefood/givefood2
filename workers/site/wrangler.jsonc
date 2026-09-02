@@ -158,21 +158,17 @@
     // main until reverted. `wrangler deploy --dry-run` does NOT perform
     // this check, so it looks safe locally when it isn't. Move a name
     // into "required" only in the same change that actually sets it.
-    "required": ["GMAP_GEOCODE_KEY", "VAPID_PUBLIC_KEY", "TURNSTILE_SECRET", "POSTMARK_TOKEN", "SUBSCRIBER_SALT", "CSRF_SECRET", "WHATSAPP_WEBHOOKVERIFYTOKEN", "WHATSAPP_APP_SECRET"]
-    // GOOGLE_OAUTH_CLIENT_SECRET, SESSION_HMAC_KEY -- auth (WP 6.1/6.2,
-    // lib/adminAuth.ts), code shipped 2026-09-02 but NEITHER is set on the
-    // real account yet (confirmed via `wrangler secret list`) -- add both
-    // here only once `wrangler secret put` has actually been run for both.
-    // SESSION_HMAC_KEY is self-generated (any random 32+ byte value, this
-    // Worker invents it); GOOGLE_OAUTH_CLIENT_SECRET is real Google Cloud
-    // Console data for the existing OAuth client
-    // (927281004707-...apps.googleusercontent.com) that Django's own GSI-
-    // button flow never needed and so never retrieved -- needs the
-    // maintainer's Google Cloud Console access, not something this repo
-    // can supply. Confirmed locally: verified the whole flow works
-    // end-to-end (PKCE, ID-token verification against real Google JWKS,
-    // KV session create/read/sliding-refresh/revoke) with placeholder
-    // .dev.vars values and required temporarily extended for the test.
+    // GOOGLE_OAUTH_CLIENT_SECRET, SESSION_HMAC_KEY: lib/adminAuth.ts (WP
+    // 6.1/6.2) -- the admin's Authorization Code + PKCE sign-in. Django's
+    // own GSI-button flow never needed a client secret at all (client-side
+    // ID token, no server-to-server exchange -- confirmed absent anywhere
+    // in gfauth/, verified by grep), so this is genuinely new, not carried
+    // over. GOOGLE_OAUTH_CLIENT_SECRET is real Google Cloud Console data
+    // for the existing OAuth client (927281004707-...apps.googleusercontent
+    // .com); SESSION_HMAC_KEY is self-generated (any random 32+ byte
+    // value, this Worker invents it, no external source). Both set
+    // 2026-09-02, confirmed via `wrangler secret list`.
+    "required": ["GMAP_GEOCODE_KEY", "VAPID_PUBLIC_KEY", "TURNSTILE_SECRET", "POSTMARK_TOKEN", "SUBSCRIBER_SALT", "CSRF_SECRET", "WHATSAPP_WEBHOOKVERIFYTOKEN", "WHATSAPP_APP_SECRET", "GOOGLE_OAUTH_CLIENT_SECRET", "SESSION_HMAC_KEY"]
     // GMAP_STATIC_KEY, GMAP_PLACES_KEY -- media backfill, queued not inline
     // (§3.7) -- this Worker never calls Google directly; see
     // workers/jobs/wrangler.jsonc for where GMAP_STATIC_KEY actually lives.
