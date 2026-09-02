@@ -4,6 +4,9 @@
 
 {% block body %}
 <h1 class="title">{{ foodbank.name }}</h1>
+
+{% if foodbank.is_closed %}<span class="tag is-danger">Closed</span>{% endif %}
+
 <p><a href="/admin/foodbank/{{ foodbank.slug }}/edit/">Edit</a> &middot; <a href="/admin/foodbank/{{ foodbank.slug }}/check/">Check</a></p>
 
 <form action="/admin/foodbank/{{ foodbank.slug }}/touch/" method="post" style="margin-top:10px">
@@ -13,22 +16,99 @@
 
 <div class="tabs is-boxed">
   <ul role="tablist" aria-label="Foodbank">
-    <li class="is-active" role="presentation"><a data-tab="generallocations" role="tab" aria-selected="true" aria-controls="generallocations-panel" id="generallocations-tab"><span>General</span></a></li>
-    <li role="presentation"><a data-tab="needsorders" role="tab" aria-selected="false" aria-controls="needsorders-panel" id="needsorders-tab"><span>Needs &amp; Orders</span></a></li>
-    <li role="presentation"><a data-tab="donationpoints" role="tab" aria-selected="false" aria-controls="donationpoints-panel" id="donationpoints-tab"><span>Donation Points</span></a></li>
-    {% if counts.articles %}<li role="presentation"><a data-tab="articles" role="tab" aria-selected="false" aria-controls="articles-panel" id="articles-tab"><span>Articles</span></a></li>{% endif %}
-    <li role="presentation"><a data-tab="subscribers" role="tab" aria-selected="false" aria-controls="subscribers-panel" id="subscribers-tab"><span>Subscribers</span></a></li>
-    <li role="presentation"><a data-tab="crawls" role="tab" aria-selected="false" aria-controls="crawls-panel" id="crawls-tab"><span>Crawls</span></a></li>
+    <li class="is-active" role="presentation"><a data-tab="generallocations" role="tab" aria-selected="true" aria-controls="generallocations-panel" id="generallocations-tab"><span class="icon"><i class="mdi mdi-bank"></i></span><span>General &amp; Locations <span class="tag is-info is-normal is-light">{{ counts.locations }}</span></span></a></li>
+    <li role="presentation"><a data-tab="needsorders" role="tab" aria-selected="false" aria-controls="needsorders-panel" id="needsorders-tab"><span class="icon"><i class="mdi mdi-shopping"></i></span><span>Needs <span class="tag is-info is-normal is-light">{{ counts.needs }}</span> &amp; Orders <span class="tag is-info is-normal is-light">{{ counts.orders }}</span></span></a></li>
+    <li role="presentation"><a data-tab="donationpoints" role="tab" aria-selected="false" aria-controls="donationpoints-panel" id="donationpoints-tab"><span class="icon"><i class="mdi mdi-store"></i></span><span>Donation Points <span class="tag is-info is-normal is-light">{{ counts.donation_points }}</span></span></a></li>
+    {% if counts.articles %}<li role="presentation"><a data-tab="articles" role="tab" aria-selected="false" aria-controls="articles-panel" id="articles-tab"><span class="icon"><i class="mdi mdi-newspaper-variant-multiple-outline"></i></span><span>Articles <span class="tag is-info is-normal is-light">{{ counts.articles }}</span></span></a></li>{% endif %}
+    <li role="presentation"><a data-tab="subscribers" role="tab" aria-selected="false" aria-controls="subscribers-panel" id="subscribers-tab"><span class="icon"><i class="mdi mdi-bell"></i></span><span>Subscribers <span class="tag is-info is-normal is-light">{{ counts.subscribers }}</span></span></a></li>
+    <li role="presentation"><a data-tab="crawls" role="tab" aria-selected="false" aria-controls="crawls-panel" id="crawls-tab"><span class="icon"><i class="mdi mdi-robot"></i></span><span>Crawls <span class="tag is-info is-normal is-light">{{ counts.crawls }}</span></span></a></li>
   </ul>
 </div>
 
-<div class="sections">
+<div class="columns sections">
   <div class="column tabcontent generallocations" id="generallocations-panel" role="tabpanel" aria-labelledby="generallocations-tab">
+
+    {% if foodbank.notes %}<div class="box" style="margin-top:20px;">{{ foodbank.notes | linebreaksbr | safe }}</div>{% endif %}
+
+    <h3 class="title is-5">URLs</h3>
+    <a href="/admin/foodbank/{{ foodbank.slug }}/edit/urls/" class="button is-link is-small is-pulled-right is-light">Edit</a>
     <dl>
-      <dt>Postcode</dt><dd>{{ foodbank.postcode }}</dd>
-      <dt>Country</dt><dd>{{ foodbank.country }}</dd>
+      <dt>Website</dt>
+      <dd><a href="{{ foodbank.url }}" target="_blank" rel="noopener">{{ foodbank.url | friendly_url }}</a></dd>
+      <dt>Shopping List URL</dt>
+      <dd><a href="{{ foodbank.shopping_list_url }}" target="_blank" rel="noopener">{{ foodbank.shopping_list_url | friendly_url }}</a></dd>
+      {% if foodbank.rss_url %}<dt>RSS</dt><dd><a href="{{ foodbank.rss_url }}" target="_blank" rel="noopener">{{ foodbank.rss_url | friendly_url }}</a></dd>{% endif %}
+      {% if foodbank.news_url %}<dt>News URL</dt><dd><a href="{{ foodbank.news_url }}" target="_blank" rel="noopener">{{ foodbank.news_url | friendly_url }}</a></dd>{% endif %}
+      {% if foodbank.locations_url %}<dt>Locations URL</dt><dd><a href="{{ foodbank.locations_url }}" target="_blank" rel="noopener">{{ foodbank.locations_url | friendly_url }}</a></dd>{% endif %}
+      {% if foodbank.donation_points_url %}<dt>Donation Points URL</dt><dd><a href="{{ foodbank.donation_points_url }}" target="_blank" rel="noopener">{{ foodbank.donation_points_url | friendly_url }}</a></dd>{% endif %}
+      {% if foodbank.contacts_url %}<dt>Contacts URL</dt><dd><a href="{{ foodbank.contacts_url }}" target="_blank" rel="noopener">{{ foodbank.contacts_url | friendly_url }}</a></dd>{% endif %}
+    </dl>
+
+    <h3 class="title is-5">Info</h3>
+    <dl>
+      <dt>GF Info</dt>
+      <dd><a href="/needs/at/{{ foodbank.slug }}/" target="_blank" rel="noopener">{{ foodbank.slug }}</a></dd>
+      {% if foodbank.facebook_page %}<dt>Facebook</dt><dd><a href="https://www.facebook.com/{{ foodbank.facebook_page }}" target="_blank" rel="noopener">{{ foodbank.facebook_page }}</a></dd>{% endif %}
+      {% if foodbank.bankuet_slug %}<dt>Bankuet</dt><dd><a href="https://www.bankuet.co.uk/{{ foodbank.bankuet_slug }}/" target="_blank" rel="noopener">{{ foodbank.bankuet_slug }}</a></dd>{% endif %}
+      {% if charity_register_url %}
+      <dt>Charity register</dt>
+      <dd><a href="{{ charity_register_url }}" target="_blank" rel="noopener">{{ foodbank.charity_number }}</a></dd>
+      {% if foodbank.charity_just_foodbank %}<dt>Charity just food bank</dt><dd>&#9989; Yes</dd>{% endif %}
+      {% endif %}
       <dt>Network</dt><dd>{{ foodbank.network or "" }}</dd>
-      <dt>Closed</dt><dd>{% if foodbank.is_closed %}Yes{% else %}No{% endif %}</dd>
+      {% if foodbank.network_id %}<dt>Network ID</dt><dd>{{ foodbank.network_id }}</dd>{% endif %}
+      <dt>FSA ID</dt>
+      <dd>
+        <a href="/admin/foodbank/{{ foodbank.slug }}/edit/fsa-id/" class="button is-link is-small is-pulled-right is-light">Edit</a>
+        {% if foodbank.fsa_id %}<a href="{{ fsa_url }}" target="_blank" rel="noopener">{{ foodbank.fsa_id }}</a>
+        {% else %}None (<a href="https://ratings.food.gov.uk/business-search?address-search={{ foodbank.postcode | urlencode }}" target="_blank" rel="noopener">Search</a>){% endif %}
+      </dd>
+      {% if foodbank.is_school %}<dt>Is school</dt><dd>&#9989; Yes</dd>{% endif %}
+    </dl>
+
+    <h3 class="title is-5">Contacts</h3>
+    <a href="/admin/foodbank/{{ foodbank.slug }}/edit/email/" class="button is-link is-small is-pulled-right is-light">Edit Email</a>
+    <a href="/admin/foodbank/{{ foodbank.slug }}/edit/phone/" class="button is-link is-small is-pulled-right is-light" style="margin-right:5px;">Edit Phone</a>
+    <dl>
+      <dt>Email</dt><dd><a href="mailto:{{ foodbank.contact_email }}">{{ foodbank.contact_email }}</a></dd>
+      {% if foodbank.notification_email %}<dt>Delivery Email</dt><dd><a href="mailto:{{ foodbank.notification_email }}">{{ foodbank.notification_email }}</a></dd>{% endif %}
+      {% if foodbank.phone_number %}<dt>Phone</dt><dd><a href="tel:{{ foodbank.phone_number }}">{{ foodbank.phone_number | friendly_phone }}</a></dd>{% endif %}
+      {% if foodbank.secondary_phone_number %}<dt>Secondary phone</dt><dd><a href="tel:{{ foodbank.secondary_phone_number }}">{{ foodbank.secondary_phone_number | friendly_phone }}</a></dd>{% endif %}
+      {% if foodbank.delivery_phone_number %}<dt>Delivery phone</dt><dd><a href="tel:{{ foodbank.delivery_phone_number }}">{{ foodbank.delivery_phone_number | friendly_phone }}</a></dd>{% endif %}
+    </dl>
+
+    <h3 class="title is-5">Politics</h3>
+    <dl>
+      <dt>Parl. Con.</dt><dd>{{ foodbank.parliamentary_constituency_name or "" }}</dd>
+      {% if foodbank.county %}<dt>County</dt><dd>{{ foodbank.county }}</dd>{% endif %}
+      {% if foodbank.district %}<dt>District</dt><dd>{{ foodbank.district }}</dd>{% endif %}
+      {% if foodbank.ward %}<dt>Ward</dt><dd>{{ foodbank.ward }}</dd>{% endif %}
+      <dt>Country</dt><dd>{{ foodbank.country }}</dd>
+    </dl>
+
+    <h3 class="title is-5">Stats</h3>
+    <dl>
+      <dt>Subscribers</dt><dd>{{ number_subscribers }}</dd>
+      <dt>Days Between Needs</dt><dd>{{ foodbank.days_between_needs }}</dd>
+      <dt>Orders</dt><dd>{{ no_orders }}</dd>
+      <dt>Total weight</dt><dd>{{ total_weight_kg }} kg</dd>
+      <dt>Total weight (pkging)</dt><dd>{{ total_weight_kg_pkg }} kg</dd>
+      <dt>Total items</dt><dd>{{ total_items }}</dd>
+      <dt>Total cost</dt><dd>&pound;{{ total_cost }}</dd>
+      <dt>Locations</dt><dd>{{ counts.locations }}</dd>
+      <dt>Donation Points</dt><dd>{{ counts.donation_points }}</dd>
+    </dl>
+
+    <h3 class="title is-5">Dates</h3>
+    <dl>
+      <dt>Created</dt><dd>{{ foodbank.created }}</dd>
+      <dt>Modified</dt><dd>{{ foodbank.modified }}</dd>
+      <dt>Edited</dt><dd>{{ foodbank.edited or "" }}</dd>
+      <dt>Last Need</dt><dd>{{ foodbank.last_need or "" }}</dd>
+      <dt>Last Need Check</dt><dd>{{ foodbank.last_need_check or "" }}</dd>
+      <dt>Last RFI</dt><dd>{{ foodbank.last_rfi or "" }}</dd>
+      <dt>Last Discrepancy Check</dt><dd>{{ foodbank.last_discrepancy_check or "" }}</dd>
+      {% if foodbank.rss_url or foodbank.news_url %}<dt>Last Crawl</dt><dd>{{ foodbank.last_crawl or "" }}</dd>{% endif %}
     </dl>
 
     <h3 class="title is-5">Locations ({{ locations.length }})</h3>
@@ -53,6 +133,12 @@
     {% else %}
       <p>No published need yet.</p>
     {% endif %}
+
+    <h3 class="title is-5">Delete</h3>
+    <form action="/admin/foodbank/{{ foodbank.slug }}/delete/" method="post" onsubmit="return confirm('DELETE {{ foodbank.name }}?');">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="button is-danger is-light">Delete {{ full_name }}</button>
+    </form>
   </div>
 
   <div class="column tabcontent needsorders is-hidden" id="needsorders-panel" role="tabpanel" aria-labelledby="needsorders-tab"

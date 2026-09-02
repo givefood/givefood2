@@ -8,15 +8,48 @@ import {
   getArticlesForFoodbankTab,
   getSubscribersForFoodbankTab,
   getCrawlItemsForFoodbankTab,
+  getFoodbankAdminTotals,
   touchFoodbank,
+  type FoodbankRow,
 } from "@givefood/db";
 import { render } from "@givefood/templates";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
 import { verifyCsrf } from "../../lib/csrf";
 import { adminPageContext } from "./pageContext";
+import { fullNameFoodbank } from "../../lib/fields";
 
 const TAB_LIMIT = 20;
+
+// givefood/models/foodbank.py:326-354 -- small computed properties Django
+// derives on the model rather than storing, not raw D1 columns. English/UK
+// registers only; no other country values appear in this schema.
+function fsaUrl(foodbank: FoodbankRow): string | null {
+  return foodbank.fsa_id ? `https://ratings.food.gov.uk/business/${foodbank.fsa_id}` : null;
+}
+
+function charityRegisterUrl(foodbank: FoodbankRow): string | null {
+  if (!foodbank.charity_number) return null;
+  switch (foodbank.country) {
+    case "Scotland":
+      return `https://www.oscr.org.uk/about-charities/search-the-register/charity-details?number=${foodbank.charity_number}`;
+    case "Northern Ireland":
+      return `https://www.charitycommissionni.org.uk/charity-details/?regId=${foodbank.charity_number.replace("NIC", "")}`;
+    case "Wales":
+    case "England":
+      return `https://register-of-charities.charitycommission.gov.uk/charity-details/?regid=${foodbank.charity_number}&subid=0`;
+    case "Isle of Man":
+      return "https://www.gov.im/about-the-government/offices/attorney-generals-chambers/crown-office/charities/index-of-charities-registered-in-the-isle-of-man/";
+    default:
+      return null;
+  }
+}
+
+// givefood/const/general.py:136 -- packaging adds a fixed 18% to a
+// delivery's raw item weight; kept as a literal here (same precedent as
+// SESSION_TTL_SECONDS-style small constants elsewhere in this codebase)
+// rather than a shared constants module for one admin-only display field.
+const PACKAGING_WEIGHT_PC = 1.18;
 
 // gfadmin/views.py:579-638 foodbank() -- the tabbed detail page. Three
 // panels render eagerly (general info, locations, latest need -- all
@@ -28,13 +61,32 @@ export async function adminFoodbankDetail(c: Context<AppEnv>): Promise<Response>
   const foodbank = await getFoodbankBySlug(db, c.req.param("slug")!);
   if (!foodbank) return c.notFound();
 
-  const [locations, hasArticles] = await Promise.all([getLocationsByFoodbankId(db, foodbank.id), getArticlesForFoodbankTab(db, foodbank.id, 1)]);
+  const [locations, totals] = await Promise.all([getLocationsByFoodbankId(db, foodbank.id), getFoodbankAdminTotals(db, foodbank.id)]);
+
+  const totalWeightKg = totals.totalWeightGrams / 1000;
 
   const html = await render("admin/foodbank_detail.njk", {
     ...(await adminPageContext(c, "foodbanks")),
     foodbank,
+    full_name: fullNameFoodbank(foodbank.name),
+    fsa_url: fsaUrl(foodbank),
+    charity_register_url: charityRegisterUrl(foodbank),
     locations,
-    counts: { articles: hasArticles.length > 0 },
+    counts: {
+      locations: locations.length,
+      needs: totals.needs,
+      orders: totals.orders,
+      donation_points: totals.donationPoints,
+      articles: totals.articles,
+      subscribers: totals.emailSubscribers + totals.webpushSubscribers + totals.mobileSubscribers,
+      crawls: totals.crawls,
+    },
+    no_orders: totals.orders,
+    number_subscribers: totals.emailSubscribers,
+    total_weight_kg: totalWeightKg,
+    total_weight_kg_pkg: Math.round(totalWeightKg * PACKAGING_WEIGHT_PC * 100) / 100,
+    total_items: totals.totalItems,
+    total_cost: totals.totalCostPence / 100,
   });
   return c.html(html);
 }

@@ -36,6 +36,73 @@ export async function touchFoodbank(session: Session, id: number): Promise<void>
   await session.prepare("UPDATE foodbank SET edited = ?, modified = ? WHERE id = ?").bind(now, now, id).run();
 }
 
+export interface FoodbankAdminTotals {
+  needs: number;
+  orders: number;
+  donationPoints: number;
+  articles: number;
+  crawls: number;
+  emailSubscribers: number;
+  webpushSubscribers: number;
+  mobileSubscribers: number;
+  totalWeightGrams: number;
+  totalCostPence: number;
+  totalItems: number;
+}
+
+// gfadmin/views.py:553-570 foodbank_totals() -- "every tab count and order
+// total, in one query" (Django's own framing, via one annotate() call
+// compiling to correlated subqueries). No whatsappsubscriber D1 table
+// exists yet (same gap WP 6.4/6.9 already disclosed), so that count is
+// simply never added in here rather than queried against a table that
+// doesn't exist. SUM()s come back NULL from SQLite when there are zero
+// matching rows -- coalesced to 0 to match Django's Sum() default of 0.
+export async function getFoodbankAdminTotals(session: Session, foodbankId: number): Promise<FoodbankAdminTotals> {
+  const row = await session
+    .prepare(
+      `SELECT
+        (SELECT COUNT(*) FROM foodbankchange WHERE foodbank_id = ?1) AS needs,
+        (SELECT COUNT(*) FROM orders WHERE foodbank_id = ?1) AS orders,
+        (SELECT COUNT(*) FROM foodbankdonationpoint WHERE foodbank_id = ?1) AS donation_points,
+        (SELECT COUNT(*) FROM foodbankarticle WHERE foodbank_id = ?1) AS articles,
+        (SELECT COUNT(*) FROM crawlitem WHERE foodbank_id = ?1) AS crawls,
+        (SELECT COUNT(*) FROM foodbanksubscriber WHERE foodbank_id = ?1) AS email_subscribers,
+        (SELECT COUNT(*) FROM webpushsubscription WHERE foodbank_id = ?1) AS webpush_subscribers,
+        (SELECT COUNT(*) FROM mobilesubscriber WHERE foodbank_id = ?1) AS mobile_subscribers,
+        (SELECT COALESCE(SUM(weight), 0) FROM orders WHERE foodbank_id = ?1) AS total_weight,
+        (SELECT COALESCE(SUM(cost), 0) FROM orders WHERE foodbank_id = ?1) AS total_cost,
+        (SELECT COALESCE(SUM(no_items), 0) FROM orders WHERE foodbank_id = ?1) AS total_items`,
+    )
+    .bind(foodbankId)
+    .first<{
+      needs: number;
+      orders: number;
+      donation_points: number;
+      articles: number;
+      crawls: number;
+      email_subscribers: number;
+      webpush_subscribers: number;
+      mobile_subscribers: number;
+      total_weight: number;
+      total_cost: number;
+      total_items: number;
+    }>();
+
+  return {
+    needs: row?.needs ?? 0,
+    orders: row?.orders ?? 0,
+    donationPoints: row?.donation_points ?? 0,
+    articles: row?.articles ?? 0,
+    crawls: row?.crawls ?? 0,
+    emailSubscribers: row?.email_subscribers ?? 0,
+    webpushSubscribers: row?.webpush_subscribers ?? 0,
+    mobileSubscribers: row?.mobile_subscribers ?? 0,
+    totalWeightGrams: row?.total_weight ?? 0,
+    totalCostPence: row?.total_cost ?? 0,
+    totalItems: row?.total_items ?? 0,
+  };
+}
+
 const COMBINING_MARKS_RE = new RegExp(`[${String.fromCodePoint(0x0300)}-${String.fromCodePoint(0x036f)}]`, "g");
 
 function slugify(value: string): string {

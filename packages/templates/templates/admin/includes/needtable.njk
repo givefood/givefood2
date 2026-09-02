@@ -1,11 +1,17 @@
-{# gfadmin/templates/admin/includes/needtable.html -- one row per need, shared by the dashboard's unpublished/published panels. Food bank name isn't a link yet -- there's no admin food bank page to link to until WP 6.5/6.6 build one. #}
-<table class="table is-fullwidth">
+{# gfadmin/templates/admin/includes/needtable.html -- one row per need, shared by the dashboard's unpublished/published panels. #}
+<table class="table is-fullwidth is-hoverable">
+  <thead>
+    <tr><th></th><th>Foodbank</th><th>When</th><th></th></tr>
+  </thead>
   <tbody>
     {% for need in needs %}
     <tr>
       <td class="input-method">{{ need.input_method_emoji }}</td>
-      <td>{{ need.foodbank_name or "Unknown" }}</td>
-      <td><a href="/admin/need/{{ need.need_id }}/">{{ need.created }}</a></td>
+      <td>
+        {% if need.foodbank_slug %}<a href="/admin/foodbank/{{ need.foodbank_slug }}/">{{ need.foodbank_name }}</a>
+        {% else %}{{ need.foodbank_name or "Unknown" }}{% endif %}
+      </td>
+      <td><a href="/admin/need/{{ need.need_id }}/">{{ need.timesince_ago }}</a></td>
       {% if not need.published %}
       <td>
         <form method="post" action="/admin/need/{{ need.need_id }}/delete/" onsubmit="return confirm('Delete this need?');">

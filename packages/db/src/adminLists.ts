@@ -198,6 +198,7 @@ export async function getAllOrdersForCsv(session: Session): Promise<OrderListRow
 export interface DashboardArticleRow {
   id: number;
   foodbank_name: string | null;
+  foodbank_slug: string | null;
   title: string;
   url: string;
   published_date: string;
@@ -206,9 +207,12 @@ export interface DashboardArticleRow {
 
 export async function getRecentArticlesForAdmin(session: Session, limit: number): Promise<DashboardArticleRow[]> {
   const result = await session
-    .prepare("SELECT id, foodbank_name, title, url, published_date, featured FROM foodbankarticle ORDER BY published_date DESC LIMIT ?")
+    .prepare(
+      "SELECT a.id, a.foodbank_name, f.slug AS foodbank_slug, a.title, a.url, a.published_date, a.featured " +
+        "FROM foodbankarticle a LEFT JOIN foodbank f ON f.id = a.foodbank_id ORDER BY a.published_date DESC LIMIT ?",
+    )
     .bind(limit)
-    .all<{ id: number; foodbank_name: string | null; title: string; url: string; published_date: string; featured: number }>();
+    .all<{ id: number; foodbank_name: string | null; foodbank_slug: string | null; title: string; url: string; published_date: string; featured: number }>();
   return result.results.map((r) => ({ ...r, featured: r.featured === 1 }));
 }
 

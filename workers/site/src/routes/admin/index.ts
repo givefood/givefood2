@@ -1,12 +1,13 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
-import { getOpenDiscrepancies, getPublishedNeeds, getUnpublishedNeeds, getRecentArticlesForAdmin, type FoodbankChangeRow } from "@givefood/db";
+import { getOpenDiscrepancies, getPublishedNeedsForAdmin, getUnpublishedNeeds, getRecentArticlesForAdmin, getAdminDashboardStats, type AdminNeedRow, type DiscrepancyRow } from "@givefood/db";
 import { render } from "@givefood/templates";
 import type { AppEnv } from "../../types";
 import { requireAdminAuth } from "../../middleware/adminAuth";
 import { getAdminSession } from "../../lib/adminAuth";
 import { dbSession } from "../../lib/session";
 import { inputMethodEmoji } from "../../lib/needAdminDisplay";
+import { timesince } from "../../lib/timesince";
 import { adminPageContext } from "./pageContext";
 import { adminProxy } from "./proxy";
 import { adminNeedDetail, adminNeedPublish, adminNeedUnpublish, adminNeedNonpertinent, adminNeedDelete, adminNeedsDeleteAll, adminNeedCategorise, adminNeedTranslations, adminNeedEditForm } from "./needs";
@@ -157,8 +158,12 @@ adminApp.get("/crawl-set/:idJson{[0-9]+\\.json}", adminCrawlSetJson);
 // agnostic, any enqueued job type polls through here.
 adminApp.get("/job/:id/", adminJobStatus);
 
-function enrichNeedRow(row: FoodbankChangeRow): FoodbankChangeRow & { input_method_emoji: string } {
-  return { ...row, input_method_emoji: inputMethodEmoji(row.input_method) };
+function enrichNeedRow(row: AdminNeedRow, now: Date): AdminNeedRow & { input_method_emoji: string; timesince_ago: string } {
+  return { ...row, input_method_emoji: inputMethodEmoji(row.input_method), timesince_ago: `${timesince(row.created, now)} ago` };
+}
+
+function enrichDiscrepancyRow(row: DiscrepancyRow, now: Date): DiscrepancyRow & { timesince_ago: string } {
+  return { ...row, timesince_ago: `${timesince(row.created, now)} ago` };
 }
 
 // gfadmin/views.py:46-53 index() -- the real queue. Registered at the top
@@ -173,19 +178,37 @@ export async function adminIndex(c: Context<AppEnv>): Promise<Response> {
   c.set("adminUser", session);
 
   const db = dbSession(c);
-  const [unpublishedNeeds, publishedNeeds, discrepancies, articles] = await Promise.all([
+  const now = new Date();
+  const [unpublishedNeeds, publishedNeeds, discrepancies, articles, stats] = await Promise.all([
     getUnpublishedNeeds(db),
-    getPublishedNeeds(db, 20),
+    getPublishedNeedsForAdmin(db, 20),
     getOpenDiscrepancies(db, 20),
     getRecentArticlesForAdmin(db, 20),
+    getAdminDashboardStats(db, now),
   ]);
 
   const html = await render("admin/index.njk", {
     ...(await adminPageContext(c, "needs")),
-    unpublished_needs: unpublishedNeeds.map(enrichNeedRow),
-    published_needs: publishedNeeds.map(enrichNeedRow),
-    discrepancies,
+    unpublished_needs: unpublishedNeeds.map((n) => enrichNeedRow(n, now)),
+    published_needs: publishedNeeds.map((n) => enrichNeedRow(n, now)),
+    discrepancies: discrepancies.map((d) => enrichDiscrepancyRow(d, now)),
     articles,
+    stats: {
+      oldest_edit: stats.oldestEdit,
+      oldest_edit_timesince: stats.oldestEdit?.edited ? `${timesince(stats.oldestEdit.edited, now)} ago` : null,
+      oldest_edit_days: stats.oldestEditDays,
+      latest_edit: stats.latestEdit,
+      latest_edit_timesince: stats.latestEdit?.edited ? `${timesince(stats.latestEdit.edited, now)} ago` : null,
+      need_count_24h: stats.needCount24h,
+      need_check_24h: stats.needCheck24h,
+      article_check_24h: stats.articleCheck24h,
+      charity_check_24h: stats.charityCheck24h,
+      oldest_need_check: stats.oldestNeedCheck,
+      oldest_need_check_timesince: stats.oldestNeedCheck?.last_need_check ? `${timesince(stats.oldestNeedCheck.last_need_check, now)} ago` : null,
+      latest_need_check: stats.latestNeedCheck,
+      latest_need_check_timesince: stats.latestNeedCheck?.last_need_check ? `${timesince(stats.latestNeedCheck.last_need_check, now)} ago` : null,
+      latest_need_crawlset_id: stats.latestNeedCrawlSetId,
+    },
   });
   return c.html(html);
 }

@@ -4,58 +4,116 @@
 
 {% block body %}
 <div class="columns">
+
   <div class="column">
-    <h1 class="title">Needs to review ({{ unpublished_needs.length }})</h1>
+    <h2 class="title is-4">Needs</h2>
+
     {% if unpublished_needs.length %}
     <form method="post" action="/admin/needs/delete-all/" onsubmit="return confirm('Delete all ' + {{ unpublished_needs.length }} + ' unreviewed needs?');">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       {% for need in unpublished_needs %}<input type="hidden" name="need_id" value="{{ need.need_id }}">{% endfor %}
-      <button type="submit" class="button is-small is-danger is-light">Delete all</button>
+      <button type="submit" class="button is-small is-pulled-right is-danger is-light">Delete all</button>
     </form>
     {% endif %}
+
+    <h3 class="title is-5">Unpublished</h3>
     {% set needs = unpublished_needs %}
     {% include "admin/includes/needtable.njk" %}
-  </div>
-</div>
 
-<div class="columns">
-  <div class="column">
-    <h2 class="title is-4">Recently published</h2>
+    <h3 class="title is-5">Published</h3>
     {% set needs = published_needs %}
     {% include "admin/includes/needtable.njk" %}
   </div>
-</div>
 
-<div class="columns">
   <div class="column">
-    <h2 class="title is-4">Open discrepancies ({{ discrepancies.length }})</h2>
-    <table class="table is-fullwidth">
+    <h2 class="title is-4">Discrepancies</h2>
+    <table class="table is-fullwidth is-hoverable">
+      <thead>
+        <tr><th>Time</th><th>Foodbank</th><th></th><th></th><th></th></tr>
+      </thead>
       <tbody>
         {% for d in discrepancies %}
         <tr>
-          <td>{{ d.foodbank_name or "Unknown" }}</td>
-          <td>{{ d.discrepancy_type }}</td>
-          <td><a href="/admin/discrepancy/{{ d.id }}/">{{ d.discrepancy_text }}</a></td>
-          <td>{{ d.created }}</td>
+          <td><a href="/admin/discrepancy/{{ d.id }}/">{{ d.timesince_ago }}</a></td>
+          <td>{% if d.foodbank_slug %}<a href="/admin/foodbank/{{ d.foodbank_slug }}/">{{ d.foodbank_name }}</a>{% else %}{{ d.foodbank_name or "" }}{% endif %}</td>
+          <td>{% if d.url %}<a href="{{ d.url }}" target="_blank" rel="noopener">&#128279;</a>{% endif %}</td>
+          <td class="is-size-7">{{ d.discrepancy_text }}</td>
+          <td>
+            <form action="/admin/discrepancy/{{ d.id }}/action/" method="post" style="display:inline-block">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <input type="hidden" name="action" value="done">
+              <button type="submit" class="button is-small is-success is-light">&#10003;</button>
+            </form>
+            <form action="/admin/discrepancy/{{ d.id }}/action/" method="post" style="display:inline-block">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <input type="hidden" name="action" value="invalid">
+              <button type="submit" class="button is-small is-danger is-light">&#10007;</button>
+            </form>
+          </td>
         </tr>
         {% else %}
-        <tr><td colspan="4">None</td></tr>
+        <tr><td colspan="5">None</td></tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
-</div>
 
-<div class="columns">
   <div class="column">
-    <h2 class="title is-4">Recent articles</h2>
-    <table class="table is-fullwidth">
+    <h2 class="title is-4">Metrics</h2>
+
+    <h3 class="title is-5">Edits</h3>
+    <dl>
+      <dt>Oldest Edit</dt>
+      <dd>
+        {% if stats.oldest_edit %}
+        {{ stats.oldest_edit_timesince }}<br>
+        <span class="is-size-7">{{ stats.oldest_edit.edited }}<br>{{ stats.oldest_edit_days }} days ago</span>
+        {% endif %}
+      </dd>
+      <dt>Latest Edit</dt>
+      <dd>
+        {% if stats.latest_edit %}
+        {{ stats.latest_edit_timesince }}<br>
+        <span class="is-size-7">{{ stats.latest_edit.edited }}</span>
+        {% endif %}
+      </dd>
+    </dl>
+
+    <h3 class="title is-5">Offline</h3>
+    <dl>
+      <dt>Oldest Need Check</dt>
+      <dd>
+        {% if stats.oldest_need_check %}
+        {{ stats.oldest_need_check_timesince }}<br>
+        <span class="is-size-7">{{ stats.oldest_need_check.last_need_check }}</span>
+        {% endif %}
+      </dd>
+      <dt>Latest Need Check</dt>
+      <dd>
+        {% if stats.latest_need_check %}
+          {% if stats.latest_need_crawlset_id %}<a href="/admin/crawl-set/{{ stats.latest_need_crawlset_id }}.json">{{ stats.latest_need_check_timesince }}</a>
+          {% else %}{{ stats.latest_need_check_timesince }}{% endif %}
+        <br><span class="is-size-7">{{ stats.latest_need_check.last_need_check }}</span>
+        {% endif %}
+      </dd>
+      <dt>24h Need Checks</dt>
+      <dd>{{ stats.need_check_24h }}</dd>
+      <dt>24h Pub. Need Lines</dt>
+      <dd>{{ stats.need_count_24h }}</dd>
+      <dt>24h Article Checks</dt>
+      <dd>{{ stats.article_check_24h }}</dd>
+      <dt>24h Charity Checks</dt>
+      <dd>{{ stats.charity_check_24h }}</dd>
+    </dl>
+
+    <h2 class="title is-4">Articles</h2>
+    <table class="table is-narrow is-fullwidth">
       <tbody>
         {% for article in articles %}
         <tr>
+          <td>{% if article.foodbank_slug %}<a href="/admin/foodbank/{{ article.foodbank_slug }}/">{{ article.foodbank_name }}</a>{% else %}{{ article.foodbank_name or "" }}{% endif %}</td>
+          <td><a href="{{ article.url }}" target="_blank" rel="noopener">{{ article.title }}</a></td>
           <td>{{ article.published_date }}</td>
-          <td>{{ article.foodbank_name or "" }}</td>
-          <td><a href="{{ article.url }}">{{ article.title }}</a></td>
           <td>
             <form method="post" style="display:inline">
               <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -70,5 +128,6 @@
       </tbody>
     </table>
   </div>
+
 </div>
 {% endblock %}

@@ -17,15 +17,41 @@ import { mapNeedRow, type FoodbankChangeRow } from "./needs";
 // a bug: a never-triaged legacy row with nonpertinent IS NULL stays out of
 // the queue in both Django and here, alongside every row this app's own
 // writers explicitly stamp 0 for, see needcheck.ts's insertFoodbankChange).
-export async function getUnpublishedNeeds(session: Session): Promise<FoodbankChangeRow[]> {
-  const result = await session.prepare("SELECT * FROM foodbankchange WHERE published = 0 AND nonpertinent = 0 ORDER BY created DESC").all();
-  return result.results.map((r) => mapNeedRow(r as Record<string, unknown>));
+// Admin-only enrichment over the shared FoodbankChangeRow shape -- the
+// dashboard links a need's foodbank name to its admin detail page (WP 6.7),
+// which needs a slug the public-API-shared needs.ts queries don't select.
+export interface AdminNeedRow extends FoodbankChangeRow {
+  foodbank_slug: string | null;
+}
+
+function mapAdminNeedRow(raw: Record<string, unknown>): AdminNeedRow {
+  return mapNeedRow(raw) as AdminNeedRow; // coerceBooleans spreads unknown columns through untouched
+}
+
+export async function getUnpublishedNeeds(session: Session): Promise<AdminNeedRow[]> {
+  const result = await session
+    .prepare("SELECT fc.*, f.slug AS foodbank_slug FROM foodbankchange fc LEFT JOIN foodbank f ON f.id = fc.foodbank_id WHERE fc.published = 0 AND fc.nonpertinent = 0 ORDER BY fc.created DESC")
+    .all();
+  return result.results.map((r) => mapAdminNeedRow(r as Record<string, unknown>));
+}
+
+// gfadmin/views.py:50's `published_needs` panel -- the shared needs.ts
+// getPublishedNeeds() (gfapi1/gfapi2's own read path) has no slug to spare
+// for an admin-only nav link, so this is a separate query rather than
+// widening a function three other callers share.
+export async function getPublishedNeedsForAdmin(session: Session, limit: number): Promise<AdminNeedRow[]> {
+  const result = await session
+    .prepare("SELECT fc.*, f.slug AS foodbank_slug FROM foodbankchange fc LEFT JOIN foodbank f ON f.id = fc.foodbank_id WHERE fc.published = 1 ORDER BY fc.created DESC LIMIT ?")
+    .bind(limit)
+    .all();
+  return result.results.map((r) => mapAdminNeedRow(r as Record<string, unknown>));
 }
 
 export interface DiscrepancyRow {
   id: number;
   foodbank_id: number | null;
   foodbank_name: string | null;
+  foodbank_slug: string | null;
   need_id: number | null;
   url: string | null;
   discrepancy_type: string;
@@ -37,10 +63,13 @@ export interface DiscrepancyRow {
 
 // gfadmin/views.py:52's `FoodbankDiscrepancy.objects.filter(status='New')
 // .select_related('foodbank').order_by("-created")[:20]` -- the dashboard's
-// third panel.
+// second panel. foodbankdiscrepancy only denormalises foodbank_name at
+// write time (0008_needcheck.sql), not slug -- joined here so the dashboard
+// can link straight to the admin foodbank page (WP 6.7), same reasoning as
+// getUnpublishedNeeds/getPublishedNeedsForAdmin above.
 export async function getOpenDiscrepancies(session: Session, limit: number): Promise<DiscrepancyRow[]> {
   const result = await session
-    .prepare("SELECT * FROM foodbankdiscrepancy WHERE status = 'New' ORDER BY created DESC LIMIT ?")
+    .prepare("SELECT d.*, f.slug AS foodbank_slug FROM foodbankdiscrepancy d LEFT JOIN foodbank f ON f.id = d.foodbank_id WHERE d.status = 'New' ORDER BY d.created DESC LIMIT ?")
     .bind(limit)
     .all<DiscrepancyRow>();
   return result.results;
