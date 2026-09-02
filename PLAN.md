@@ -6123,6 +6123,21 @@ Set both `html_handling` and `not_found_handling` to `"none"` in `wrangler.jsonc
 owns trailing-slash policy; letting the asset layer emit its own 301s produces redirect
 chains across every food bank URL.
 
+> **A real bug found live and fixed 2026-09-02** (givefood/givefood2#3), not by inspection:
+> the redirect above was implemented correctly, but only ran from `app.notFound()` — and
+> `notPortedYet()`'s own placeholder mount (`app.all("*", …)`, used for every not-yet-built
+> route family, including the entire site root as the final catch-all) is a *matched* route
+> as far as Hono's router is concerned. It answered with its 501 before Hono's router ever
+> reached the "nothing matched" state `app.notFound()` depends on, so the redirect never ran
+> for any already-ported route requested without its trailing slash — confirmed live on
+> `beta.givefood.org.uk` for `/api/2/foodbank/<slug>`, `/needs/at/<slug>`, and `/about-us`.
+> Fixed by extracting the probe-and-redirect check into a shared helper
+> (`workers/site/src/lib/appendSlash.ts`) called from both `app.notFound()` and
+> `notPortedYet()`'s handler, so the placeholder only answers once a slashed retry has also
+> failed to resolve. `gone()` (used where a route family is permanently out of scope, not
+> just not-yet-built) was never affected — it already calls `c.notFound()` directly, which
+> correctly reaches the real handler.
+
 #### 6.1.6 The five middlewares
 
 | Django middleware | Disposition |

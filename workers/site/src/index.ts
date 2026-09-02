@@ -78,6 +78,7 @@ import { writeIndex, writeConstituency, writeConstituencyByCode, writeEmail, wri
 import { adminSignIn, adminAuthReceiver, adminSignOut } from "./routes/admin/auth";
 import { adminApp, adminIndex } from "./routes/admin";
 import { notPortedYet, gone } from "./routes/notPortedYet";
+import { tryAppendSlashRedirect } from "./lib/appendSlash";
 import { render404 } from "./render404";
 import { render500 } from "./render500";
 
@@ -155,7 +156,7 @@ app.get("/api/docs/", api2Docs);
 // Genuinely unmatched /api/* paths -- nothing should reach this now that
 // the above covers every route gfapi2/gfapi1/gfapi3 actually register,
 // but kept as a defensive fallback rather than a bare 404.
-app.route("/api", notPortedYet("unmatched /api/* path"));
+app.route("/api", notPortedYet("unmatched /api/* path", app));
 
 // gfwfbn `index` -- i18n-patterned (givefood/urls.py:47, inside
 // i18n_patterns), so it's registered once bare (English, no prefix) and
@@ -437,7 +438,7 @@ app.get("/write/to/:slug/email/done/", writeDone);
 // Everything below is specified in PLAN.md but not yet built. Each returns
 // 501 so the gap is loud during development. Build order follows PLAN.md
 // §10's phases: wfbn (translated pages) and the APIs next, admin last.
-app.route("/needs", notPortedYet("gfwfbn (translated pages)"));
+app.route("/needs", notPortedYet("gfwfbn (translated pages)", app));
 // gfdumps -- PERMANENTLY out of scope, not deferred: maintainer decision
 // 2026-09-02 (WP 5.6's Container-based dump-generation cron, and the
 // R2-served download/listing pages that depended on it, were dropped
@@ -455,26 +456,16 @@ app.get("/auth/receiver/", adminAuthReceiver);
 app.get("/auth/sign-out/", adminSignOut);
 app.get("/admin/", adminIndex); // same bare-mount-point quirk as api2Index/api2Docs above -- see routes/admin/index.ts's own comment
 app.route("/admin", adminApp);
-app.route("/", notPortedYet("public site"));
+app.route("/", notPortedYet("public site", app));
 
 // PLAN.md §3.5 "APPEND_SLASH". No platform equivalent -- Workers Static
 // Assets' force-trailing-slash only affects ASSET lookups, not the 3,000+
-// food bank URLs that actually need this. Reproduce Django's real behaviour
-// (a 301 to the slashed URL, not serving content in place) with a bounded
-// re-dispatch, restricted to GET/HEAD to avoid re-running a mutating request.
+// food bank URLs that actually need this. The redirect check itself lives
+// in lib/appendSlash.ts, shared with notPortedYet() -- see that file's
+// comment for why a single copy here isn't enough (givefood/givefood2#3).
 app.notFound(async (c) => {
-  const url = new URL(c.req.url);
-  const method = c.req.method;
-
-  if ((method === "GET" || method === "HEAD") && !url.pathname.endsWith("/")) {
-    const slashed = new URL(url.toString());
-    slashed.pathname += "/";
-    const probe = await app.fetch(new Request(slashed, { method: "HEAD" }), c.env, c.executionCtx);
-    if (probe.status !== 404 && probe.status !== 501) {
-      return c.redirect(slashed.toString(), 301); // Django's APPEND_SLASH is a 301
-    }
-  }
-
+  const redirect = await tryAppendSlashRedirect(c, app);
+  if (redirect) return redirect;
   return c.html(await render404(c), 404);
 });
 
