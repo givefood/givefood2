@@ -15,6 +15,7 @@ import { adminDiscrepancyDetail, adminDiscrepancyAction } from "./discrepancies"
 import { adminFoodbankEdit, adminFoodbankPoliticsEdit, adminFoodbankPartialEdit, adminFoodbankNew, adminFoodbankDelete } from "./foodbank";
 import { adminFoodbankUrlsEdit } from "./foodbankUrls";
 import { adminFoodbankLocationForm, adminFoodbankLocationDelete } from "./foodbankLocation";
+import { adminFoodbankLocationAreaForm } from "./foodbankLocationArea";
 import { adminDonationPointForm, adminDonationPointDelete } from "./donationPoint";
 import { adminParlconForm } from "./parlcon";
 import { adminFoodbankDetail, adminFoodbankTab, adminFoodbankTouch } from "./foodbankDetail";
@@ -112,6 +113,8 @@ adminApp.post("/foodbank/:slug/use-ai/:field/", adminFoodbankUseAiDetail);
 
 adminApp.get("/foodbank/:slug/location/new/", adminFoodbankLocationForm);
 adminApp.post("/foodbank/:slug/location/new/", adminFoodbankLocationForm);
+adminApp.get("/foodbank/:slug/location/new/area/", adminFoodbankLocationAreaForm);
+adminApp.post("/foodbank/:slug/location/new/area/", adminFoodbankLocationAreaForm);
 adminApp.get("/foodbank/:slug/location/:locSlug/edit/", adminFoodbankLocationForm);
 adminApp.post("/foodbank/:slug/location/:locSlug/edit/", adminFoodbankLocationForm);
 adminApp.post("/foodbank/:slug/location/:locSlug/delete/", adminFoodbankLocationDelete);

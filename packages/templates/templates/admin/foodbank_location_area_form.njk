@@ -1,0 +1,38 @@
+{% extends "admin/page.njk" %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block body %}
+<div class="columns">
+  <div class="column is-half">
+    <h1 class="title">{{ title }}</h1>
+
+    {% if error %}
+    <div class="notification is-danger is-light">{{ error }}</div>
+    {% endif %}
+
+    <form method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <div class="field">
+        <label class="label">Name</label>
+        <div class="control">
+          <input class="input" type="text" name="name" value="{{ name }}" required>
+        </div>
+        <p class="help">Name of the location</p>
+      </div>
+      <div class="field">
+        <label class="label">MapIt Area ID</label>
+        <div class="control">
+          <input class="input" type="number" name="mapit_id" value="{{ mapit_id }}" required>
+        </div>
+        <p class="help">MapIt Area ID</p>
+      </div>
+      <div class="field">
+        <div class="control">
+          <button type="submit" class="button is-link is-light">Submit</button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

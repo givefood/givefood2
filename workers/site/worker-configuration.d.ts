@@ -38,6 +38,7 @@ export interface Env {
   GMAP_STATIC_KEY: string;
   GMAP_PLACES_KEY: string;
   GMAP_GEOCODE_KEY: string;
+  MAPIT_KEY: string;
   CF_API_KEY: string;
   CF_ZONE_ID: string;
   WHATSAPP_WEBHOOKVERIFYTOKEN: string;
