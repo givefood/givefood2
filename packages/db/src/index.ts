@@ -24,6 +24,7 @@ export * from "./adminLists";
 export * from "./foodbankTabs";
 export * from "./adminJobs";
 export * from "./adminDashboardStats";
+export * from "./orderAdmin";
 export * from "./aac";
 export * from "./articles";
 export * from "./charity";

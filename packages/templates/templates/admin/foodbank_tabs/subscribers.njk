@@ -1,33 +1,29 @@
 {# gfadmin/views.py foodbank_subscribers_tab -- lazy-loaded fragment. #}
-<h3 class="title is-5">Email ({{ subscribers.email.length }})</h3>
-<table class="table is-fullwidth">
-  <tbody>
-    {% for s in subscribers.email %}
-    <tr><td>{{ s.email }}</td><td>{{ s.created }}</td></tr>
-    {% else %}
-    <tr><td>None</td></tr>
-    {% endfor %}
-  </tbody>
-</table>
+<dl>
+  <dt><span class="mdi mdi-email"></span> Email</dt>
+  <dd>{{ subscribers.subscription_counts.email }}</dd>
+  <dt><span class="mdi mdi-whatsapp"></span> WhatsApp</dt>
+  <dd>{{ subscribers.subscription_counts.whatsapp }}</dd>
+  <dt><span class="mdi mdi-cellphone"></span> Mobile</dt>
+  <dd>{{ subscribers.subscription_counts.mobile }}</dd>
+  <dt><span class="mdi mdi-bell"></span> Web Push</dt>
+  <dd>{{ subscribers.subscription_counts.webpush }}</dd>
+</dl>
 
-<h3 class="title is-5">Web Push ({{ subscribers.webpush.length }})</h3>
-<table class="table is-fullwidth">
+<h3 class="title is-5">All Subscriptions</h3>
+<table class="table is-fullwidth is-hoverable">
+  <thead>
+    <tr><th>Type</th><th>Identifier</th><th>Created</th></tr>
+  </thead>
   <tbody>
-    {% for s in subscribers.webpush %}
-    <tr><td>{{ s.browser or "" }}</td><td>{{ s.created }}</td></tr>
+    {% for s in subscribers.all_subscriptions %}
+    <tr>
+      <td style="white-space:nowrap">{{ s.type_emoji | safe }} {{ s.type | django_title }}</td>
+      <td>{{ s.identifier }}</td>
+      <td>{{ s.created }}</td>
+    </tr>
     {% else %}
-    <tr><td>None</td></tr>
-    {% endfor %}
-  </tbody>
-</table>
-
-<h3 class="title is-5">Mobile ({{ subscribers.mobile.length }})</h3>
-<table class="table is-fullwidth">
-  <tbody>
-    {% for s in subscribers.mobile %}
-    <tr><td>{{ s.platform }}</td><td>{{ s.device_model or "" }}</td><td>{{ s.created }}</td></tr>
-    {% else %}
-    <tr><td>None</td></tr>
+    <tr><td colspan="3">None</td></tr>
     {% endfor %}
   </tbody>
 </table>

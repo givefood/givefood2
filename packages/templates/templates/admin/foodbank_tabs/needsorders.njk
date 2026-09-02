@@ -1,30 +1,66 @@
 {# gfadmin/views.py foodbank_needsorders_tab -- lazy-loaded fragment, no page shell. #}
-<h3 class="title is-5">Recent Needs</h3>
-<table class="table is-fullwidth">
-  <tbody>
-    {% for need in needs %}
-    <tr>
-      <td><a href="/admin/need/{{ need.need_id }}/">{{ need.created }}</a></td>
-      <td>{% if need.published %}Published{% else %}Unpublished{% endif %}</td>
-    </tr>
+<div class="columns">
+  <div class="column">
+    {% if needs.length %}
+    <table class="table is-fullwidth is-hoverable">
+      <thead>
+        <tr>
+          <th>Published</th>
+          <th>Nonpertinent</th>
+          <th>Input</th>
+          <th>ID</th>
+          <th>Need</th>
+          <th>Excess</th>
+          <th>Created</th>
+          <th>Modified</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for need in needs %}
+        <tr>
+          <td>{% if need.published %}<span style="color:green">&#10003;</span>{% else %}<span style="color:red">x</span>{% endif %}</td>
+          <td>{% if need.nonpertinent %}<span style="color:green">&#10003;</span>{% else %}<span style="color:red">x</span>{% endif %}</td>
+          <td>{{ need.input_method_emoji }}</td>
+          <td><a href="/admin/need/{{ need.need_id }}/">{{ need.need_id_short }}</a></td>
+          <td class="is-size-7">{{ need.change_text | linebreaksbr | safe }}</td>
+          <td class="is-size-7">{{ need.excess_change_text | linebreaksbr | safe }}</td>
+          <td>{{ need.created }}</td>
+          <td>{{ need.modified }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
     {% else %}
-    <tr><td>None</td></tr>
-    {% endfor %}
-  </tbody>
-</table>
+    <p style="margin-top:20px;">No needs yet</p>
+    {% endif %}
+  </div>
 
-<h3 class="title is-5">Recent Orders</h3>
-<table class="table is-fullwidth">
-  <tbody>
-    {% for order in orders %}
-    <tr>
-      <td>{{ order.order_id }}</td>
-      <td>{{ order.delivery_datetime }}</td>
-      <td>{{ order.delivery_provider or "" }}</td>
-      <td>{{ (order.actual_cost or order.cost) / 100 }}</td>
-    </tr>
+  <div class="column">
+    {% if orders.length %}
+    <table class="table is-fullwidth is-hoverable">
+      <thead>
+        <tr>
+          <th></th>
+          <th>Date</th>
+          <th>Items</th>
+          <th>Cost</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for order in orders %}
+        <tr>
+          <td class="delivery-provider-icon">{% if order.delivery_provider_slug %}<img src="/static/img/delivery_provider/icon/{{ order.delivery_provider_slug }}.png" width="12" alt="{{ order.delivery_provider }}">{% endif %}</td>
+          <td><a href="/admin/order/{{ order.order_id }}/">{{ order.delivery_datetime }}</a></td>
+          <td>{{ order.no_items }}</td>
+          <td>&pound;{{ (order.actual_cost or order.cost) / 100 }}</td>
+          <td>{% if order.notification_email_sent %}<span class="mdi mdi-email-outline"></span>{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
     {% else %}
-    <tr><td>None</td></tr>
-    {% endfor %}
-  </tbody>
-</table>
+    <p style="margin-top:20px;">No orders yet</p>
+    {% endif %}
+  </div>
+</div>

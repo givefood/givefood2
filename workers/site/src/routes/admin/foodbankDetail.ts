@@ -9,17 +9,24 @@ import {
   getSubscribersForFoodbankTab,
   getCrawlItemsForFoodbankTab,
   getFoodbankAdminTotals,
+  crawlTypeIcon,
   touchFoodbank,
   type FoodbankRow,
 } from "@givefood/db";
 import { render } from "@givefood/templates";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
-import { verifyCsrf } from "../../lib/csrf";
+import { verifyCsrf, issueCsrfToken } from "../../lib/csrf";
 import { adminPageContext } from "./pageContext";
 import { fullNameFoodbank } from "../../lib/fields";
+import { inputMethodEmoji } from "../../lib/needAdminDisplay";
 
-const TAB_LIMIT = 20;
+// gfadmin/views.py:644-645 (needs/orders: 200), :723 (crawls: 100) --
+// subscribers has no limit at all (foodbank_subscribers_tab), see
+// foodbankTabs.ts's own comment on getSubscribersForFoodbankTab.
+const NEEDS_ORDERS_TAB_LIMIT = 200;
+const ARTICLES_TAB_LIMIT = 20;
+const CRAWLS_TAB_LIMIT = 100;
 
 // givefood/models/foodbank.py:326-354 -- small computed properties Django
 // derives on the model rather than storing, not raw D1 columns. English/UK
@@ -43,6 +50,22 @@ function charityRegisterUrl(foodbank: FoodbankRow): string | null {
     default:
       return null;
   }
+}
+
+// Django's slugify() strips punctuation rather than hyphenating it (e.g.
+// "Sainsbury's" -> "sainsburys", matching the real
+// /static/img/delivery_provider/icon/sainsburys.png filename) --
+// lib/fields.ts's own exported slugify() instead turns each punctuation
+// run into a "-" (for URL slugs, a different job), which would produce
+// "sainsbury-s" here and 404 the icon. Matches packages/db/src/
+// foodbankAdmin.ts's own local slugify(), used for the same
+// image-filename-matching reason (company_slug).
+function slugify(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^\w\s-]/g, "")
+    .replace(/[-\s]+/g, "-")
+    .replace(/^[-_]+|[-_]+$/g, "");
 }
 
 // givefood/const/general.py:136 -- packaging adds a fixed 18% to a
@@ -103,24 +126,29 @@ export async function adminFoodbankTab(c: Context<AppEnv>): Promise<Response> {
 
   switch (tab) {
     case "needsorders": {
-      const [needs, orders] = await Promise.all([getNeedsForFoodbankTab(db, foodbank.id, TAB_LIMIT), getOrdersForFoodbankTab(db, foodbank.id, TAB_LIMIT)]);
-      return c.html(await render("admin/foodbank_tabs/needsorders.njk", { needs, orders }));
+      const [needs, orders] = await Promise.all([getNeedsForFoodbankTab(db, foodbank.id, NEEDS_ORDERS_TAB_LIMIT), getOrdersForFoodbankTab(db, foodbank.id, NEEDS_ORDERS_TAB_LIMIT)]);
+      return c.html(
+        await render("admin/foodbank_tabs/needsorders.njk", {
+          needs: needs.map((n) => ({ ...n, input_method_emoji: inputMethodEmoji(n.input_method), need_id_short: n.need_id.slice(0, 7) })),
+          orders: orders.map((o) => ({ ...o, delivery_provider_slug: o.delivery_provider ? slugify(o.delivery_provider) : null })),
+        }),
+      );
     }
     case "donationpoints": {
-      const donationPoints = await getDonationPointsByFoodbankId(db, foodbank.id);
-      return c.html(await render("admin/foodbank_tabs/donationpoints.njk", { donation_points: donationPoints, foodbank_slug: foodbank.slug }));
+      const [donationPoints, csrfToken] = await Promise.all([getDonationPointsByFoodbankId(db, foodbank.id), issueCsrfToken(c, c.env.CSRF_SECRET)]);
+      return c.html(await render("admin/foodbank_tabs/donationpoints.njk", { donation_points: donationPoints, foodbank_slug: foodbank.slug, csrf_token: csrfToken }));
     }
     case "articles": {
-      const articles = await getArticlesForFoodbankTab(db, foodbank.id, TAB_LIMIT);
+      const articles = await getArticlesForFoodbankTab(db, foodbank.id, ARTICLES_TAB_LIMIT);
       return c.html(await render("admin/foodbank_tabs/articles.njk", { articles }));
     }
     case "subscribers": {
-      const subscribers = await getSubscribersForFoodbankTab(db, foodbank.id, TAB_LIMIT);
+      const subscribers = await getSubscribersForFoodbankTab(db, foodbank.id);
       return c.html(await render("admin/foodbank_tabs/subscribers.njk", { subscribers }));
     }
     case "crawls": {
-      const crawlItems = await getCrawlItemsForFoodbankTab(db, foodbank.id, TAB_LIMIT);
-      return c.html(await render("admin/foodbank_tabs/crawls.njk", { crawl_items: crawlItems }));
+      const crawlItems = await getCrawlItemsForFoodbankTab(db, foodbank.id, CRAWLS_TAB_LIMIT);
+      return c.html(await render("admin/foodbank_tabs/crawls.njk", { crawl_items: crawlItems.map((i) => ({ ...i, crawl_type_icon: crawlTypeIcon(i.crawl_type) })) }));
     }
     default:
       return c.notFound();

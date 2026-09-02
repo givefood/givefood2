@@ -1,0 +1,94 @@
+{% extends "admin/page.njk" %}
+
+{% block title %}{{ order.order_id }}{% endblock %}
+
+{% block body %}
+<div class="columns">
+  <div class="column is-two-fifths">
+    <dl>
+      <dt>ID</dt>
+      <dd>{{ order.order_id }}</dd>
+      <dt>Foodbank</dt>
+      <dd>{% if order.foodbank_slug %}<a href="/admin/foodbank/{{ order.foodbank_slug }}/">{{ order.foodbank_name }}</a>{% else %}<em>Unassigned</em>{% endif %}</dd>
+      <dt>Delivery</dt>
+      <dd>{{ order.delivery_date }}, {{ order.delivery_hour }}:00</dd>
+      <dt>Items</dt>
+      <dd>{{ order.no_items }}</dd>
+      <dt>Lines</dt>
+      <dd>{{ order.no_lines }}</dd>
+      <dt>Weight</dt>
+      <dd>{{ weight_kg }} kg</dd>
+      <dt>Total weight (pkging)</dt>
+      <dd>{{ weight_kg_pkg }} kg</dd>
+      <dt>Calories</dt>
+      <dd>{{ order.calories }}</dd>
+      <dt>Cost</dt>
+      <dd>&pound;{{ cost }}</dd>
+      {% if actual_cost %}
+      <dt>Delivered cost</dt>
+      <dd>&pound;{{ actual_cost }}</dd>
+      {% endif %}
+      {% if order.source_url %}
+      <dt>Source URL</dt>
+      <dd><a href="{{ order.source_url }}" target="_blank" rel="noopener">{{ order.source_url }}</a></dd>
+      {% endif %}
+      {% if order.delivery_provider %}
+      <dt>Delivery</dt>
+      <dd>{% if delivery_provider_url %}<a href="{{ delivery_provider_url }}" target="_blank" rel="noopener">{{ order.delivery_provider }}</a>{% else %}{{ order.delivery_provider }}{% endif %}</dd>
+      {% endif %}
+      {% if order.delivery_provider_id %}
+      <dt>Del. Prov. ID</dt>
+      <dd>{{ order.delivery_provider_id }}</dd>
+      {% endif %}
+      <dt>Created</dt>
+      <dd>{{ order.created }}</dd>
+      <dt>Modified</dt>
+      <dd>{{ order.modified }}</dd>
+    </dl>
+
+    {% if order.need_id %}
+    <h2 class="title is-5">Need <a href="/admin/need/{{ order.need_id_str }}/">{{ order.need_id_str }}</a></h2>
+    <p>{{ order.need_change_text | linebreaksbr | safe }}</p>
+    <dl>
+      <dt>Found</dt>
+      <dd>{{ order.need_created }}</dd>
+      {% if order.need_uri %}
+      <dt>URL</dt>
+      <dd><a href="{{ order.need_uri }}" target="_blank" rel="noopener">{{ order.need_uri }}</a></dd>
+      {% endif %}
+    </dl>
+    {% endif %}
+
+    {% if order.foodbank_id %}
+    <h2 class="title is-5">Notification</h2>
+    <p>
+      {% if order.notification_email_sent %}
+      <span style="color:green">&#10003;</span> Sent {{ order.notification_email_sent }}
+      {% else %}
+      <span style="color:red">x</span> Not Sent
+      {% endif %}
+    </p>
+    {% endif %}
+  </div>
+
+  <div class="column">
+    <table class="table is-fullwidth is-hoverable">
+      <thead>
+        <tr><th>Name</th><th>Quantity</th><th>Weight</th><th>Calories</th></tr>
+      </thead>
+      <tbody>
+        {% for line in lines %}
+        <tr>
+          <td>{{ line.name }}</td>
+          <td>{{ line.quantity }}</td>
+          <td>{{ line.weight or 0 }}g</td>
+          <td>{{ line.calories or 0 }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="4">None</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

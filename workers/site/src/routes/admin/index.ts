@@ -24,6 +24,7 @@ import { adminFoodbankCheck, adminJobStatus } from "./foodbankCheck";
 import { adminFoodbankUseAiDetail } from "./useAi";
 import { adminQueryConsole } from "./query";
 import { adminFoodbankForceCheck, adminFoodbankForceArticleCrawl, adminFoodbankForceCharityCrawl } from "./foodbankForceCrawl";
+import { adminOrderDetail } from "./order";
 import {
   adminFoodbanksList,
   adminFoodbanksCsv,
@@ -130,6 +131,7 @@ adminApp.get("/politics/", adminParlconsList);
 adminApp.get("/politics/csv/", adminParlconsCsv);
 
 adminApp.get("/orders/", adminOrdersList);
+adminApp.get("/order/:orderId/", adminOrderDetail);
 adminApp.get("/orders/csv/", adminOrdersCsv);
 
 adminApp.get("/needs/csv/", adminNeedsCsv);

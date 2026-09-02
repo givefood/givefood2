@@ -1,15 +1,25 @@
 {# gfadmin/views.py foodbank_crawls_tab -- lazy-loaded fragment. #}
-<table class="table is-fullwidth">
+<table class="table is-fullwidth is-hoverable">
+  <thead>
+    <tr>
+      <th>Type</th>
+      <th>Start</th>
+      <th>Finish</th>
+      <th>Time Taken</th>
+      <th>URL</th>
+    </tr>
+  </thead>
   <tbody>
     {% for item in crawl_items %}
     <tr>
-      <td>{{ item.crawl_type }}</td>
+      <td>{{ item.crawl_type_icon | safe }} {{ item.crawl_type }}</td>
       <td>{{ item.start }}</td>
-      <td>{% if item.finish %}Finished{% else %}Running{% endif %}</td>
-      <td>{% if item.url %}<a href="{{ item.url }}">{{ item.url | truncatechars(40) }}</a>{% endif %}</td>
+      <td>{% if item.finish %}{{ item.finish }}{% else %}<span style="color:red;">Unfinished</span>{% endif %}</td>
+      <td>{% if item.finish %}{{ item.time_taken_ms }} ms{% endif %}</td>
+      <td>{% if item.url %}<a href="{{ item.url }}" target="_blank" rel="noopener">{{ item.url | truncatechars(30) }}</a>{% endif %}</td>
     </tr>
     {% else %}
-    <tr><td colspan="4">None</td></tr>
+    <tr><td colspan="5">None</td></tr>
     {% endfor %}
   </tbody>
 </table>

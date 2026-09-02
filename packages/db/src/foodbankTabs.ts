@@ -1,6 +1,19 @@
 import type { Session } from "./types";
 import { mapNeedRow, type FoodbankChangeRow } from "./needs";
 
+// D1 timestamps written by this app's own code are always
+// new Date().toISOString() -- already "Z"-suffixed -- but this file's
+// duration math used to unconditionally append another "Z" before
+// parsing ("...Z" + "Z" = "...ZZ"), which `new Date()` silently turns
+// into an Invalid Date (getTime() = NaN) rather than throwing. Found
+// 2026-09-02 alongside the identical class of bug already fixed in
+// workers/site/src/lib/timesince.ts's parseUtc() -- same root cause
+// (blind "+ Z"), different file. Strips a trailing "Z" first so it's
+// safe to re-append regardless of whether the input already has one.
+function parseD1Timestamp(value: string): number {
+  return new Date(`${value.replace(/Z$/, "")}Z`).getTime();
+}
+
 // WP 6.7: the foodbank detail page's lazy tabs (gfadmin/views.py's
 // foodbank_needsorders_tab/foodbank_articles_tab/foodbank_subscribers_tab/
 // foodbank_crawls_tab data-builders, plus the crawl-set JSON polling
@@ -14,8 +27,10 @@ export interface OrderTabRow {
   created: string;
   delivery_datetime: string;
   delivery_provider: string | null;
+  no_items: number;
   cost: number;
   actual_cost: number | null;
+  notification_email_sent: string | null;
 }
 
 export async function getNeedsForFoodbankTab(session: Session, foodbankId: number, limit: number): Promise<FoodbankChangeRow[]> {
@@ -25,7 +40,9 @@ export async function getNeedsForFoodbankTab(session: Session, foodbankId: numbe
 
 export async function getOrdersForFoodbankTab(session: Session, foodbankId: number, limit: number): Promise<OrderTabRow[]> {
   const result = await session
-    .prepare("SELECT id, order_id, created, delivery_datetime, delivery_provider, cost, actual_cost FROM orders WHERE foodbank_id = ? ORDER BY created DESC LIMIT ?")
+    .prepare(
+      "SELECT id, order_id, created, delivery_datetime, delivery_provider, no_items, cost, actual_cost, notification_email_sent FROM orders WHERE foodbank_id = ? ORDER BY created DESC LIMIT ?",
+    )
     .bind(foodbankId, limit)
     .all<OrderTabRow>();
   return result.results;
@@ -47,31 +64,66 @@ export async function getArticlesForFoodbankTab(session: Session, foodbankId: nu
   return result.results.map((r) => ({ ...r, featured: r.featured === 1 }));
 }
 
-export interface SubscribersTabData {
-  email: { id: number; email: string; created: string; confirmed: boolean }[];
-  webpush: { id: number; created: string; browser: string | null }[];
-  mobile: { id: number; created: string; platform: string; device_model: string | null }[];
+export interface SubscriptionCounts {
+  email: number;
+  whatsapp: number; // always 0 -- no whatsappsubscriber D1 table exists yet, same gap WP 6.4/6.9 already disclosed
+  mobile: number;
+  webpush: number;
 }
 
-export async function getSubscribersForFoodbankTab(session: Session, foodbankId: number, limit: number): Promise<SubscribersTabData> {
+export interface AllSubscriptionRow {
+  type: "email" | "mobile" | "webpush";
+  type_emoji: string;
+  identifier: string;
+  created: string;
+}
+
+export interface SubscribersTabData {
+  subscription_counts: SubscriptionCounts;
+  all_subscriptions: AllSubscriptionRow[];
+}
+
+const DEVICE_ID_TRUNCATE_LENGTH = 8;
+const ENDPOINT_TRUNCATE_LENGTH = 40;
+
+function truncateWithEllipsis(value: string, length: number): string {
+  return value.length > length ? `${value.slice(0, length)}...` : value;
+}
+
+// gfadmin/views.py:663-720 foodbank_subscribers_tab -- one combined,
+// chronologically-sorted list across every channel (matching
+// /admin/subscriptions/'s own shape), not three separate per-type tables.
+// Unbounded, matching Django exactly -- per-foodbank subscriber counts are
+// small (PLAN.md's own count: the busiest food bank has 98), nothing like
+// the whole-table risk WP 6.9's admin-wide subscriptions list guards
+// against.
+export async function getSubscribersForFoodbankTab(session: Session, foodbankId: number): Promise<SubscribersTabData> {
   const [email, webpush, mobile] = await Promise.all([
-    session
-      .prepare("SELECT id, email, created, confirmed FROM foodbanksubscriber WHERE foodbank_id = ? AND confirmed = 1 ORDER BY created DESC LIMIT ?")
-      .bind(foodbankId, limit)
-      .all<{ id: number; email: string; created: string; confirmed: number }>(),
-    session
-      .prepare("SELECT id, created, browser FROM webpushsubscription WHERE foodbank_id = ? ORDER BY created DESC LIMIT ?")
-      .bind(foodbankId, limit)
-      .all<{ id: number; created: string; browser: string | null }>(),
-    session
-      .prepare("SELECT id, created, platform, device_model FROM mobilesubscriber WHERE foodbank_id = ? ORDER BY created DESC LIMIT ?")
-      .bind(foodbankId, limit)
-      .all<{ id: number; created: string; platform: string; device_model: string | null }>(),
+    session.prepare("SELECT email, created FROM foodbanksubscriber WHERE foodbank_id = ? AND confirmed = 1").bind(foodbankId).all<{ email: string; created: string }>(),
+    session.prepare("SELECT endpoint, browser, created FROM webpushsubscription WHERE foodbank_id = ?").bind(foodbankId).all<{ endpoint: string; browser: string | null; created: string }>(),
+    session.prepare("SELECT device_id, platform, created FROM mobilesubscriber WHERE foodbank_id = ?").bind(foodbankId).all<{ device_id: string; platform: string; created: string }>(),
   ]);
+
+  const all: AllSubscriptionRow[] = [
+    ...email.results.map((r) => ({ type: "email" as const, type_emoji: '<span class="mdi mdi-email"></span>', identifier: r.email, created: r.created })),
+    ...mobile.results.map((r) => ({
+      type: "mobile" as const,
+      type_emoji: '<span class="mdi mdi-cellphone"></span>',
+      identifier: `${r.platform} - ${truncateWithEllipsis(r.device_id, DEVICE_ID_TRUNCATE_LENGTH)}`,
+      created: r.created,
+    })),
+    ...webpush.results.map((r) => ({
+      type: "webpush" as const,
+      type_emoji: '<span class="mdi mdi-bell"></span>',
+      identifier: `${r.browser ?? "Unknown"} - ${truncateWithEllipsis(r.endpoint, ENDPOINT_TRUNCATE_LENGTH)}`,
+      created: r.created,
+    })),
+  ];
+  all.sort((a, b) => (a.created < b.created ? 1 : a.created > b.created ? -1 : 0));
+
   return {
-    email: email.results.map((r) => ({ ...r, confirmed: r.confirmed === 1 })),
-    webpush: webpush.results,
-    mobile: mobile.results,
+    subscription_counts: { email: email.results.length, whatsapp: 0, mobile: mobile.results.length, webpush: webpush.results.length },
+    all_subscriptions: all,
   };
 }
 
@@ -82,14 +134,33 @@ export interface CrawlItemTabRow {
   finish: string | null;
   url: string | null;
   need_id: number | null;
+  time_taken_ms: number | null;
+}
+
+// givefood/const/general.py:62-70 CRAWL_TYPE_ICONS/CRAWL_TYPE_ICON_DEFAULT.
+const CRAWL_TYPE_ICONS: Record<string, string> = {
+  need: '<span class="mdi mdi-cart"></span>',
+  article: '<span class="mdi mdi-newspaper"></span>',
+  charity: '<span class="mdi mdi-bank"></span>',
+  discrepancy: '<span class="mdi mdi-alert"></span>',
+  check: '<span class="mdi mdi-clipboard-check"></span>',
+  urls: '<span class="mdi mdi-link"></span>',
+};
+const CRAWL_TYPE_ICON_DEFAULT = '<span class="mdi mdi-help-circle"></span>';
+
+export function crawlTypeIcon(crawlType: string): string {
+  return CRAWL_TYPE_ICONS[crawlType] ?? CRAWL_TYPE_ICON_DEFAULT;
 }
 
 export async function getCrawlItemsForFoodbankTab(session: Session, foodbankId: number, limit: number): Promise<CrawlItemTabRow[]> {
   const result = await session
     .prepare("SELECT id, crawl_type, start, finish, url, need_id FROM crawlitem WHERE foodbank_id = ? ORDER BY start DESC LIMIT ?")
     .bind(foodbankId, limit)
-    .all<CrawlItemTabRow>();
-  return result.results;
+    .all<Omit<CrawlItemTabRow, "time_taken_ms">>();
+  return result.results.map((r) => ({
+    ...r,
+    time_taken_ms: r.finish ? parseD1Timestamp(r.finish) - parseD1Timestamp(r.start) : null,
+  }));
 }
 
 // gfadmin/views.py:3283-3323 crawl_set_json() -- exact shape test-pinned
@@ -145,7 +216,7 @@ export async function getCrawlSetJson(session: Session, crawlSetId: number): Pro
     }>();
 
   const rows = items.results.map((item) => {
-    const timeTakenMs = item.finish ? new Date(item.finish + "Z").getTime() - new Date(item.start + "Z").getTime() : null;
+    const timeTakenMs = item.finish ? parseD1Timestamp(item.finish) - parseD1Timestamp(item.start) : null;
     let object: CrawlSetJson["items"][number]["object"] = null;
     if (item.need_id !== null) {
       object =
@@ -174,7 +245,7 @@ export async function getCrawlSetJson(session: Session, crawlSetId: number): Pro
   // produced a linked object (a need), not merely items that finished
   // running; `item_count` is every item regardless of outcome.
   const objectCount = items.results.filter((i) => i.need_id !== null).length;
-  const timeTaken = crawlSet.finish ? String((new Date(crawlSet.finish + "Z").getTime() - new Date(crawlSet.start + "Z").getTime()) / 1000) : null;
+  const timeTaken = crawlSet.finish ? String((parseD1Timestamp(crawlSet.finish) - parseD1Timestamp(crawlSet.start)) / 1000) : null;
 
   return {
     crawl_type: crawlSet.crawl_type,

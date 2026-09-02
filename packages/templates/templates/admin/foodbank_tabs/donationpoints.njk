@@ -1,15 +1,44 @@
 {# gfadmin/views.py foodbank_donationpoints_tab -- lazy-loaded fragment. #}
-<table class="table is-fullwidth">
+<a href="/admin/foodbank/{{ foodbank_slug }}/donationpoint/new/" class="button is-link is-light">New Donation Point</a>
+{% if donation_points.length %}
+<table class="table is-fullwidth is-hoverable">
+  <thead>
+    <tr>
+      <th>Name</th>
+      <th>Address</th>
+      <th>Postcode</th>
+      <th>Lat Lng</th>
+      <th>Place ID</th>
+      <th>Company</th>
+      <th>Store ID</th>
+      <th>In Store Only?</th>
+      <th>Notes</th>
+      <th></th>
+    </tr>
+  </thead>
   <tbody>
     {% for dp in donation_points %}
     <tr>
-      <td><a href="/admin/foodbank/{{ foodbank_slug }}/donationpoint/{{ dp.slug }}/edit/">{{ dp.name }}</a></td>
-      <td>{{ dp.company or "" }}</td>
+      <td>{{ dp.name }}</td>
+      <td>{{ dp.address | linebreaksbr | safe }}</td>
       <td>{{ dp.postcode }}</td>
+      <td>{{ dp.lat_lng }}</td>
+      <td>{% if dp.place_id %}{{ dp.place_id | truncatechars(25) }}{% else %}None{% endif %}</td>
+      <td>{% if dp.company %}<img src="/static/img/co/{{ dp.company_slug }}.png" alt="{{ dp.company }}" class="companyicon"> {{ dp.company }}{% endif %}</td>
+      <td>{{ dp.store_id or "" }}</td>
+      <td>{% if dp.in_store_only %}Y{% endif %}</td>
+      <td>{% if dp.notes %}{{ dp.notes | linebreaksbr | safe }}{% endif %}</td>
+      <td>
+        <a href="/admin/foodbank/{{ foodbank_slug }}/donationpoint/{{ dp.slug }}/edit/" class="button is-small is-link is-light">Edit</a>
+        <form action="/admin/foodbank/{{ foodbank_slug }}/donationpoint/{{ dp.slug }}/delete/" method="post" style="display:inline" onsubmit="return confirm('Delete {{ dp.name }}?')">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button type="submit" class="button is-small is-danger is-light">Delete</button>
+        </form>
+      </td>
     </tr>
-    {% else %}
-    <tr><td colspan="3">None</td></tr>
     {% endfor %}
   </tbody>
 </table>
-<a href="/admin/foodbank/{{ foodbank_slug }}/donationpoint/new/" class="button is-light is-small">New Donation Point</a>
+{% else %}
+<p style="margin-top:20px;">No donation points yet</p>
+{% endif %}
