@@ -1,0 +1,33 @@
+{# gfadmin/views.py foodbank_subscribers_tab -- lazy-loaded fragment. #}
+<h3 class="title is-5">Email ({{ subscribers.email.length }})</h3>
+<table class="table is-fullwidth">
+  <tbody>
+    {% for s in subscribers.email %}
+    <tr><td>{{ s.email }}</td><td>{{ s.created }}</td></tr>
+    {% else %}
+    <tr><td>None</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<h3 class="title is-5">Web Push ({{ subscribers.webpush.length }})</h3>
+<table class="table is-fullwidth">
+  <tbody>
+    {% for s in subscribers.webpush %}
+    <tr><td>{{ s.browser or "" }}</td><td>{{ s.created }}</td></tr>
+    {% else %}
+    <tr><td>None</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<h3 class="title is-5">Mobile ({{ subscribers.mobile.length }})</h3>
+<table class="table is-fullwidth">
+  <tbody>
+    {% for s in subscribers.mobile %}
+    <tr><td>{{ s.platform }}</td><td>{{ s.device_model or "" }}</td><td>{{ s.created }}</td></tr>
+    {% else %}
+    <tr><td>None</td></tr>
+    {% endfor %}
+  </tbody>
+</table>

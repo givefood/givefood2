@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
-import { getOpenDiscrepancies, getPublishedNeeds, getUnpublishedNeeds, type FoodbankChangeRow } from "@givefood/db";
+import { getOpenDiscrepancies, getPublishedNeeds, getUnpublishedNeeds, getRecentArticlesForAdmin, type FoodbankChangeRow } from "@givefood/db";
 import { render } from "@givefood/templates";
 import type { AppEnv } from "../../types";
 import { requireAdminAuth } from "../../middleware/adminAuth";
@@ -16,6 +16,9 @@ import { adminFoodbankUrlsEdit } from "./foodbankUrls";
 import { adminFoodbankLocationForm, adminFoodbankLocationDelete } from "./foodbankLocation";
 import { adminDonationPointForm, adminDonationPointDelete } from "./donationPoint";
 import { adminParlconForm } from "./parlcon";
+import { adminFoodbankDetail, adminFoodbankTab, adminFoodbankTouch } from "./foodbankDetail";
+import { adminArticleToggleFeatured } from "./articles";
+import { adminCrawlSetJson } from "./crawlSet";
 import {
   adminFoodbanksList,
   adminFoodbanksCsv,
@@ -75,6 +78,9 @@ adminApp.get("/foodbanks/csv/", adminFoodbanksCsv);
 adminApp.get("/foodbank/new/", adminFoodbankNew);
 adminApp.post("/foodbank/new/", adminFoodbankNew);
 adminApp.post("/foodbank/:slug/delete/", adminFoodbankDelete);
+adminApp.get("/foodbank/:slug/", adminFoodbankDetail);
+adminApp.get("/foodbank/:slug/tab/:tab/", adminFoodbankTab);
+adminApp.post("/foodbank/:slug/touch/", adminFoodbankTouch);
 adminApp.get("/foodbank/:slug/edit/", adminFoodbankEdit);
 adminApp.post("/foodbank/:slug/edit/", adminFoodbankEdit);
 adminApp.get("/foodbank/:slug/politics/edit/", adminFoodbankPoliticsEdit);
@@ -111,6 +117,15 @@ adminApp.get("/orders/csv/", adminOrdersCsv);
 
 adminApp.get("/needs/csv/", adminNeedsCsv);
 
+adminApp.post("/article/:id/toggle-featured/", adminArticleToggleFeatured);
+
+// Hono route params: a regex constraint must cover the WHOLE remaining
+// segment including any literal suffix (media.ts's `:page{.+\\.png}` is
+// the established precedent) -- ".json" can't trail a `{regex}` block as
+// separate literal text, so the id+suffix is captured together and split
+// in the handler instead.
+adminApp.get("/crawl-set/:idJson{[0-9]+\\.json}", adminCrawlSetJson);
+
 function enrichNeedRow(row: FoodbankChangeRow): FoodbankChangeRow & { input_method_emoji: string } {
   return { ...row, input_method_emoji: inputMethodEmoji(row.input_method) };
 }
@@ -127,10 +142,11 @@ export async function adminIndex(c: Context<AppEnv>): Promise<Response> {
   c.set("adminUser", session);
 
   const db = dbSession(c);
-  const [unpublishedNeeds, publishedNeeds, discrepancies] = await Promise.all([
+  const [unpublishedNeeds, publishedNeeds, discrepancies, articles] = await Promise.all([
     getUnpublishedNeeds(db),
     getPublishedNeeds(db, 20),
     getOpenDiscrepancies(db, 20),
+    getRecentArticlesForAdmin(db, 20),
   ]);
 
   const html = await render("admin/index.njk", {
@@ -138,6 +154,7 @@ export async function adminIndex(c: Context<AppEnv>): Promise<Response> {
     unpublished_needs: unpublishedNeeds.map(enrichNeedRow),
     published_needs: publishedNeeds.map(enrichNeedRow),
     discrepancies,
+    articles,
   });
   return c.html(html);
 }

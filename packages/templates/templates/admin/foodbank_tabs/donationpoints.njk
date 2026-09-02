@@ -1,0 +1,15 @@
+{# gfadmin/views.py foodbank_donationpoints_tab -- lazy-loaded fragment. #}
+<table class="table is-fullwidth">
+  <tbody>
+    {% for dp in donation_points %}
+    <tr>
+      <td><a href="/admin/foodbank/{{ foodbank_slug }}/donationpoint/{{ dp.slug }}/edit/">{{ dp.name }}</a></td>
+      <td>{{ dp.company or "" }}</td>
+      <td>{{ dp.postcode }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="3">None</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+<a href="/admin/foodbank/{{ foodbank_slug }}/donationpoint/new/" class="button is-light is-small">New Donation Point</a>

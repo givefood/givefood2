@@ -1,0 +1,14 @@
+{# gfadmin/views.py foodbank_articles_tab -- lazy-loaded fragment. #}
+<table class="table is-fullwidth">
+  <tbody>
+    {% for article in articles %}
+    <tr>
+      <td>{{ article.published_date }}</td>
+      <td><a href="{{ article.url }}">{{ article.title }}</a></td>
+      <td>{% if article.featured %}&#9733;{% else %}&#9734;{% endif %}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="3">None</td></tr>
+    {% endfor %}
+  </tbody>
+</table>

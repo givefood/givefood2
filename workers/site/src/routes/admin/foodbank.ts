@@ -65,7 +65,9 @@ export async function adminFoodbankNew(c: Context<AppEnv>): Promise<Response> {
     } catch (err) {
       return c.text(`Could not create food bank -- a food bank with this name may already exist (${err instanceof Error ? err.message : String(err)})`, 400);
     }
-    return c.redirect(`/admin/foodbank/${created.slug}/edit/`, 302);
+    // gfadmin/views.py:817-858 foodbank_form redirects to `admin:foodbank`
+    // (the detail page, WP 6.7) on success for both create and edit.
+    return c.redirect(`/admin/foodbank/${created.slug}/`, 302);
   }
 
   const initial: Record<string, string> = {};

@@ -7,7 +7,7 @@
 <div class="columns">
   <div class="column is-half">
     <h1 class="title">{{ title }}</h1>
-    <p class="subtitle">{{ foodbank.name }}</p>
+    <p class="subtitle">{{ foodbank.name }}{% if foodbank.slug %} -- <a href="/admin/foodbank/{{ foodbank.slug }}/">View</a>{% endif %}</p>
 
     <form method="post">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">

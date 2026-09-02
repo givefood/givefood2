@@ -191,4 +191,34 @@ export async function getAllOrdersForCsv(session: Session): Promise<OrderListRow
   return result.results;
 }
 
+// WP 6.7: gfadmin/views.py's admin index -- the featured-article toggle
+// (article_toggle_featured) needs a recent-articles panel on the
+// dashboard to toggle from; this app's dashboard (WP 6.4's adminIndex)
+// didn't have one yet.
+export interface DashboardArticleRow {
+  id: number;
+  foodbank_name: string | null;
+  title: string;
+  url: string;
+  published_date: string;
+  featured: boolean;
+}
+
+export async function getRecentArticlesForAdmin(session: Session, limit: number): Promise<DashboardArticleRow[]> {
+  const result = await session
+    .prepare("SELECT id, foodbank_name, title, url, published_date, featured FROM foodbankarticle ORDER BY published_date DESC LIMIT ?")
+    .bind(limit)
+    .all<{ id: number; foodbank_name: string | null; title: string; url: string; published_date: string; featured: number }>();
+  return result.results.map((r) => ({ ...r, featured: r.featured === 1 }));
+}
+
+// gfadmin/views.py:3399-3417 article_toggle_featured -- flip, don't set,
+// matching Django's `article.featured = not article.featured`. Returns
+// the new value so the route handler can build the right response
+// fragment without a second read.
+export async function toggleArticleFeatured(session: Session, articleId: number): Promise<boolean | null> {
+  const row = await session.prepare("UPDATE foodbankarticle SET featured = 1 - featured WHERE id = ? RETURNING featured").bind(articleId).first<{ featured: number }>();
+  return row ? row.featured === 1 : null;
+}
+
 export { totalPages };

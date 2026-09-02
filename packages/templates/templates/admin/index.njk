@@ -45,4 +45,30 @@
     </table>
   </div>
 </div>
+
+<div class="columns">
+  <div class="column">
+    <h2 class="title is-4">Recent articles</h2>
+    <table class="table is-fullwidth">
+      <tbody>
+        {% for article in articles %}
+        <tr>
+          <td>{{ article.published_date }}</td>
+          <td>{{ article.foodbank_name or "" }}</td>
+          <td><a href="{{ article.url }}">{{ article.title }}</a></td>
+          <td>
+            <form method="post" style="display:inline">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <button type="submit" class="button is-small {% if article.featured %}is-warning is-light{% else %}is-light{% endif %}"
+                      hx-post="/admin/article/{{ article.id }}/toggle-featured/" hx-vals='{"csrf_token": "{{ csrf_token }}"}' hx-swap="outerHTML">{% if article.featured %}&#9733;{% else %}&#9734;{% endif %}</button>
+            </form>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="4">None</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
 {% endblock %}

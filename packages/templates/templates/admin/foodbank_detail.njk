@@ -1,0 +1,89 @@
+{% extends "admin/page.njk" %}
+
+{% block title %}{{ foodbank.name }}{% endblock %}
+
+{% block body %}
+<h1 class="title">{{ foodbank.name }}</h1>
+<p><a href="/admin/foodbank/{{ foodbank.slug }}/edit/">Edit</a></p>
+
+<form action="/admin/foodbank/{{ foodbank.slug }}/touch/" method="post" style="margin-top:10px">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <button type="submit" class="button is-link is-light" hx-post="/admin/foodbank/{{ foodbank.slug }}/touch/" hx-vals='{"csrf_token": "{{ csrf_token }}"}' hx-swap="outerHTML">Touch</button>
+</form>
+
+<div class="tabs is-boxed">
+  <ul role="tablist" aria-label="Foodbank">
+    <li class="is-active" role="presentation"><a data-tab="generallocations" role="tab" aria-selected="true" aria-controls="generallocations-panel" id="generallocations-tab"><span>General</span></a></li>
+    <li role="presentation"><a data-tab="needsorders" role="tab" aria-selected="false" aria-controls="needsorders-panel" id="needsorders-tab"><span>Needs &amp; Orders</span></a></li>
+    <li role="presentation"><a data-tab="donationpoints" role="tab" aria-selected="false" aria-controls="donationpoints-panel" id="donationpoints-tab"><span>Donation Points</span></a></li>
+    {% if counts.articles %}<li role="presentation"><a data-tab="articles" role="tab" aria-selected="false" aria-controls="articles-panel" id="articles-tab"><span>Articles</span></a></li>{% endif %}
+    <li role="presentation"><a data-tab="subscribers" role="tab" aria-selected="false" aria-controls="subscribers-panel" id="subscribers-tab"><span>Subscribers</span></a></li>
+    <li role="presentation"><a data-tab="crawls" role="tab" aria-selected="false" aria-controls="crawls-panel" id="crawls-tab"><span>Crawls</span></a></li>
+  </ul>
+</div>
+
+<div class="sections">
+  <div class="column tabcontent generallocations" id="generallocations-panel" role="tabpanel" aria-labelledby="generallocations-tab">
+    <dl>
+      <dt>Postcode</dt><dd>{{ foodbank.postcode }}</dd>
+      <dt>Country</dt><dd>{{ foodbank.country }}</dd>
+      <dt>Network</dt><dd>{{ foodbank.network or "" }}</dd>
+      <dt>Closed</dt><dd>{% if foodbank.is_closed %}Yes{% else %}No{% endif %}</dd>
+    </dl>
+
+    <h3 class="title is-5">Locations ({{ locations.length }})</h3>
+    <table class="table is-fullwidth">
+      <tbody>
+        {% for loc in locations %}
+        <tr>
+          <td><a href="/admin/foodbank/{{ foodbank.slug }}/location/{{ loc.slug }}/edit/">{{ loc.name }}</a></td>
+          <td>{{ loc.postcode or "" }}</td>
+        </tr>
+        {% else %}
+        <tr><td>None</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <a href="/admin/foodbank/{{ foodbank.slug }}/location/new/" class="button is-light is-small">New Location</a>
+
+    <h3 class="title is-5">Latest Need</h3>
+    {% if foodbank.latestNeed %}
+      <p><a href="/admin/need/{{ foodbank.latestNeed.need_id }}/">{{ foodbank.latestNeed.created }}</a></p>
+      <div class="box"><p>{{ foodbank.latestNeed.change_text | linebreaksbr | safe }}</p></div>
+    {% else %}
+      <p>No published need yet.</p>
+    {% endif %}
+  </div>
+
+  <div class="column tabcontent needsorders is-hidden" id="needsorders-panel" role="tabpanel" aria-labelledby="needsorders-tab"
+       hx-get="/admin/foodbank/{{ foodbank.slug }}/tab/needsorders/" hx-trigger="showtab once" hx-swap="innerHTML swap:0.06s">
+    <div class="loading"><span class="loader"></span></div>
+  </div>
+
+  <div class="column tabcontent donationpoints is-hidden" id="donationpoints-panel" role="tabpanel" aria-labelledby="donationpoints-tab"
+       hx-get="/admin/foodbank/{{ foodbank.slug }}/tab/donationpoints/" hx-trigger="showtab once" hx-swap="innerHTML swap:0.06s">
+    <div class="loading"><span class="loader"></span></div>
+  </div>
+
+  {% if counts.articles %}
+  <div class="column tabcontent articles is-hidden" id="articles-panel" role="tabpanel" aria-labelledby="articles-tab"
+       hx-get="/admin/foodbank/{{ foodbank.slug }}/tab/articles/" hx-trigger="showtab once" hx-swap="innerHTML swap:0.06s">
+    <div class="loading"><span class="loader"></span></div>
+  </div>
+  {% endif %}
+
+  <div class="column tabcontent subscribers is-hidden" id="subscribers-panel" role="tabpanel" aria-labelledby="subscribers-tab"
+       hx-get="/admin/foodbank/{{ foodbank.slug }}/tab/subscribers/" hx-trigger="showtab once" hx-swap="innerHTML swap:0.06s">
+    <div class="loading"><span class="loader"></span></div>
+  </div>
+
+  <div class="column tabcontent crawls is-hidden" id="crawls-panel" role="tabpanel" aria-labelledby="crawls-tab"
+       hx-get="/admin/foodbank/{{ foodbank.slug }}/tab/crawls/" hx-trigger="showtab once" hx-swap="innerHTML swap:0.06s">
+    <div class="loading"><span class="loader"></span></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block script %}
+<script src="/static/js/tabber.js?v={{ version }}" defer></script>
+{% endblock %}

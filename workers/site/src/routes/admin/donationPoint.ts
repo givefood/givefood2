@@ -52,7 +52,7 @@ export async function adminDonationPointForm(c: Context<AppEnv>): Promise<Respon
       },
       existing?.id,
     );
-    return c.redirect(`/admin/foodbank/${foodbank.slug}/edit/`, 302);
+    return c.redirect(`/admin/foodbank/${foodbank.slug}/`, 302);
   }
 
   const nameFromQuery = c.req.query("name");
@@ -63,7 +63,7 @@ export async function adminDonationPointForm(c: Context<AppEnv>): Promise<Respon
     title: existing ? `Edit ${foodbank.name} Donation Point` : `New ${foodbank.name} Donation Point`,
     fields: FOODBANK_DONATION_POINT_FIELDS,
     data,
-    back_url: `/admin/foodbank/${foodbank.slug}/edit/`,
+    back_url: `/admin/foodbank/${foodbank.slug}/`,
     delete_url: existing ? `/admin/foodbank/${foodbank.slug}/donationpoint/${existing.slug}/delete/` : null,
   });
   return c.html(html);
@@ -83,5 +83,5 @@ export async function adminDonationPointDelete(c: Context<AppEnv>): Promise<Resp
   if (!(await verifyCsrf(c, c.env.CSRF_SECRET, csrfToken))) return c.text("Forbidden", 403);
 
   await deleteDonationPoint(db, existing.id);
-  return c.redirect(`/admin/foodbank/${slug}/edit/`, 302);
+  return c.redirect(`/admin/foodbank/${slug}/`, 302);
 }

@@ -29,6 +29,13 @@ export async function deleteFoodbankCascade(session: Session, foodbankId: number
   ]);
 }
 
+// gfadmin/views.py:1300-1310 foodbank_touch -- bumps `edited` only
+// (`do_geoupdate=False`), no other field changes.
+export async function touchFoodbank(session: Session, id: number): Promise<void> {
+  const now = new Date().toISOString();
+  await session.prepare("UPDATE foodbank SET edited = ?, modified = ? WHERE id = ?").bind(now, now, id).run();
+}
+
 const COMBINING_MARKS_RE = new RegExp(`[${String.fromCodePoint(0x0300)}-${String.fromCodePoint(0x036f)}]`, "g");
 
 function slugify(value: string): string {

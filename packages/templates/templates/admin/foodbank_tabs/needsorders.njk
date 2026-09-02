@@ -1,0 +1,30 @@
+{# gfadmin/views.py foodbank_needsorders_tab -- lazy-loaded fragment, no page shell. #}
+<h3 class="title is-5">Recent Needs</h3>
+<table class="table is-fullwidth">
+  <tbody>
+    {% for need in needs %}
+    <tr>
+      <td><a href="/admin/need/{{ need.need_id }}/">{{ need.created }}</a></td>
+      <td>{% if need.published %}Published{% else %}Unpublished{% endif %}</td>
+    </tr>
+    {% else %}
+    <tr><td>None</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<h3 class="title is-5">Recent Orders</h3>
+<table class="table is-fullwidth">
+  <tbody>
+    {% for order in orders %}
+    <tr>
+      <td>{{ order.order_id }}</td>
+      <td>{{ order.delivery_datetime }}</td>
+      <td>{{ order.delivery_provider or "" }}</td>
+      <td>{{ (order.actual_cost or order.cost) / 100 }}</td>
+    </tr>
+    {% else %}
+    <tr><td>None</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
