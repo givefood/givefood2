@@ -36,20 +36,57 @@ function totalPages(total: number, pageSize: number): number {
 // Django's 20 options to the ones an admin actually triages by; anything
 // outside this list falls back to `edited` rather than Django's 403 --
 // an unrecognised `?sort=` shouldn't break the page.
-export const FOODBANK_LIST_SORTS = ["name", "postcode", "country", "network", "edited", "created"] as const;
+export const FOODBANK_LIST_SORTS = [
+  "name",
+  "postcode",
+  "country",
+  "network",
+  "edited",
+  "created",
+  "modified",
+  "no_locations",
+  "no_donation_points",
+  "last_order",
+  "last_need",
+  "last_need_check",
+  "hits_last_28_days",
+] as const;
 export type FoodbankListSort = (typeof FOODBANK_LIST_SORTS)[number];
 
-export async function getFoodbanksPage(session: Session, sort: FoodbankListSort, page: number, pageSize: number): Promise<PageResult<FoodbankRow>> {
+export interface FoodbankListRow extends FoodbankRow {
+  hits_last_28_days: number;
+}
+
+// gfadmin/views.py:275-292's `hits_last_28_days` annotation -- a
+// correlated subquery, same shape as Django's own (a join would double-
+// count once summed), coalesced to 0 so a food bank with zero recent hits
+// still sorts/displays as 0, not NULL.
+export async function getFoodbanksPage(session: Session, sort: FoodbankListSort, page: number, pageSize: number): Promise<PageResult<FoodbankListRow>> {
   const offset = (page - 1) * pageSize;
+  const cutoff = new Date(Date.now() - 28 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
   const [countRow, result] = await Promise.all([
     session.prepare("SELECT COUNT(*) AS n FROM foodbank WHERE is_closed = 0").first<{ n: number }>(),
     session
-      .prepare(`SELECT * FROM foodbank WHERE is_closed = 0 ORDER BY ${sort} DESC LIMIT ? OFFSET ?`)
-      .bind(pageSize, offset)
+      .prepare(
+        // Unqualified ORDER BY: `sort` may be a real foodbank column or the
+        // computed hits_last_28_days alias below, and SQLite resolves an
+        // unqualified name against the SELECT's output aliases as well as
+        // the source table -- a `f.` prefix would work for the former but
+        // is invalid SQL for the latter (it isn't a column on `f`).
+        `SELECT f.*, COALESCE((SELECT SUM(hits) FROM foodbankhit WHERE foodbank_id = f.id AND day >= ?1), 0) AS hits_last_28_days
+         FROM foodbank f WHERE f.is_closed = 0 ORDER BY ${sort} DESC LIMIT ?2 OFFSET ?3`,
+      )
+      .bind(cutoff, pageSize, offset)
       .all(),
   ]);
   const total = countRow?.n ?? 0;
-  return { rows: result.results.map((r) => mapFoodbankRow(r as Record<string, unknown>)), total, page, pageSize, hasNext: offset + pageSize < total };
+  return {
+    rows: result.results.map((r) => ({ ...mapFoodbankRow(r as Record<string, unknown>), hits_last_28_days: (r as { hits_last_28_days: number }).hits_last_28_days })),
+    total,
+    page,
+    pageSize,
+    hasNext: offset + pageSize < total,
+  };
 }
 
 // gfadmin/views.py:326-337 foodbanks_csv() -- ALL foodbanks (closed
@@ -63,20 +100,27 @@ export async function getAllFoodbanksForCsv(session: Session): Promise<FoodbankR
 
 // gfadmin/views.py:2138-2220 locations()/donationpoints() -- no filter,
 // full table in Django; sort allowlist trimmed the same way as foodbanks.
-export const LOCATION_LIST_SORTS = ["foodbank_name", "name", "postcode", "modified"] as const;
+// gfadmin/views.py:2138-2150's own sort_options list, verbatim --
+// "parliamentary_constituency" is the sort key Django exposes but the
+// column actually sorted/displayed is parliamentary_constituency_name
+// (Django's model field is a differently-named FK; this schema only ever
+// kept the denormalised name column, so that's what both sorts and
+// displays here).
+export const LOCATION_LIST_SORTS = ["foodbank_name", "name", "parliamentary_constituency", "edited"] as const;
 export type LocationListSort = (typeof LOCATION_LIST_SORTS)[number];
 
 export async function getLocationsPage(session: Session, sort: LocationListSort, page: number, pageSize: number): Promise<PageResult<FoodbankLocationRow>> {
   const offset = (page - 1) * pageSize;
+  const sortColumn = sort === "parliamentary_constituency" ? "parliamentary_constituency_name" : sort;
   const [countRow, result] = await Promise.all([
     session.prepare("SELECT COUNT(*) AS n FROM foodbanklocation").first<{ n: number }>(),
-    session.prepare(`SELECT * FROM foodbanklocation ORDER BY ${sort} DESC LIMIT ? OFFSET ?`).bind(pageSize, offset).all(),
+    session.prepare(`SELECT * FROM foodbanklocation ORDER BY ${sortColumn} DESC LIMIT ? OFFSET ?`).bind(pageSize, offset).all(),
   ]);
   const total = countRow?.n ?? 0;
   return { rows: result.results.map((r) => mapLocationRow(r as Record<string, unknown>)), total, page, pageSize, hasNext: offset + pageSize < total };
 }
 
-export const DONATION_POINT_LIST_SORTS = ["foodbank_name", "name", "company"] as const;
+export const DONATION_POINT_LIST_SORTS = ["name", "foodbank_name", "edited"] as const;
 export type DonationPointListSort = (typeof DONATION_POINT_LIST_SORTS)[number];
 
 export async function getDonationPointsPage(session: Session, sort: DonationPointListSort, page: number, pageSize: number): Promise<PageResult<DonationPointRow>> {
@@ -94,16 +138,26 @@ export interface ParlconListRow {
   id: number;
   name: string | null;
   slug: string;
+  country: string | null;
   mp: string | null;
   mp_party: string | null;
+  mp_parl_id: number;
+  email: string | null;
+  has_geojson: number;
 }
 
+// gfadmin/views.py:2311-2317 politics() -- boundary_geojson itself is NOT
+// selected (PLAN.md §4.6 notes rows up to 1,568 kB; fetching that per row
+// for a 650-row list just to render a presence indicator would be a real
+// hit for no benefit), only whether it's set.
 export async function getParlconsPage(session: Session, page: number, pageSize: number): Promise<PageResult<ParlconListRow>> {
   const offset = (page - 1) * pageSize;
   const [countRow, result] = await Promise.all([
     session.prepare("SELECT COUNT(*) AS n FROM parliamentaryconstituency").first<{ n: number }>(),
     session
-      .prepare("SELECT id, name, slug, mp, mp_party FROM parliamentaryconstituency ORDER BY name LIMIT ? OFFSET ?")
+      .prepare(
+        "SELECT id, name, slug, country, mp, mp_party, mp_parl_id, email, (boundary_geojson IS NOT NULL) AS has_geojson FROM parliamentaryconstituency ORDER BY name LIMIT ? OFFSET ?",
+      )
       .bind(pageSize, offset)
       .all<ParlconListRow>(),
   ]);
@@ -147,7 +201,9 @@ export interface OrderListRow {
   created: string;
   delivery_datetime: string;
   delivery_provider: string | null;
+  delivery_provider_id: string | null;
   foodbank_name: string | null;
+  foodbank_slug: string | null;
   country: string;
   weight: number;
   calories: number;
@@ -156,16 +212,23 @@ export interface OrderListRow {
   actual_cost: number | null;
 }
 
-export async function getOrdersPage(session: Session, page: number, pageSize: number): Promise<PageResult<OrderListRow>> {
+// gfadmin/views.py:371-386's own sort_options list, verbatim -- always
+// applied descending (Django prepends "-" unconditionally), matching this
+// list's own established convention of always-descending sort (same as
+// foodbanks/locations/donationpoints above).
+export const ORDER_LIST_SORTS = ["delivery_datetime", "created", "no_items", "weight", "calories", "cost"] as const;
+export type OrderListSort = (typeof ORDER_LIST_SORTS)[number];
+
+export async function getOrdersPage(session: Session, sort: OrderListSort, page: number, pageSize: number): Promise<PageResult<OrderListRow>> {
   const offset = (page - 1) * pageSize;
   const [countRow, result] = await Promise.all([
     session.prepare("SELECT COUNT(*) AS n FROM orders").first<{ n: number }>(),
     session
       .prepare(
-        `SELECT o.id, o.order_id, o.created, o.delivery_datetime, o.delivery_provider, f.name AS foodbank_name,
+        `SELECT o.id, o.order_id, o.created, o.delivery_datetime, o.delivery_provider, o.delivery_provider_id, f.name AS foodbank_name, f.slug AS foodbank_slug,
                 o.country, o.weight, o.calories, o.no_items, o.cost, o.actual_cost
          FROM orders o LEFT JOIN foodbank f ON f.id = o.foodbank_id
-         ORDER BY o.created DESC LIMIT ? OFFSET ?`,
+         ORDER BY o.${sort} DESC LIMIT ? OFFSET ?`,
       )
       .bind(pageSize, offset)
       .all<OrderListRow>(),

@@ -13,6 +13,8 @@ import {
   getParlconsPage,
   getParlconCsvRows,
   getOrdersPage,
+  ORDER_LIST_SORTS,
+  type OrderListSort,
   getAllOrdersForCsv,
   getAllNeedsForCsv,
   getPlacesPage,
@@ -31,6 +33,7 @@ import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
 import { verifyCsrf } from "../../lib/csrf";
 import { adminPageContext } from "./pageContext";
+import { timesince } from "../../lib/timesince";
 
 const PAGE_SIZE = 100;
 
@@ -96,12 +99,22 @@ function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]!);
 }
 
+// Timesince-formatted date cell, matching every Django list template's own
+// "{{ value }}<br><span class=is-size-7>{{ value|timesince }} ago</span>"
+// pattern -- raw value on the first line, relative time (small) beneath.
+function dateCell(value: string | null, now: Date): string {
+  if (!value) return "";
+  return `${escapeHtml(value)}<br><span class="is-size-7">${timesince(value, now)} ago</span>`;
+}
+
 // gfadmin/views.py:234-314 foodbanks() -- excludes closed food banks,
-// matching Django. Links each row to the edit form (WP 6.5) -- there's no
-// standalone "foodbank detail" admin page yet (WP 6.7's tabbed htmx
-// surface), same reasoning as every WP 6.5 redirect target.
+// matching Django. Links each row to the foodbank's own admin detail page
+// (WP 6.7), matching Django exactly -- this used to point at the edit
+// form because the detail page didn't exist yet when this list was built
+// (WP 6.5), a now-stale reason since WP 6.7 shipped it.
 export async function adminFoodbanksList(c: Context<AppEnv>): Promise<Response> {
   const db = dbSession(c);
+  const now = new Date();
   const sortParam = c.req.query("sort");
   const sort: FoodbankListSort = (FOODBANK_LIST_SORTS as readonly string[]).includes(sortParam ?? "") ? (sortParam as FoodbankListSort) : "edited";
   const page = await getFoodbanksPage(db, sort, parsePage(c), PAGE_SIZE);
@@ -115,15 +128,33 @@ export async function adminFoodbanksList(c: Context<AppEnv>): Promise<Response> 
       { label: "Name", sort: "name" },
       { label: "Postcode", sort: "postcode" },
       { label: "Country", sort: "country" },
+      { label: "Closed" },
+      { label: "Locations", sort: "no_locations" },
+      { label: "Donation Points", sort: "no_donation_points" },
       { label: "Network", sort: "network" },
+      { label: "28d Hits", sort: "hits_last_28_days" },
+      { label: "Last Order", sort: "last_order" },
+      { label: "Last Need", sort: "last_need" },
+      { label: "Last Need Check", sort: "last_need_check" },
+      { label: "Created", sort: "created" },
+      { label: "Modified", sort: "modified" },
       { label: "Edited", sort: "edited" },
     ],
     rowCells: (fb) => [
-      `<a href="/admin/foodbank/${fb.slug}/edit/">${escapeHtml(fb.name)}</a>`,
+      `<a href="/admin/foodbank/${fb.slug}/">${escapeHtml(fb.name)}</a>`,
       escapeHtml(fb.postcode),
       escapeHtml(fb.country),
+      fb.is_closed ? '<span style="color:red">X</span>' : "",
+      String(fb.no_locations),
+      String(fb.no_donation_points ?? 0),
       fb.network ? escapeHtml(fb.network) : "",
-      fb.edited ?? "",
+      String(fb.hits_last_28_days),
+      dateCell(fb.last_order, now),
+      dateCell(fb.last_need, now),
+      dateCell(fb.last_need_check, now),
+      dateCell(fb.created, now),
+      dateCell(fb.modified, now),
+      dateCell(fb.edited, now),
     ],
     newUrl: "/admin/foodbank/new/",
     csvUrl: "/admin/foodbanks/csv/",
@@ -159,15 +190,29 @@ export async function adminLocationsList(c: Context<AppEnv>): Promise<Response> 
     sort,
     columns: [
       { label: "Foodbank", sort: "foodbank_name" },
-      { label: "Name", sort: "name" },
-      { label: "Postcode", sort: "postcode" },
-      { label: "Modified", sort: "modified" },
+      { label: "Location", sort: "name" },
+      { label: "Address" },
+      { label: "Parliamentary Constituency", sort: "parliamentary_constituency" },
+      { label: "MP" },
+      { label: "MP ID" },
+      { label: "Network" },
+      { label: "Country" },
+      { label: "Closed" },
+      { label: "Modified" },
+      { label: "Edited", sort: "edited" },
     ],
     rowCells: (loc) => [
-      escapeHtml(loc.foodbank_name),
+      `<a href="/admin/foodbank/${loc.foodbank_slug}/">${escapeHtml(loc.foodbank_name)}</a>`,
       `<a href="/admin/foodbank/${loc.foodbank_slug}/location/${loc.slug}/edit/">${escapeHtml(loc.name)}</a>`,
-      loc.postcode ? escapeHtml(loc.postcode) : "",
+      [loc.address, loc.postcode].filter((v): v is string => !!v).map(escapeHtml).join(" "),
+      loc.parliamentary_constituency_name ? escapeHtml(loc.parliamentary_constituency_name) : "",
+      loc.mp ? escapeHtml(loc.mp) : "",
+      loc.mp_parl_id !== null ? String(loc.mp_parl_id) : "",
+      escapeHtml(loc.foodbank_network),
+      loc.country ? escapeHtml(loc.country) : "",
+      loc.is_closed ? "Yes" : "No",
       loc.modified,
+      loc.edited ?? "",
     ],
   });
 }
@@ -175,7 +220,7 @@ export async function adminLocationsList(c: Context<AppEnv>): Promise<Response> 
 export async function adminDonationPointsList(c: Context<AppEnv>): Promise<Response> {
   const db = dbSession(c);
   const sortParam = c.req.query("sort");
-  const sort: DonationPointListSort = (DONATION_POINT_LIST_SORTS as readonly string[]).includes(sortParam ?? "") ? (sortParam as DonationPointListSort) : "foodbank_name";
+  const sort: DonationPointListSort = (DONATION_POINT_LIST_SORTS as readonly string[]).includes(sortParam ?? "") ? (sortParam as DonationPointListSort) : "name";
   const page = await getDonationPointsPage(db, sort, parsePage(c), PAGE_SIZE);
 
   return renderList(c, {
@@ -185,13 +230,27 @@ export async function adminDonationPointsList(c: Context<AppEnv>): Promise<Respo
     sort,
     columns: [
       { label: "Foodbank", sort: "foodbank_name" },
-      { label: "Name", sort: "name" },
-      { label: "Company", sort: "company" },
+      { label: "Location", sort: "name" },
+      { label: "Address" },
+      { label: "Company" },
+      { label: "Store ID" },
+      { label: "Network" },
+      { label: "Country" },
+      { label: "Closed" },
+      { label: "Modified" },
+      { label: "Edited", sort: "edited" },
     ],
     rowCells: (dp) => [
-      escapeHtml(dp.foodbank_name),
+      `<a href="/admin/foodbank/${dp.foodbank_slug}/">${escapeHtml(dp.foodbank_name)}</a>`,
       `<a href="/admin/foodbank/${dp.foodbank_slug}/donationpoint/${dp.slug}/edit/">${escapeHtml(dp.name)}</a>`,
-      dp.company ? escapeHtml(dp.company) : "",
+      [dp.address, dp.postcode].filter((v): v is string => !!v).map(escapeHtml).join(" "),
+      dp.company ? `<img src="/static/img/co/${dp.company_slug}.png" alt="${escapeHtml(dp.company)}" class="companyicon"> ${escapeHtml(dp.company)}` : "",
+      dp.store_id ? escapeHtml(dp.store_id) : "",
+      escapeHtml(dp.foodbank_network),
+      dp.country ? escapeHtml(dp.country) : "",
+      dp.is_closed ? "Yes" : "No",
+      dp.modified,
+      dp.edited ?? "",
     ],
   });
 }
@@ -205,8 +264,27 @@ export async function adminParlconsList(c: Context<AppEnv>): Promise<Response> {
     title: "Parliamentary Constituencies",
     section: "geography",
     page,
-    columns: [{ label: "Name" }, { label: "MP" }, { label: "Party" }],
-    rowCells: (pc) => [`<a href="/admin/parlcon/${pc.slug}/edit/">${escapeHtml(pc.name ?? "")}</a>`, pc.mp ? escapeHtml(pc.mp) : "", pc.mp_party ? escapeHtml(pc.mp_party) : ""],
+    columns: [
+      { label: "Name" },
+      { label: "Country" },
+      { label: "MP" },
+      { label: "MP Party" },
+      { label: "MP Parliament ID" },
+      { label: "MP Photo" },
+      { label: "Email" },
+      { label: "GeoJSON?" },
+    ],
+    rowCells: (pc) => [
+      escapeHtml(pc.name ?? ""),
+      pc.country ? escapeHtml(pc.country) : "",
+      pc.mp ? escapeHtml(pc.mp) : "",
+      pc.mp_party ? escapeHtml(pc.mp_party) : "",
+      String(pc.mp_parl_id),
+      `<img src="https://photos.givefood.org.uk/2024-mp/${pc.mp_parl_id}.jpg" alt="${escapeHtml(pc.mp ?? "")}" width="50" loading="lazy">`,
+      pc.email ? escapeHtml(pc.email) : "",
+      pc.has_geojson ? "\u{1F5FA}\u{FE0F}" : "",
+    ],
+    rowActions: (pc) => `<a href="/admin/parlcon/${pc.slug}/edit/" class="button is-small is-light">Edit</a>`,
     newUrl: "/admin/parlcon/new/",
     csvUrl: "/admin/politics/csv/",
   });
@@ -227,21 +305,44 @@ export async function adminParlconsCsv(c: Context<AppEnv>): Promise<Response> {
 // gfadmin/views.py:369-408 orders()/orders_csv() -- CREATE/EDIT deferred
 // (WP 6.5b), read-only here (see adminLists.ts's own comment on why
 // that's safe to build independently).
+const ORDER_PACKAGING_WEIGHT_PC = 1.18; // givefood/const/general.py:136 -- same constant as foodbank_detail.njk's Stats panel
+
 export async function adminOrdersList(c: Context<AppEnv>): Promise<Response> {
   const db = dbSession(c);
-  const page = await getOrdersPage(db, parsePage(c), PAGE_SIZE);
+  const sortParam = c.req.query("sort");
+  const sort: OrderListSort = (ORDER_LIST_SORTS as readonly string[]).includes(sortParam ?? "") ? (sortParam as OrderListSort) : "delivery_datetime";
+  const page = await getOrdersPage(db, sort, parsePage(c), PAGE_SIZE);
 
   return renderList(c, {
     title: "Orders",
     section: "orders",
     page,
-    columns: [{ label: "Order" }, { label: "Foodbank" }, { label: "Delivery" }, { label: "Provider" }, { label: "Cost" }],
+    sort,
+    columns: [
+      { label: "ID" },
+      { label: "Foodbank" },
+      { label: "Del. Prov. ID" },
+      { label: "Country" },
+      { label: "Delivery", sort: "delivery_datetime" },
+      { label: "Items", sort: "no_items" },
+      { label: "Weight (kg)", sort: "weight" },
+      { label: "Calories", sort: "calories" },
+      { label: "Cost", sort: "cost" },
+      { label: "Delivered Cost" },
+      { label: "Created", sort: "created" },
+    ],
     rowCells: (o) => [
-      escapeHtml(o.order_id),
-      o.foodbank_name ? escapeHtml(o.foodbank_name) : "Unassigned",
+      `<a href="/admin/order/${encodeURIComponent(o.order_id)}/">${escapeHtml(o.order_id)}</a>`,
+      o.foodbank_name && o.foodbank_slug ? `<a href="/admin/foodbank/${o.foodbank_slug}/">${escapeHtml(o.foodbank_name)}</a>` : "<em>Unassigned</em>",
+      o.delivery_provider_id ? escapeHtml(o.delivery_provider_id) : "",
+      escapeHtml(o.country),
       o.delivery_datetime,
-      o.delivery_provider ? escapeHtml(o.delivery_provider) : "",
-      `${(o.actual_cost ?? o.cost) / 100}`,
+      String(o.no_items),
+      ((o.weight / 1000) * ORDER_PACKAGING_WEIGHT_PC).toFixed(2),
+      String(o.calories),
+      `£${(o.cost / 100).toFixed(2)}`,
+      o.actual_cost ? `£${(o.actual_cost / 100).toFixed(2)}` : "",
+      o.created,
     ],
     csvUrl: "/admin/orders/csv/",
   });
