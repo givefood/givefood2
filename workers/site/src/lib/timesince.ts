@@ -29,9 +29,17 @@ function unitText(count: number, unit: (typeof UNITS)[number]): string {
 // (also UTC; Workers have no other local timezone) reproduces the same
 // naive-datetime arithmetic Django's timesince does.
 function parseUtc(s: string): Date {
-  const [datePart, timePart] = s.split(/[ T]/);
+  const [datePart, rawTimePart] = s.split(/[ T]/);
+  // A "Z" suffix (any app-written value: new Date().toISOString() always
+  // appends one) has to come off the WHOLE time part before splitting on
+  // "." -- left in place, it either contaminates the fractional-seconds
+  // digits (padEnd/slice keep the "Z" character, Number() of it is NaN) or,
+  // when there's no "." at all, contaminates the seconds field itself
+  // ("00Z" as a Number is NaN). D1's own naive-format values (no "Z") are
+  // untouched by this replace.
+  const timePart = (rawTimePart as string).replace(/Z$/, "");
   const [year, month, day] = (datePart as string).split("-").map(Number);
-  const [hms, frac] = (timePart as string).split(".");
+  const [hms, frac] = timePart.split(".");
   const [hour, minute, second] = (hms as string).split(":").map(Number);
   const millis = frac ? Math.floor(Number(frac.padEnd(6, "0").slice(0, 6)) / 1000) : 0;
   return new Date(Date.UTC(year as number, (month as number) - 1, day, hour, minute, second, millis));
