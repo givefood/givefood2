@@ -1,5 +1,5 @@
 import type { Context } from "hono";
-import { getFoodbankBySlug, updateFoodbankFields, insertFoodbank, deleteFoodbankCascade } from "@givefood/db";
+import { getFoodbankBySlug, updateFoodbankFields, insertFoodbank, deleteFoodbankCascade, setDiscrepancyStatus } from "@givefood/db";
 import { render } from "@givefood/templates";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
@@ -24,6 +24,19 @@ async function renderFoodbankForm(
     if (!parsed.ok) return c.text(parsed.error, 400);
 
     await updateFoodbankFields(db, foodbank.id, parsed.values, opts.stampEdited);
+
+    // gfadmin/views.py:817-838 foodbank_form's ?discrepancy=<id> handling
+    // -- the discrepancy page's embedded FoodbankForm posts back here with
+    // that query string attached, so a successful save both fixes the
+    // data AND resolves the discrepancy that flagged it, landing back on
+    // the dashboard instead of the foodbank page (matching Django's own
+    // redirect("admin:index") for this branch specifically).
+    const discrepancyId = Number(c.req.query("discrepancy"));
+    if (Number.isInteger(discrepancyId) && discrepancyId > 0) {
+      await setDiscrepancyStatus(db, discrepancyId, "Done");
+      return c.redirect("/admin/", 302);
+    }
+
     return c.redirect(`/admin/foodbank/${foodbank.slug}/${opts.redirectSuffix ?? ""}`, 302);
   }
 

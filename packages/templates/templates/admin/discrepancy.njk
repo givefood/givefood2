@@ -1,4 +1,5 @@
 {% extends "admin/page.njk" %}
+{% from "admin/includes/formfields.njk" import fieldset %}
 
 {% block title %}Discrepancy{% endblock %}
 
@@ -7,7 +8,7 @@
   <div class="column">
     <dl>
       <dt>Food Bank</dt>
-      <dd>{{ discrepancy.foodbank_name or "Unknown" }}</dd>
+      <dd>{% if foodbank %}<a href="/admin/foodbank/{{ foodbank.slug }}/">{{ discrepancy.foodbank_name }}</a>{% else %}{{ discrepancy.foodbank_name or "Unknown" }}{% endif %}</dd>
       <dt>Type</dt>
       <dd>{{ discrepancy.discrepancy_type }}</dd>
       <dt>Status</dt>
@@ -16,7 +17,7 @@
       <dd><time datetime="{{ discrepancy.created }}">{{ discrepancy.created }}</time></dd>
       {% if discrepancy.url %}
         <dt>URL</dt>
-        <dd><a href="{{ discrepancy.url }}">{{ discrepancy.url | truncatechars(35) }}</a></dd>
+        <dd><a href="{{ discrepancy.url }}" target="_blank" rel="noopener">{{ discrepancy.url }}</a></dd>
       {% endif %}
     </dl>
 
@@ -36,8 +37,22 @@
     {% endif %}
   </div>
 
+  {% if foodbank %}
+  <div class="column">
+    <form method="post" action="/admin/foodbank/{{ foodbank.slug }}/edit/?discrepancy={{ discrepancy.id }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      {{ fieldset(foodbank_fields, foodbank) }}
+      <div class="field">
+        <div class="control">
+          <button type="submit" class="button is-link is-light">Submit</button>
+        </div>
+      </div>
+    </form>
+  </div>
+  {% endif %}
+
   {% if show_proxy %}
-  <div class="column is-half">
+  <div class="column">
     <h3>Preview</h3>
     <iframe class="preview-frame" src="{{ proxy_src }}" style="width:100%;height:1000px;border:none;" loading="lazy"></iframe>
   </div>
