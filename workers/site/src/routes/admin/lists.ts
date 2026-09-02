@@ -398,6 +398,18 @@ export async function adminPlacesList(c: Context<AppEnv>): Promise<Response> {
 // no whatsappsubscriber D1 table exists yet (same gap WP 6.4 disclosed).
 const SUBSCRIPTION_TYPES: readonly SubscriptionType[] = ["all", "email", "mobile", "webpush"];
 
+// gfadmin/views.py's per-type emoji, matching the dashboard/foodbank-tab
+// subscriber lists' own icon choices (mdi there vs a plain emoji here --
+// Django's subscriptions.html literally uses emoji for this one page, mdi
+// icons everywhere else it shows subscription type, both ported as-is).
+const SUBSCRIPTION_TYPE_EMOJI: Record<string, string> = { email: "\u{1F4E7}", mobile: "\u{1F4F1}", webpush: "\u{1F514}" };
+const SUBSCRIPTION_FILTER_OPTIONS: { value: SubscriptionType; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "email", label: "\u{1F4E7} Email" },
+  { value: "mobile", label: "\u{1F4F1} Mobile" },
+  { value: "webpush", label: "\u{1F514} WebPush" },
+];
+
 export async function adminSubscriptionsList(c: Context<AppEnv>): Promise<Response> {
   const db = dbSession(c);
   const typeParam = c.req.query("type") ?? "all";
@@ -409,14 +421,22 @@ export async function adminSubscriptionsList(c: Context<AppEnv>): Promise<Respon
     section: "settings",
     page,
     columns: [{ label: "Type" }, { label: "Foodbank" }, { label: "Subscriber" }, { label: "Created" }],
-    rowCells: (s) => [s.type, escapeHtml(s.foodbank_name), escapeHtml(s.identifier), s.created],
+    rowCells: (s) => [
+      `${SUBSCRIPTION_TYPE_EMOJI[s.type] ?? ""} ${s.type.charAt(0).toUpperCase()}${s.type.slice(1)}`,
+      `<a href="/admin/foodbank/${s.foodbank_slug}/">${escapeHtml(s.foodbank_name)}</a>`,
+      escapeHtml(s.identifier),
+      s.created,
+    ],
     rowActions: (s, csrfToken) =>
       `<form method="post" action="/admin/subscriptions/delete/" onsubmit="return confirm('Delete this subscription?')">` +
       `<input type="hidden" name="csrf_token" value="${csrfToken}">` +
       `<input type="hidden" name="type" value="${s.type}">` +
       `<input type="hidden" name="row_id" value="${escapeHtml(s.row_id)}">` +
       `<button type="submit" class="button is-small is-danger is-light">Delete</button></form>`,
-    extra: { extra_query: `&type=${subType}` },
+    extra: {
+      extra_query: `&type=${subType}`,
+      filter_options: SUBSCRIPTION_FILTER_OPTIONS.map((opt) => ({ value: `?type=${opt.value}`, label: opt.label, selected: opt.value === subType })),
+    },
   });
 }
 

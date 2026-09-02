@@ -12,6 +12,20 @@
       {% if csv_url %}<a href="{{ csv_url }}" class="button is-light">Export CSV</a>{% endif %}
     </div>
 
+    {% if filter_options %}
+    <div class="field is-pulled-right">
+      <div class="control">
+        <div class="select">
+          <select onchange="javascript:window.location.href=this.value">
+            {% for opt in filter_options %}
+            <option value="{{ opt.value }}"{% if opt.selected %} selected{% endif %}>{{ opt.label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
     <table class="table is-fullwidth">
       <thead>
         <tr>
