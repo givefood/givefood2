@@ -64,6 +64,20 @@ export async function getAllConstituenciesOrderedByName(session: Session): Promi
   return result.results as unknown as ConstituencyListRow[];
 }
 
+// PLAN.md §6.9 R7: "Do not reimplement slugify." wfbn.js's map ported
+// Django's derive-a-slug-from-the-clicked-name-then-redirect pattern
+// client-side, which is exactly the risk R7 warns about -- a JS slugify
+// with different Unicode handling silently 404s a constituency with
+// accents (confirmed concretely for "Montgomeryshire and Glyndŵr": the
+// map's own hardcoded transliteration table has no ŵ entry). Looking up
+// by the ONS PCON24CD code instead (0011_constituency_pcon24cd.sql)
+// removes the class of bug entirely rather than porting a second,
+// independent Unicode-normalising slugify implementation into the browser.
+export async function getConstituencySlugByPcon24cd(session: Session, pcon24cd: string): Promise<string | null> {
+  const row = await session.prepare("SELECT slug FROM parliamentaryconstituency WHERE pcon24cd = ?").bind(pcon24cd).first<{ slug: string }>();
+  return row?.slug ?? null;
+}
+
 export async function getConstituencyBySlug(session: Session, slug: string): Promise<ConstituencyRow | null> {
   const row = await session.prepare("SELECT * FROM parliamentaryconstituency WHERE slug = ?").bind(slug).first();
   return row ? mapConstituencyRow(row as Record<string, unknown>) : null;

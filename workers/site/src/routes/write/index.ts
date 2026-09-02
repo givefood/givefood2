@@ -1,5 +1,5 @@
 import type { Context } from "hono";
-import { getConstituencyBySlugNarrow, getFoodbanksForConstituency, insertConstituencySubscriber } from "@givefood/db";
+import { getConstituencyBySlugNarrow, getConstituencySlugByPcon24cd, getFoodbanksForConstituency, insertConstituencySubscriber } from "@givefood/db";
 import { buildPageContext, render } from "@givefood/templates";
 import { url } from "@givefood/urls";
 import type { AppEnv } from "../../types";
@@ -147,6 +147,26 @@ export async function writeIndex(c: Context<AppEnv>): Promise<Response> {
     map_config: mapConfig,
   });
   return c.html(html);
+}
+
+// Has no Django equivalent -- new in this port. PLAN.md §6.9 R7: the
+// /write/ constituency map (wfbn.js) used to build this redirect's target
+// by slugifying the clicked polygon's PCON24NM name client-side, which is
+// exactly the risk R7 names ("A JS slugify with different Unicode
+// handling silently 404s constituencies with apostrophes, accents or
+// ampersands") -- confirmed concretely: the map's own transliteration
+// table has no entry for ŵ, so "Montgomeryshire and Glyndŵr" built the
+// wrong slug even though the correct one already exists. Looked up by the
+// ONS PCON24CD code instead (0011_constituency_pcon24cd.sql,
+// getConstituencySlugByPcon24cd) -- a stable identifier already carried on
+// every parlcon.json feature, so there is no name/Unicode handling to get
+// wrong here at all.
+export async function writeConstituencyByCode(c: Context<AppEnv>): Promise<Response> {
+  const pcon24cd = c.req.param("pcon24cd")!;
+  const session = dbSession(c);
+  const slug = await getConstituencySlugByPcon24cd(session, pcon24cd);
+  if (!slug) return c.notFound();
+  return c.redirect(url("write:constituency", slug), 302);
 }
 
 // gfwrite `constituency` (GET /write/to/<slug>/). Ported from

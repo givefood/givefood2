@@ -133,6 +133,10 @@ export const PARAMETERISED: Record<string, (...args: string[]) => string> = {
   "write:email": (slug) => `/write/to/${slug}/email/`,
   "write:send": (slug) => `/write/to/${slug}/email/send/`,
   "write:done": (slug) => `/write/to/${slug}/email/done/`,
+  // Has no Django equivalent -- new in this port, PLAN.md §6.9 R7: the
+  // /write/ constituency map's click-to-navigate resolves by the ONS
+  // PCON24CD code rather than reimplementing slugify() in browser JS.
+  "write:constituency_by_code": (pcon24cd) => `/write/to-by-code/${pcon24cd}/`,
 };
 
 // Route names reached inside Django's i18n_patterns -- `{% url %}` for one

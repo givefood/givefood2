@@ -495,6 +495,67 @@ def rebuild_place_fts(token_box):
         raise RuntimeError("place_fts rebuild failed: %s" % result)
 
 
+# 0011_constituency_pcon24cd.sql's data: the ONS PCON24CD geography code,
+# which Postgres has never stored (confirmed directly against the real
+# Django model -- givefood.models.political.ParliamentaryConstituency has
+# no such field) and TABLES' plain `INSERT OR REPLACE` above therefore
+# can't carry forward. Backfilled here, every run, from the SAME
+# parlcon.json the /write/ map already serves -- its 650 features carry
+# PCON24CD and PCON24NM together, so no separate CSV is needed. Matched by
+# name; one exception, verified directly (diffed the full 650-name sets):
+# D1's stored name for one row is "Montgomeryshire and Glyndŵr" (the Welsh
+# circumflex-w), but parlcon.json's own PCON24NM for that seat has already
+# been ASCII-flattened to "Montgomeryshire and Glyndwr" -- every other one
+# of the 650 matches by exact string equality.
+PARLCON_JSON_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "..",
+    "workers", "site", "dist", "static", "static", "geojson", "parlcon.json",
+)
+PCON24NM_OVERRIDES = {
+    "Montgomeryshire and Glyndwr": "Montgomeryshire and Glyndŵr",
+}
+
+
+def backfill_pcon24cd(token_box):
+    with open(PARLCON_JSON_PATH) as f:
+        parlcon = json.load(f)
+
+    seen_codes = set()
+    updates = []
+    for feature in parlcon["features"]:
+        props = feature["properties"]
+        code = props["PCON24CD"]
+        name = props["PCON24NM"]
+        if code in seen_codes:
+            raise RuntimeError("duplicate PCON24CD %r in parlcon.json" % code)
+        seen_codes.add(code)
+        updates.append((code, PCON24NM_OVERRIDES.get(name, name)))
+
+    def send(code, name):
+        result = d1_query(
+            token_box,
+            "UPDATE parliamentaryconstituency SET pcon24cd = ?1 WHERE name = ?2",
+            [code, name],
+        )
+        if not result.get("success"):
+            raise RuntimeError("pcon24cd backfill failed for %r: %s" % (name, result))
+        # meta.changes reports rows actually updated by the LAST statement
+        # in a (single-statement, here) query -- 0 means this parlcon.json
+        # name has no matching D1 row, worth surfacing rather than
+        # silently leaving that constituency's pcon24cd NULL forever.
+        changes = result.get("result", [{}])[0].get("meta", {}).get("changes", 0)
+        if changes == 0:
+            print("pcon24cd backfill: no D1 row matched name %r (code %s)" % (name, code), flush=True)
+
+    matched = 0
+    with ThreadPoolExecutor(max_workers=CONCURRENCY) as pool:
+        futures = [pool.submit(send, code, name) for code, name in updates]
+        for future in as_completed(futures):
+            future.result()
+            matched += 1
+    return matched
+
+
 def run_table_list(token_box, table_list, cur):
     total_loaded = 0
     for entry in table_list:
@@ -535,9 +596,21 @@ def main():
         total_loaded = run_table_list(token_box, GEO_TABLES, cur)
         print("place_fts: rebuilding...", flush=True)
         rebuild_place_fts(token_box)
+    elif mode == "pcon24cd":
+        # Standalone re-run -- e.g. after a schema-only fix to parlcon.json
+        # itself, with no need to also reload the other 4 TABLES.
+        matched = backfill_pcon24cd(token_box)
+        print("pcon24cd: backfilled %d/%d rows" % (matched, matched), flush=True)
+        total_loaded = matched
     else:
         total_loaded = run_table_list(token_box, TABLES, cur)
         total_loaded += run_table_list(token_box, HOMEPAGE_TABLES, cur)
+        # parliamentaryconstituency.pcon24cd has no Postgres source column,
+        # so the INSERT OR REPLACE above just wiped it back to NULL for all
+        # 650 rows -- restored immediately, every run, so this table never
+        # sits mid-refresh without it (see backfill_pcon24cd's own comment).
+        print("pcon24cd: backfilling...", flush=True)
+        backfill_pcon24cd(token_box)
         stats = load_site_stats(token_box, cur)
         print("site_stats: foodbanks=%d donationpoints=%d items=%d meals=%d" % stats, flush=True)
 

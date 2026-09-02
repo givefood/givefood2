@@ -268,10 +268,13 @@ function initMap() {
     // Handle constituency clicks for navigation
     map.on('click', 'constituency', (e) => {
         if (config.onClick === 'navigate') {
-            const name = e.features[0].properties.PCON24NM;
-            if (name) {
-                const slug = slugify(name);
-                window.location = '/write/to/' + slug + '/';
+            // Looked up by the ONS PCON24CD code, not slugify(PCON24NM) --
+            // a client-side slugify can't be relied on to match the
+            // server's Unicode handling exactly (e.g. names with
+            // diacritics), so this avoids reimplementing it here at all.
+            const pcon24cd = e.features[0].properties.PCON24CD;
+            if (pcon24cd) {
+                window.location = '/write/to-by-code/' + encodeURIComponent(pcon24cd) + '/';
             }
         }
     });
@@ -372,10 +375,11 @@ function handleMarkerClick(e) {
  * @param {object} e - Click event
  */
 function handleNavigationClick(e) {
-    const name = e.features[0].properties.PCON24NM;
-    if (name) {
-        const slug = slugify(name);
-        window.location = '/write/to/' + slug + '/';
+    // Same fix as the inline 'constituency' layer click handler in
+    // initMap() -- looked up by PCON24CD, not slugify(PCON24NM).
+    const pcon24cd = e.features[0].properties.PCON24CD;
+    if (pcon24cd) {
+        window.location = '/write/to-by-code/' + encodeURIComponent(pcon24cd) + '/';
     }
 }
 
