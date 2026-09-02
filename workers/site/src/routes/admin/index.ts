@@ -21,6 +21,7 @@ import { adminArticleToggleFeatured } from "./articles";
 import { adminCrawlSetJson } from "./crawlSet";
 import { adminFoodbankCheck, adminJobStatus } from "./foodbankCheck";
 import { adminFoodbankUseAiDetail } from "./useAi";
+import { adminQueryConsole } from "./query";
 import {
   adminFoodbanksList,
   adminFoodbanksCsv,
@@ -134,6 +135,14 @@ adminApp.get("/places/", adminPlacesList);
 adminApp.get("/subscriptions/", adminSubscriptionsList);
 adminApp.post("/subscriptions/delete/", adminDeleteSubscription);
 adminApp.get("/foodbanks/without_need/", adminFoodbanksWithoutNeedList);
+
+// WP 6.10 (PLAN.md §8.13.1 Tier 3): the guarded query console -- the
+// direct replacement for `manage.py shell` against live data. GET renders
+// the empty form; POST is the only way a query actually runs (never via a
+// URL query string, so a stray link/image-tag can't trigger one and raw
+// SQL never lands in access logs).
+adminApp.get("/query/", adminQueryConsole);
+adminApp.post("/query/", adminQueryConsole);
 
 adminApp.post("/article/:id/toggle-featured/", adminArticleToggleFeatured);
 
