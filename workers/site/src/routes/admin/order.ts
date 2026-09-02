@@ -4,6 +4,7 @@ import { render } from "@givefood/templates";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
 import { adminPageContext } from "./pageContext";
+import { timesince } from "../../lib/timesince";
 
 const PACKAGING_WEIGHT_PC = 1.18; // givefood/const/general.py:136 -- same constant used elsewhere in this admin
 
@@ -34,6 +35,7 @@ export async function adminOrderDetail(c: Context<AppEnv>): Promise<Response> {
     cost: (order.cost / 100).toFixed(2),
     actual_cost: order.actual_cost ? (order.actual_cost / 100).toFixed(2) : null,
     delivery_provider_url: deliveryProviderUrl,
+    notification_email_sent_timesince: order.notification_email_sent ? `${timesince(order.notification_email_sent)} ago` : null,
   });
   return c.html(html);
 }

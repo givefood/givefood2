@@ -11,7 +11,7 @@
       <dt>Foodbank</dt>
       <dd>{% if order.foodbank_slug %}<a href="/admin/foodbank/{{ order.foodbank_slug }}/">{{ order.foodbank_name }}</a>{% else %}<em>Unassigned</em>{% endif %}</dd>
       <dt>Delivery</dt>
-      <dd>{{ order.delivery_date }}, {{ order.delivery_hour }}:00</dd>
+      <dd>{{ order.delivery_date|date("D") }}, {{ order.delivery_date|date("N j, Y") }}, {{ order.delivery_hour }}:00</dd>
       <dt>Items</dt>
       <dd>{{ order.no_items }}</dd>
       <dt>Lines</dt>
@@ -41,9 +41,9 @@
       <dd>{{ order.delivery_provider_id }}</dd>
       {% endif %}
       <dt>Created</dt>
-      <dd>{{ order.created }}</dd>
+      <dd>{{ order.created|date("N j, Y, P") }}</dd>
       <dt>Modified</dt>
-      <dd>{{ order.modified }}</dd>
+      <dd>{{ order.modified|date("N j, Y, P") }}</dd>
     </dl>
 
     {% if order.need_id %}
@@ -51,7 +51,7 @@
     <p>{{ order.need_change_text | linebreaksbr | safe }}</p>
     <dl>
       <dt>Found</dt>
-      <dd>{{ order.need_created }}</dd>
+      <dd>{{ order.need_created|date("N j, Y, P") }}</dd>
       {% if order.need_uri %}
       <dt>URL</dt>
       <dd><a href="{{ order.need_uri }}" target="_blank" rel="noopener">{{ order.need_uri }}</a></dd>
@@ -63,7 +63,7 @@
     <h2 class="title is-5">Notification</h2>
     <p>
       {% if order.notification_email_sent %}
-      <span style="color:green">&#10003;</span> Sent {{ order.notification_email_sent }}
+      <span style="color:green">&#10003;</span> Sent <time datetime="{{ order.notification_email_sent }}" title="{{ order.notification_email_sent|date("N j, Y, P") }}">{{ notification_email_sent_timesince }}</time>
       {% else %}
       <span style="color:red">x</span> Not Sent
       {% endif %}

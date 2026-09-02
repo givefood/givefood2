@@ -71,12 +71,39 @@ function formatP(d: Date): string {
   return minutes === 0 ? `${h12} ${ampm}` : `${h12}:${String(minutes).padStart(2, "0")} ${ampm}`;
 }
 
+// Django's `N` token: "Month abbreviation in Associated Press style" --
+// ported verbatim from django.utils.dates.MONTHS_AP, not a simple
+// abbreviation + period (March/April/May/June/July are spelled out in
+// full, and September is "Sept." not "Sep."). Used by DATETIME_FORMAT/
+// DATE_FORMAT ("N j, Y[, P]"), the format Django applies whenever a
+// datetime/date is printed with no explicit `|date:"..."` filter.
+const MONTHS_AP = ["Jan.", "Feb.", "March", "April", "May", "June", "July", "Aug.", "Sept.", "Oct.", "Nov.", "Dec."];
+
+// Django's `S` token: "English ordinal suffix for day of the month, 2
+// characters" -- 'st'/'nd'/'rd'/'th', ported verbatim from
+// django.utils.dateformat.DateFormat.S() (the 11th/12th/13th exception).
+function ordinalSuffix(day: number): string {
+  if (day >= 11 && day <= 13) return "th";
+  switch (day % 10) {
+    case 1:
+      return "st";
+    case 2:
+      return "nd";
+    case 3:
+      return "rd";
+    default:
+      return "th";
+  }
+}
+
 const DATE_FORMAT_TOKENS: Record<string, (d: Date) => string> = {
   Y: (d) => String(d.getUTCFullYear()),
   m: (d) => String(d.getUTCMonth() + 1).padStart(2, "0"),
   d: (d) => String(d.getUTCDate()).padStart(2, "0"),
   j: (d) => String(d.getUTCDate()),
+  S: (d) => ordinalSuffix(d.getUTCDate()),
   M: (d) => MONTH_ABBR[d.getUTCMonth()]!,
+  N: (d) => MONTHS_AP[d.getUTCMonth()]!,
   P: formatP,
   // RFC 2822 tokens ("D, d M Y H:i:s O", Django's `|date:"r"`/`{% now "r" %}`
   // shortcut spelled out) -- Workers run in UTC and Django's timezone.now()
@@ -94,14 +121,23 @@ const DATE_FORMAT_TOKENS: Record<string, (d: Date) => string> = {
 // package's other Date-producing callers) can format one directly instead
 // of round-tripping through a D1-timestamp-string parse it doesn't need.
 export function formatDjangoDateTokens(date: Date, format: string): string {
-  return format.replace(/[YmdjMPDHisO]/g, (token) => DATE_FORMAT_TOKENS[token]!(date));
+  return format.replace(/[YmdjSMNPDHisO]/g, (token) => DATE_FORMAT_TOKENS[token]!(date));
 }
 
 // django's `date` filter -- only the tokens actually used by a ported
 // template are supported; extend DATE_FORMAT_TOKENS if a future port
-// needs more. `value` is a D1 TEXT timestamp, "YYYY-MM-DD HH:MM:SS[.ffffff]".
+// needs more. `value` is a D1 TEXT timestamp, "YYYY-MM-DD[ HH:MM:SS[.ffffff]]"
+// -- the time part is optional (some stored dates genuinely have none, see
+// workers/site/src/lib/timesince.ts's parseUtc for the production case that
+// proved it), and any existing "Z" suffix has to come off before appending
+// a new one or it corrupts the string ("...:00Z" + "Z" isn't a valid ISO
+// instant) -- the same defensive parsing as parseUtc, duplicated rather
+// than cross-package-imported per this repo's small-shared-shape precedent
+// (see BOT_USER_AGENT/slugify).
 export function djangoDate(value: string, format: string): string {
-  const iso = `${value.replace(" ", "T")}Z`;
+  const withT = value.includes(" ") ? value.replace(" ", "T") : value;
+  const hasTime = withT.includes("T");
+  const iso = `${hasTime ? withT.replace(/Z$/, "") : `${withT}T00:00:00`}Z`;
   return formatDjangoDateTokens(new Date(iso), format);
 }
 

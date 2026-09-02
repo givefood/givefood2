@@ -61,7 +61,7 @@
       </dd>
       {% if foodbank.charity_just_foodbank %}<dt>Charity just food bank</dt><dd>&#9989; Yes</dd>{% endif %}
       {% endif %}
-      <dt>Network</dt><dd>{{ foodbank.network or "" }}</dd>
+      <dt>Network</dt><dd>{{ foodbank.network or "&nbsp;" | safe }}</dd>
       {% if foodbank.network_id %}<dt>Network ID</dt><dd>{{ foodbank.network_id }}</dd>{% endif %}
       <dt>FSA ID</dt>
       <dd>
@@ -85,7 +85,7 @@
 
     <h3 class="title is-5">Politics</h3>
     <dl>
-      <dt>Parl. Con.</dt><dd>{{ foodbank.parliamentary_constituency_name or "" }}</dd>
+      <dt>Parl. Con.</dt><dd>{{ foodbank.parliamentary_constituency_name or "&nbsp;" | safe }}</dd>
       {% if foodbank.county %}<dt>County</dt><dd>{{ foodbank.county }}</dd>{% endif %}
       {% if foodbank.district %}<dt>District</dt><dd>{{ foodbank.district }}</dd>{% endif %}
       {% if foodbank.ward %}<dt>Ward</dt><dd>{{ foodbank.ward }}</dd>{% endif %}
@@ -107,24 +107,24 @@
 
     <h3 class="title is-5">Dates</h3>
     <dl>
-      <dt>Created</dt><dd>{{ foodbank.created }}</dd>
-      <dt>Modified</dt><dd>{{ foodbank.modified }}</dd>
-      <dt>Edited</dt><dd>{{ foodbank.edited or "" }}</dd>
-      <dt>Last Need</dt><dd>{{ foodbank.last_need or "" }}</dd>
+      <dt>Created</dt><dd>{{ foodbank.created|date("N j, Y, P") }}</dd>
+      <dt>Modified</dt><dd>{{ foodbank.modified|date("N j, Y, P") }}</dd>
+      <dt>Edited</dt><dd>{{ (foodbank.edited|date("N j, Y, P")) if foodbank.edited else ("&nbsp;" | safe) }}</dd>
+      <dt>Last Need</dt><dd>{{ (foodbank.last_need|date("N j, Y, P")) if foodbank.last_need else ("&nbsp;" | safe) }}</dd>
       <dt>Last Need Check</dt>
       <dd>
-        {{ foodbank.last_need_check or "" }}<br>
+        {{ foodbank.last_need_check|date("N j, Y, P") if foodbank.last_need_check else "" }}<br>
         <form action="/admin/foodbank/{{ foodbank.slug }}/needcheck/" method="post">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           <button type="submit" class="button is-info is-small is-light">Force Check</button>
         </form>
       </dd>
-      <dt>Last RFI</dt><dd>{{ foodbank.last_rfi or "" }}</dd>
-      <dt>Last Discrepancy Check</dt><dd>{{ foodbank.last_discrepancy_check or "" }}</dd>
+      <dt>Last RFI</dt><dd>{{ (foodbank.last_rfi|date("N j, Y, P")) if foodbank.last_rfi else ("&nbsp;" | safe) }}</dd>
+      <dt>Last Discrepancy Check</dt><dd>{{ (foodbank.last_discrepancy_check|date("N j, Y, P")) if foodbank.last_discrepancy_check else ("&nbsp;" | safe) }}</dd>
       {% if foodbank.rss_url or foodbank.news_url %}
       <dt>Last Crawl</dt>
       <dd>
-        {{ foodbank.last_crawl or "" }}
+        {{ (foodbank.last_crawl|date("N j, Y, P")) if foodbank.last_crawl else ("&nbsp;" | safe) }}
         <form action="/admin/foodbank/{{ foodbank.slug }}/crawl/" method="post">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           <button type="submit" class="button is-info is-small is-light">Force Article Crawl</button>
@@ -151,7 +151,11 @@
 
     <h3 class="title is-5">Latest Need</h3>
     {% if foodbank.latestNeed %}
-      <p><a href="/admin/need/{{ foodbank.latestNeed.need_id }}/">{{ foodbank.latestNeed.created }}</a></p>
+      <p>
+        {{ foodbank.latestNeed.input_method_emoji | safe }}
+        <strong><a href="/admin/need/{{ foodbank.latestNeed.need_id }}/">{{ foodbank.latestNeed.need_id_short }}</a></strong>
+        {{ foodbank.latestNeed.created_timesince }}
+      </p>
       <div class="box"><p>{{ foodbank.latestNeed.change_text | linebreaksbr | safe }}</p></div>
     {% else %}
       <p>No published need yet.</p>

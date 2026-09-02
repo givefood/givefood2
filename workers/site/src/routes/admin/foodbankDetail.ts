@@ -20,6 +20,7 @@ import { verifyCsrf, issueCsrfToken } from "../../lib/csrf";
 import { adminPageContext } from "./pageContext";
 import { fullNameFoodbank } from "../../lib/fields";
 import { inputMethodEmoji } from "../../lib/needAdminDisplay";
+import { timesince } from "../../lib/timesince";
 
 // gfadmin/views.py:644-645 (needs/orders: 200), :723 (crawls: 100) --
 // subscribers has no limit at all (foodbank_subscribers_tab), see
@@ -90,7 +91,17 @@ export async function adminFoodbankDetail(c: Context<AppEnv>): Promise<Response>
 
   const html = await render("admin/foodbank_detail.njk", {
     ...(await adminPageContext(c, "foodbanks")),
-    foodbank,
+    foodbank: {
+      ...foodbank,
+      latestNeed: foodbank.latestNeed
+        ? {
+            ...foodbank.latestNeed,
+            need_id_short: foodbank.latestNeed.need_id.slice(0, 7),
+            input_method_emoji: inputMethodEmoji(foodbank.latestNeed.input_method),
+            created_timesince: `${timesince(foodbank.latestNeed.created)} ago`,
+          }
+        : null,
+    },
     full_name: fullNameFoodbank(foodbank.name),
     fsa_url: fsaUrl(foodbank),
     charity_register_url: charityRegisterUrl(foodbank),
@@ -140,7 +151,11 @@ export async function adminFoodbankTab(c: Context<AppEnv>): Promise<Response> {
     }
     case "articles": {
       const articles = await getArticlesForFoodbankTab(db, foodbank.id, ARTICLES_TAB_LIMIT);
-      return c.html(await render("admin/foodbank_tabs/articles.njk", { articles }));
+      return c.html(
+        await render("admin/foodbank_tabs/articles.njk", {
+          articles: articles.map((a) => ({ ...a, published_date_timesince: `${timesince(a.published_date)} ago` })),
+        }),
+      );
     }
     case "subscribers": {
       const subscribers = await getSubscribersForFoodbankTab(db, foodbank.id);

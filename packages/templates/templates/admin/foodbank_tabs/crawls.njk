@@ -13,8 +13,8 @@
     {% for item in crawl_items %}
     <tr>
       <td>{{ item.crawl_type_icon | safe }} {{ item.crawl_type }}</td>
-      <td>{{ item.start }}</td>
-      <td>{% if item.finish %}{{ item.finish }}{% else %}<span style="color:red;">Unfinished</span>{% endif %}</td>
+      <td>{{ item.start|date("N j, Y, P") }}</td>
+      <td>{% if item.finish %}{{ item.finish|date("N j, Y, P") }}{% else %}<span style="color:red;">Unfinished</span>{% endif %}</td>
       <td>{% if item.finish %}{{ item.time_taken_ms }} ms{% endif %}</td>
       <td>{% if item.url %}<a href="{{ item.url }}" target="_blank" rel="noopener">{{ item.url | truncatechars(30) }}</a>{% endif %}</td>
     </tr>

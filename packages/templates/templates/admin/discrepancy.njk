@@ -14,7 +14,7 @@
       <dt>Status</dt>
       <dd>{{ discrepancy.status }}</dd>
       <dt>Created</dt>
-      <dd><time datetime="{{ discrepancy.created }}">{{ discrepancy.created }}</time></dd>
+      <dd><time datetime="{{ discrepancy.created }}">{{ discrepancy.created|date("N j, Y, P") }}</time></dd>
       {% if discrepancy.url %}
         <dt>URL</dt>
         <dd><a href="{{ discrepancy.url }}" target="_blank" rel="noopener">{{ discrepancy.url }}</a></dd>

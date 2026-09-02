@@ -67,14 +67,14 @@
       <dd>
         {% if stats.oldest_edit %}
         {{ stats.oldest_edit_timesince }}<br>
-        <span class="is-size-7">{{ stats.oldest_edit.edited }}<br>{{ stats.oldest_edit_days }} days ago</span>
+        <span class="is-size-7">{{ stats.oldest_edit.edited|date("N j, Y, P") }}<br>{{ stats.oldest_edit_days }} days ago</span>
         {% endif %}
       </dd>
       <dt>Latest Edit</dt>
       <dd>
         {% if stats.latest_edit %}
         {{ stats.latest_edit_timesince }}<br>
-        <span class="is-size-7">{{ stats.latest_edit.edited }}</span>
+        <span class="is-size-7">{{ stats.latest_edit.edited|date("N j, Y, P") }}</span>
         {% endif %}
       </dd>
     </dl>
@@ -85,7 +85,7 @@
       <dd>
         {% if stats.oldest_need_check %}
         {{ stats.oldest_need_check_timesince }}<br>
-        <span class="is-size-7">{{ stats.oldest_need_check.last_need_check }}</span>
+        <span class="is-size-7">{{ stats.oldest_need_check.last_need_check|date("N j, Y, P") }}</span>
         {% endif %}
       </dd>
       <dt>Latest Need Check</dt>
@@ -93,7 +93,7 @@
         {% if stats.latest_need_check %}
           {% if stats.latest_need_crawlset_id %}<a href="/admin/crawl-set/{{ stats.latest_need_crawlset_id }}.json">{{ stats.latest_need_check_timesince }}</a>
           {% else %}{{ stats.latest_need_check_timesince }}{% endif %}
-        <br><span class="is-size-7">{{ stats.latest_need_check.last_need_check }}</span>
+        <br><span class="is-size-7">{{ stats.latest_need_check.last_need_check|date("N j, Y, P") }}</span>
         {% endif %}
       </dd>
       <dt>24h Need Checks</dt>
@@ -113,7 +113,7 @@
         <tr>
           <td>{% if article.foodbank_slug %}<a href="/admin/foodbank/{{ article.foodbank_slug }}/">{{ article.foodbank_name }}</a>{% else %}{{ article.foodbank_name or "" }}{% endif %}</td>
           <td><a href="{{ article.url }}" target="_blank" rel="noopener">{{ article.title }}</a></td>
-          <td>{{ article.published_date }}</td>
+          <td>{{ article.published_date|date("D jS H:i") }}</td>
           <td>
             <form method="post" style="display:inline">
               <input type="hidden" name="csrf_token" value="{{ csrf_token }}">

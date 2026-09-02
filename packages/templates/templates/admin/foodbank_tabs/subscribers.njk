@@ -20,7 +20,7 @@
     <tr>
       <td style="white-space:nowrap">{{ s.type_emoji | safe }} {{ s.type | django_title }}</td>
       <td>{{ s.identifier }}</td>
-      <td>{{ s.created }}</td>
+      <td>{{ s.created|date("N j, Y, P") }}</td>
     </tr>
     {% else %}
     <tr><td colspan="3">None</td></tr>

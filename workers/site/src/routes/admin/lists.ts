@@ -29,7 +29,7 @@ import {
   type PageResult,
 } from "@givefood/db";
 import { formatCsvRow } from "@givefood/serialise";
-import { render } from "@givefood/templates";
+import { djangoDate, render } from "@givefood/templates";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
 import { verifyCsrf } from "../../lib/csrf";
@@ -102,10 +102,20 @@ function escapeHtml(value: string): string {
 
 // Timesince-formatted date cell, matching every Django list template's own
 // "{{ value }}<br><span class=is-size-7>{{ value|timesince }} ago</span>"
-// pattern -- raw value on the first line, relative time (small) beneath.
+// pattern -- Django's default DATETIME_FORMAT ("N j, Y, P", e.g. "Sept. 2,
+// 2026, 3:34 p.m." -- what `{{ value }}` itself renders as for a datetime,
+// USE_L10N/en locale, see packages/templates/src/filters.ts's djangoDate)
+// on the first line, relative time (small) beneath.
 function dateCell(value: string | null, now: Date): string {
   if (!value) return "";
-  return `${escapeHtml(value)}<br><span class="is-size-7">${timesince(value, now)} ago</span>`;
+  return `${escapeHtml(djangoDate(value, "N j, Y, P"))}<br><span class="is-size-7">${timesince(value, now)} ago</span>`;
+}
+
+// Plain Django-formatted date, no timesince line -- locations.html/
+// donationpoints.html's own `{{ location.modified }}`/`{{ location.edited }}`
+// columns (unlike foodbanks.html's dateCell()-style columns above).
+function plainDateCell(value: string | null): string {
+  return value ? escapeHtml(djangoDate(value, "N j, Y, P")) : "";
 }
 
 // gfadmin/views.py:234-314 foodbanks() -- excludes closed food banks,
@@ -221,8 +231,8 @@ export async function adminLocationsList(c: Context<AppEnv>): Promise<Response> 
       escapeHtml(loc.foodbank_network),
       loc.country ? escapeHtml(loc.country) : "",
       loc.is_closed ? "Yes" : "No",
-      loc.modified,
-      loc.edited ?? "",
+      plainDateCell(loc.modified),
+      plainDateCell(loc.edited),
     ],
   });
 }
@@ -259,8 +269,8 @@ export async function adminDonationPointsList(c: Context<AppEnv>): Promise<Respo
       escapeHtml(dp.foodbank_network),
       dp.country ? escapeHtml(dp.country) : "",
       dp.is_closed ? "Yes" : "No",
-      dp.modified,
-      dp.edited ?? "",
+      plainDateCell(dp.modified),
+      plainDateCell(dp.edited),
     ],
   });
 }
@@ -346,13 +356,13 @@ export async function adminOrdersList(c: Context<AppEnv>): Promise<Response> {
       o.foodbank_name && o.foodbank_slug ? `<a href="/admin/foodbank/${o.foodbank_slug}/">${escapeHtml(o.foodbank_name)}</a>` : "<em>Unassigned</em>",
       o.delivery_provider_id ? escapeHtml(o.delivery_provider_id) : "",
       escapeHtml(o.country),
-      o.delivery_datetime,
+      plainDateCell(o.delivery_datetime),
       String(o.no_items),
       ((o.weight / 1000) * ORDER_PACKAGING_WEIGHT_PC).toFixed(2),
       String(o.calories),
       `£${(o.cost / 100).toFixed(2)}`,
       o.actual_cost ? `£${(o.actual_cost / 100).toFixed(2)}` : "",
-      o.created,
+      plainDateCell(o.created),
     ],
     csvUrl: "/admin/orders/csv/",
   });
@@ -435,7 +445,7 @@ export async function adminSubscriptionsList(c: Context<AppEnv>): Promise<Respon
       `${SUBSCRIPTION_TYPE_EMOJI[s.type] ?? ""} ${s.type.charAt(0).toUpperCase()}${s.type.slice(1)}`,
       `<a href="/admin/foodbank/${s.foodbank_slug}/">${escapeHtml(s.foodbank_name)}</a>`,
       escapeHtml(s.identifier),
-      s.created,
+      plainDateCell(s.created),
     ],
     rowActions: (s, csrfToken) =>
       `<form method="post" action="/admin/subscriptions/delete/" onsubmit="return confirm('Delete this subscription?')">` +
@@ -477,7 +487,7 @@ export async function adminFoodbanksWithoutNeedList(c: Context<AppEnv>): Promise
     columns: [{ label: "Foodbank" }, { label: "Latest published need" }],
     rowCells: (f) => [
       `<a href="/admin/foodbank/${f.slug}/">${escapeHtml(f.name)}</a>`,
-      f.latest_need_id ? `<a href="/admin/need/${f.latest_need_id}/">${f.latest_need_created}</a>` : "Never",
+      f.latest_need_id && f.latest_need_created ? `<a href="/admin/need/${f.latest_need_id}/">${escapeHtml(djangoDate(f.latest_need_created, "N j, Y, P"))}</a>` : "Never",
     ],
   });
 }
