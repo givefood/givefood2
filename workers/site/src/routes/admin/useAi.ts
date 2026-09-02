@@ -3,6 +3,7 @@ import { getFoodbankBySlug, updateFoodbankFields } from "@givefood/db";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
 import { verifyCsrf } from "../../lib/csrf";
+import { isValidEmail } from "../../lib/adminFormFields";
 
 // gfadmin/views.py:1313-1360 foodbank_use_ai_detail, @require_POST.
 // Confirmed (WP 6.8 research): makes no AI call itself, just commits one
@@ -21,12 +22,6 @@ function isValidUrl(value: string): boolean {
   } catch {
     return false;
   }
-}
-
-function isValidEmail(value: string): boolean {
-  // Same coarse shape as Django's EmailValidator needs to catch here --
-  // this is a "did the AI hallucinate garbage" guard, not RFC 5322.
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
 
 export async function adminFoodbankUseAiDetail(c: Context<AppEnv>): Promise<Response> {

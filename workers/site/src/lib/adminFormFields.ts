@@ -163,6 +163,21 @@ export type AdminFieldValue = string | number | null;
 // error), trims free text to null-when-empty, and refuses to proceed if a
 // required field came back empty -- matching Django's own required-field
 // validation, just without a ModelForm to do it for us.
+// givefood/const/general.py:176, applied via base.py:63-69's RegexValidator
+// to every model's `postcode` field (Foodbank/FoodbankLocation/
+// FoodbankDonationPoint all inherit it) -- the only format validation
+// Django has on this field. Ported as the literal source string, not
+// paraphrased, so it stays byte-comparable against the original.
+const POSTCODE_REGEX = /^(([A-Z]{1,2}[0-9][A-Z0-9]?|ASCN|STHL|TDCU|BBND|[BFS]IQQ|PCRN|TKCA) ?[0-9][A-Z]{2}|BFPO ?[0-9]{1,4}|(KY[0-9]|MSR|VG|AI)[ -]?[0-9]{4}|[A-Z]{2} ?[0-9]{2}|GE ?CX|GIR ?0A{2}|SAN ?TA1)$/;
+
+// Same coarse shape as Django's EmailValidator needs to catch here -- a
+// "does this look like an email" guard, not RFC 5322. Exported so
+// routes/admin/useAi.ts's own field-level validation uses the same check
+// rather than a second, possibly-diverging copy.
+export function isValidEmail(value: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
 export function parseAdminFields(specs: readonly AdminFieldSpec[], body: Record<string, unknown>): { ok: true; values: Record<string, AdminFieldValue> } | { ok: false; error: string } {
   const values: Record<string, AdminFieldValue> = {};
   for (const spec of specs) {
@@ -178,6 +193,20 @@ export function parseAdminFields(specs: readonly AdminFieldSpec[], body: Record<
     const raw = body[spec.name];
     const trimmed = typeof raw === "string" ? raw.trim() : "";
     if (spec.required && !trimmed) return { ok: false, error: `${spec.label} is required` };
+    if (trimmed) {
+      // Format validation Django enforces on every ModelForm save
+      // (givefood/models/base.py:63-69's RegexValidator, EmailField) but
+      // this port's admin forms had none of at all until now -- these are
+      // the only two fields real Django validation ever rejected on.
+      // .toUpperCase() before testing: Django's regex is upper-case-only
+      // with no clean_postcode()/normalisation found anywhere, so a
+      // hand-typed lowercase postcode would genuinely 400 in real Django
+      // too -- deliberately not ported here, since every stored postcode
+      // in this schema is already upper-case and rejecting a case
+      // difference the user almost certainly didn't intend serves no one.
+      if (spec.name === "postcode" && !POSTCODE_REGEX.test(trimmed.toUpperCase())) return { ok: false, error: `${spec.label} is not a valid postcode` };
+      if (spec.kind === "email" && !isValidEmail(trimmed)) return { ok: false, error: `${spec.label} is not a valid email address` };
+    }
     values[spec.name] = trimmed === "" ? null : trimmed;
   }
   return { ok: true, values };
