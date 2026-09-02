@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { LOCALES } from "@givefood/templates";
 import type { AppEnv } from "./types";
+import { adminNoStore } from "./middleware/noStore";
 import { serverTiming } from "./middleware/serverTiming";
 import { slugRedirect } from "./middleware/slugRedirect";
 import { resolveLanguage } from "./middleware/resolveLanguage";
@@ -107,6 +108,21 @@ app.use("*", serverTiming); // was RenderTime
 app.use("*", slugRedirect); // was SlugRedirectMiddleware
 app.use("*", resolveLanguage); // was LocaleMiddleware + i18n_patterns
 app.use("*", geoJsonPreload); // was GeoJSONPreload (runs after routing)
+
+// SECURITY, registered before any /admin or /auth route so it wraps every one
+// of them (including the auth redirects and 404s): mark the whole admin
+// uncacheable. See middleware/noStore.ts -- Cloudflare was caching
+// authenticated admin pages and serving them anonymously, and because
+// wrangler.jsonc enables the Workers Cache a HIT never executes the Worker,
+// so requireAdminAuth could not have caught it.
+//
+// Four patterns, not one: Hono matches "/admin/*" against the SUBPATHS only,
+// so the bare mount points "/admin" and "/auth" need their own entries or the
+// dashboard itself goes uncovered.
+app.use("/admin", adminNoStore);
+app.use("/admin/*", adminNoStore);
+app.use("/auth", adminNoStore);
+app.use("/auth/*", adminNoStore);
 
 // Media routes are registered at givefood/urls.py:14 -> gfwfbn/urls/generic.py,
 // OUTSIDE i18n_patterns -- one URL each, never language-prefixed. This is
