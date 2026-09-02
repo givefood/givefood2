@@ -15,6 +15,10 @@ export interface Env {
   RENDER_Q: Queue<unknown>;
   PURGE_Q: Queue<unknown>;
   JOBS_Q: Queue<unknown>;
+  ARTICLES_Q: Queue<unknown>;
+  CHARITY_EW_Q: Queue<unknown>;
+  CHARITY_SCOTLAND_Q: Queue<unknown>;
+  CHARITY_NI_Q: Queue<unknown>;
 
   OPENROUTER_KEY: string;
   CF_BROWSER_TOKEN: string;

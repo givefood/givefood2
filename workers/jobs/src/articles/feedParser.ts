@@ -1,0 +1,151 @@
+import { XMLParser } from "fast-xml-parser";
+
+// Ports the exact three fields Python's `feedparser` output feeds into
+// `foodbank_article_crawl` (crawlers.py:25-67) -- item.title, item.link,
+// item.published_parsed -- not a general feedparser port. feedparser
+// itself normalises RSS 2.0/1.0(RDF)/0.9x and Atom 0.3/1.0 into one
+// uniform shape; this does the same narrow normalisation using
+// fast-xml-parser (pure JS, zero Node-API dependencies, Workers-safe)
+// as the underlying XML parser, rather than feedparser's own SGML-ish
+// tag-soup parser (which has no JS/Workers equivalent).
+export interface FeedItem {
+  title: string;
+  link: string;
+  publishedDate: Date | null;
+}
+
+const parser = new XMLParser({
+  ignoreAttributes: false,
+  attributeNamePrefix: "@_",
+  cdataPropName: "__cdata",
+  textNodeName: "#text",
+  removeNSPrefix: true, // dc:date/atom:link/content:encoded -> date/link/encoded; RSS mixes namespaced and bare tags for the same concept (pubDate vs dc:date) and we only read a handful of fields by bare name
+  trimValues: true,
+  parseTagValue: false, // keep every text value a string -- a numeric-looking title ("2026") must not become a JS number
+  // Without this, fast-xml-parser decodes only XML's five predefined
+  // entities (&amp; &lt; &gt; &quot; &apos;) and leaves named/numeric HTML
+  // entities ("&#8211;", "&#038;", "&rsquo;") literal in the output --
+  // confirmed directly: WordPress (most food banks' CMS) emits numeric
+  // character references for punctuation in titles ("&#8217;" for a
+  // right single quote), and 243/469 real feeds had at least one title
+  // affected before this flag was set, verified against feedparser's own
+  // (fully HTML-entity-decoding) output for the same feeds.
+  htmlEntities: true,
+});
+
+// A parsed node's text is a plain string, a {__cdata} wrapper (an
+// all-CDATA element with no sibling markup), or a {"#text", ...attrs}
+// wrapper (element text alongside attributes, e.g. <guid isPermaLink="…">)
+// -- verified directly against fast-xml-parser's real output for each
+// shape. Nested markup inside the field (a rare, technically-invalid-
+// unless-escaped case) falls through to `undefined`, matching how
+// unrecoverable malformed XML is already handled by the caller (§ below).
+function textOf(node: unknown): string | undefined {
+  // `trimValues` (the parser option above) only trims plain text nodes,
+  // not CDATA content -- confirmed directly: real feeds carry titles like
+  // "<![CDATA[Our Newsletter : December Voice ]]>", trailing space and
+  // all, inside the CDATA itself. feedparser's own output has no such
+  // trailing whitespace, so trim unconditionally here rather than only
+  // for the plain-string branch.
+  if (typeof node === "string") return node.trim();
+  if (typeof node === "number") return String(node);
+  if (node && typeof node === "object") {
+    const obj = node as Record<string, unknown>;
+    if (typeof obj.__cdata === "string") return obj.__cdata.trim();
+    if (typeof obj["#text"] === "string") return obj["#text"].trim();
+  }
+  return undefined;
+}
+
+function asArray<T>(value: T | T[] | undefined): T[] {
+  if (value === undefined) return [];
+  return Array.isArray(value) ? value : [value];
+}
+
+// Atom's <link> has no fixed text content -- the URL is the `href`
+// attribute -- and an entry can carry several (rel=self, rel=alternate,
+// rel=enclosure, …). A link with no `rel` defaults to "alternate" per the
+// Atom spec; feedparser's own selection prefers rel=alternate, falling
+// back to the first link present. Mirrored here rather than guessing.
+function pickAtomLink(node: unknown): string | undefined {
+  const links = asArray(node as Record<string, unknown> | Record<string, unknown>[]);
+  if (links.length === 0) return undefined;
+  const alternate = links.find((l) => !l["@_rel"] || l["@_rel"] === "alternate");
+  const href = (alternate ?? links[0])?.["@_href"];
+  return typeof href === "string" ? href : undefined;
+}
+
+// RFC 822/1123 (RSS pubDate: "Thu, 26 Mar 2026 15:52:06 +0000") and ISO
+// 8601 (Atom published/updated, RSS 1.0 dc:date: "2026-03-26T15:52:06Z")
+// both parse correctly via the native Date constructor in V8/workerd --
+// verified directly, not assumed. Anything that doesn't parse becomes
+// `null`, same as feedparser leaving `published_parsed` unset on a date it
+// can't recognise (crawlers.py never reads a null-dated item, since
+// FoodbankArticle.published_date is NOT NULL -- see insertFoodbankArticle).
+function parseDate(text: string | undefined): Date | null {
+  if (!text) return null;
+  const date = new Date(text);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+// Foodbank.rss_url is uncredentialed, third-party content -- malformed XML
+// is a real possibility (a plugin misconfiguration, a CMS migration mid-
+// crawl), and fast-xml-parser, unlike feedparser's tag-soup tolerance,
+// throws on XML that isn't well-formed. Treated as "no items this crawl" --
+// the same outcome Django's `if feed:` guard produces when feedparser's
+// own best-effort parse finds nothing usable -- rather than failing the
+// whole queue message; see needcheckRender.ts's S1 pattern for the same
+// "render failure isn't a retryable error" shape, though article crawl
+// carries no discrepancy for it (crawlers.py doesn't either).
+export function parseFeed(xml: string): FeedItem[] {
+  let doc: Record<string, unknown>;
+  try {
+    doc = parser.parse(xml) as Record<string, unknown>;
+  } catch {
+    return [];
+  }
+
+  const rssChannel = (doc.rss as Record<string, unknown> | undefined)?.channel as Record<string, unknown> | undefined;
+  if (rssChannel) return asArray(rssChannel.item as Record<string, unknown> | Record<string, unknown>[]).map(rssItemToFeedItem).filter(isUsable);
+
+  // RSS 1.0 (RDF): <item> is a direct child of the root, not nested under
+  // <channel> -- the one structural difference from RSS 2.0 that matters
+  // for the three fields read here (fields themselves are the same names,
+  // decoded identically by removeNSPrefix).
+  const rdfRoot = doc.RDF as Record<string, unknown> | undefined;
+  if (rdfRoot) return asArray(rdfRoot.item as Record<string, unknown> | Record<string, unknown>[]).map(rssItemToFeedItem).filter(isUsable);
+
+  const atomFeed = doc.feed as Record<string, unknown> | undefined;
+  if (atomFeed) return asArray(atomFeed.entry as Record<string, unknown> | Record<string, unknown>[]).map(atomEntryToFeedItem).filter(isUsable);
+
+  return [];
+}
+
+function rssItemToFeedItem(item: Record<string, unknown>): FeedItem {
+  return {
+    title: textOf(item.title) ?? "",
+    link: textOf(item.link) ?? "",
+    // pubDate (RSS 2.0/0.9x) takes precedence; dc:date (RSS 1.0/RDF, and
+    // sometimes present as a namespaced extra on RSS 2.0 items too) is the
+    // fallback -- matching feedparser's own field-priority order.
+    publishedDate: parseDate(textOf(item.pubDate) ?? textOf(item.date)),
+  };
+}
+
+function atomEntryToFeedItem(entry: Record<string, unknown>): FeedItem {
+  return {
+    title: textOf(entry.title) ?? "",
+    link: pickAtomLink(entry.link) ?? "",
+    // feedparser prefers <published>, falling back to <updated> when an
+    // entry (rarely) omits it.
+    publishedDate: parseDate(textOf(entry.published) ?? textOf(entry.updated)),
+  };
+}
+
+// crawlers.py:43's `if item.title != ""` guard, plus the structural
+// requirement (mktime(item.published_parsed)) that a dateless item is
+// never insertable -- both checked once, here, rather than at every call
+// site.
+function isUsable(item: FeedItem): boolean {
+  return item.title !== "" && item.publishedDate !== null;
+}

@@ -3,6 +3,12 @@ import { handleScheduled } from "./scheduled";
 import { handleJobsQueue } from "./queues/jobs";
 import { handleNeedcheckRenderQueue } from "./queues/needcheckRender";
 import { handleNeedcheckRenderDlq } from "./queues/needcheckRenderDlq";
+import { handleArticlesQueue } from "./queues/articles";
+import { handleArticlesDlq } from "./queues/articlesDlq";
+import { handleCharityEwQueue } from "./queues/charityEw";
+import { handleCharityScotlandQueue } from "./queues/charityScotland";
+import { handleCharityNiQueue } from "./queues/charityNi";
+import { handleCharityEwDlq, handleCharityNiDlq, handleCharityScotlandDlq } from "./queues/charityDlq";
 
 // No routes, no assets -- see PLAN.md §3.1 "Why the second Worker is
 // genuinely required" (secret blast radius, different limits, deploy
@@ -20,6 +26,22 @@ export default {
         return handleNeedcheckRenderQueue(batch as MessageBatch<any>, env);
       case "needcheck-render-dlq":
         return handleNeedcheckRenderDlq(batch as MessageBatch<any>, env);
+      case "articles":
+        return handleArticlesQueue(batch as MessageBatch<any>, env);
+      case "articles-dlq":
+        return handleArticlesDlq(batch as MessageBatch<any>, env);
+      case "charity-ew":
+        return handleCharityEwQueue(batch as MessageBatch<any>, env);
+      case "charity-ew-dlq":
+        return handleCharityEwDlq(batch as MessageBatch<any>, env);
+      case "charity-scotland":
+        return handleCharityScotlandQueue(batch as MessageBatch<any>, env);
+      case "charity-scotland-dlq":
+        return handleCharityScotlandDlq(batch as MessageBatch<any>, env);
+      case "charity-ni":
+        return handleCharityNiQueue(batch as MessageBatch<any>, env);
+      case "charity-ni-dlq":
+        return handleCharityNiDlq(batch as MessageBatch<any>, env);
       case "cache-purge":
         // TODO: build out per PLAN.md §3.6 "Purge: cache tags, not URLs".
         // Not implemented -- retry everything rather than silently drop

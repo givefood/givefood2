@@ -3,14 +3,19 @@ import {
   FRAG_KV_KEY_LAST_UPDATED,
   FRAG_KV_KEY_NEED_HITS,
   findCrawlSetByRunId,
+  getFoodbanksByCountryForCharityCrawl,
+  getFoodbanksWithRss,
   getLastModifiedFoodbank,
   getOpenFoodbanksForNeedCheck,
   getRecentHitsTotal,
   insertCrawlSet,
   insertFoodbankDiscrepancy,
   setCrawlSetExpected,
+  type Session,
 } from "@givefood/db";
 import type { NeedcheckRenderMessage } from "../queues/needcheckRender";
+import type { ArticlesMessage } from "../queues/articles";
+import type { CharityMessage } from "../queues/charity";
 
 // One handler per cron in wrangler.jsonc's triggers.crons, dispatched by
 // the exact cron expression. See PLAN.md §10 (delivery plan) and §8.5
@@ -38,6 +43,67 @@ export async function handleScheduled(
   ctx.waitUntil(handler(env, event.scheduledTime));
 }
 
+// Idempotent CrawlSet creation, shared by every fan-out cron (needcheck,
+// getarticles, charityinfo): find-by-run_id first (the common case --
+// PLAN.md §8.5.2/§8.5.5), and on the rare genuinely-concurrent duplicate
+// Cron Trigger delivery (documented at-least-once), treat the loser's
+// UNIQUE-constraint throw on crawlset_runid_uniq as the same harmless
+// "already exists" outcome rather than an unhandled rejection inside
+// ctx.waitUntil -- nothing has been enqueued yet at this point either way.
+// Returns null when this invocation should no-op (a duplicate delivery).
+async function getOrCreateCrawlSet(session: Session, crawlType: string, runId: string, label: string): Promise<number | null> {
+  const existing = await findCrawlSetByRunId(session, runId);
+  if (existing) {
+    console.log(`${label}: crawlset for ${runId} already exists (id ${existing.id}) -- duplicate cron delivery, skipping`);
+    return null;
+  }
+  try {
+    return await insertCrawlSet(session, crawlType, runId);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.includes("UNIQUE constraint failed")) {
+      console.log(`${label}: crawlset for ${runId} was just created by a concurrent invocation -- lost the race, skipping`);
+      return null;
+    }
+    throw err;
+  }
+}
+
+// sendBatch caps at 100 messages / 256 KB per call. Each chunk is
+// independent, so one chunk's transient failure (a Queues blip) doesn't
+// abort the rest -- letting a single failure stop the whole loop is worse
+// than it looks: the CrawlSet row already committed by the time this
+// runs, so any later invocation for the same run_id takes the "already
+// exists, skipping" early return in getOrCreateCrawlSet and never resumes
+// the un-enqueued remainder. Returns the counts so the caller can record
+// a discrepancy on partial failure instead of the gap vanishing silently.
+async function enqueueChunked<T>(queue: Queue<unknown>, items: T[], toBody: (item: T) => unknown, label: string): Promise<{ enqueuedCount: number; failedChunks: number }> {
+  const BATCH_SIZE = 100;
+  let enqueuedCount = 0;
+  let failedChunks = 0;
+  for (let i = 0; i < items.length; i += BATCH_SIZE) {
+    const chunk = items.slice(i, i + BATCH_SIZE);
+    try {
+      await queue.sendBatch(chunk.map((item) => ({ body: toBody(item) })));
+      enqueuedCount += chunk.length;
+    } catch (err) {
+      failedChunks++;
+      console.error(`${label}: sendBatch failed for chunk starting at index ${i} (${chunk.length} items)`, err);
+    }
+  }
+  return { enqueuedCount, failedChunks };
+}
+
+async function recordEnqueueFailure(session: Session, label: string, missed: number, failedChunks: number): Promise<void> {
+  await insertFoodbankDiscrepancy(session, {
+    foodbankId: null,
+    foodbankName: null,
+    url: null,
+    discrepancyType: "website",
+    discrepancyText: `${label}: ${missed} food bank(s) across ${failedChunks} chunk(s) failed to enqueue and were not crawled today`,
+  }).catch((discErr) => console.error(`${label}: also failed to write the enqueue-failure discrepancy`, discErr));
+}
+
 // PLAN.md §8.5.2: three lines of real work, deliberately -- a scheduled()
 // handler on a >=1-hour interval gets 15 minutes of CPU, but there is no
 // reason to spend any of it here. Create the CrawlSet, enqueue one
@@ -45,36 +111,10 @@ export async function handleScheduled(
 // everything else.
 async function needcheck(env: Env, scheduledTime: number): Promise<void> {
   const session = env.DB.withSession("first-unconstrained");
-
-  // Idempotency: the run id is derived from the scheduled date. Cron
-  // Triggers are at-least-once, so a duplicate delivery finds the
-  // existing row and does nothing (PLAN.md §8.5.2, §8.5.5).
   const runId = `needcheck-${new Date(scheduledTime).toISOString().slice(0, 10)}`;
-  const existing = await findCrawlSetByRunId(session, runId);
-  if (existing) {
-    console.log(`needcheck: crawlset for ${runId} already exists (id ${existing.id}) -- duplicate cron delivery, skipping`);
-    return;
-  }
+  const crawlSetId = await getOrCreateCrawlSet(session, "need", runId, "needcheck");
+  if (crawlSetId === null) return;
 
-  let crawlSetId: number;
-  try {
-    crawlSetId = await insertCrawlSet(session, "need", runId);
-  } catch (err) {
-    // The findCrawlSetByRunId check above is check-then-insert, not
-    // transactional -- two genuinely concurrent duplicate Cron Trigger
-    // deliveries (documented at-least-once) can both pass it and race to
-    // insert. crawlset_runid_uniq (0008_needcheck.sql) then makes the
-    // loser's INSERT throw; treat that exactly like the read-side
-    // "already exists" case above (harmless, nothing has been enqueued
-    // yet) rather than letting it surface as an unhandled rejection
-    // inside ctx.waitUntil, indistinguishable from a genuine failure.
-    const message = err instanceof Error ? err.message : String(err);
-    if (message.includes("UNIQUE constraint failed")) {
-      console.log(`needcheck: crawlset for ${runId} was just created by a concurrent invocation -- lost the race, skipping`);
-      return;
-    }
-    throw err;
-  }
   const foodbanks = await getOpenFoodbanksForNeedCheck(session);
 
   // Set expected/remaining BEFORE sending a single message: the queue
@@ -87,60 +127,83 @@ async function needcheck(env: Env, scheduledTime: number): Promise<void> {
   // decrement -- permanently under-counting this run.
   await setCrawlSetExpected(session, crawlSetId, foodbanks.length);
 
-  // sendBatch caps at 100 messages / 256 KB per call. Each chunk is
-  // independent, so one chunk's transient failure (a Queues blip) doesn't
-  // abort the other ~10 -- letting a single failure stop the whole loop
-  // used to be worse than it looks: the CrawlSet row above already
-  // committed, so any later invocation for the same runId takes the
-  // "already exists, skipping" early return and never resumes the
-  // un-enqueued remainder. Un-enqueued food banks are recorded as one
-  // discrepancy below instead of vanishing silently.
-  const BATCH_SIZE = 100;
-  let enqueuedCount = 0;
-  let failedChunks = 0;
-  for (let i = 0; i < foodbanks.length; i += BATCH_SIZE) {
-    const chunk = foodbanks.slice(i, i + BATCH_SIZE);
-    try {
-      await env.RENDER_Q.sendBatch(
-        chunk.map((fb) => ({
-          body: {
-            crawlSetId,
-            foodbankId: fb.id,
-            slug: fb.slug,
-            name: fb.name,
-            url: fb.url,
-            shoppingListUrl: fb.shopping_list_url,
-            facebookPage: fb.facebook_page,
-          } satisfies NeedcheckRenderMessage,
-        })),
-      );
-      enqueuedCount += chunk.length;
-    } catch (err) {
-      failedChunks++;
-      console.error(`needcheck: sendBatch failed for chunk starting at index ${i} (${chunk.length} food banks) in run ${runId}`, err);
-    }
-  }
+  const { enqueuedCount, failedChunks } = await enqueueChunked(
+    env.RENDER_Q,
+    foodbanks,
+    (fb) =>
+      ({
+        crawlSetId,
+        foodbankId: fb.id,
+        slug: fb.slug,
+        name: fb.name,
+        url: fb.url,
+        shoppingListUrl: fb.shopping_list_url,
+        facebookPage: fb.facebook_page,
+      }) satisfies NeedcheckRenderMessage,
+    "needcheck",
+  );
 
-  if (failedChunks > 0) {
-    const missed = foodbanks.length - enqueuedCount;
-    await insertFoodbankDiscrepancy(session, {
-      foodbankId: null,
-      foodbankName: null,
-      url: null,
-      discrepancyType: "website",
-      discrepancyText: `needcheck ${runId}: ${missed} food bank(s) across ${failedChunks} chunk(s) failed to enqueue and were not need-checked today`,
-    }).catch((discErr) => console.error("needcheck: also failed to write the enqueue-failure discrepancy", discErr));
-  }
+  if (failedChunks > 0) await recordEnqueueFailure(session, `needcheck ${runId}`, foodbanks.length - enqueuedCount, failedChunks);
 
   console.log(`needcheck: enqueued ${enqueuedCount}/${foodbanks.length} food banks for ${runId} (crawlset ${crawlSetId})`);
 }
 
-async function getArticles(env: Env): Promise<void> {
-  throw new Error("getArticles: not implemented");
+// PLAN.md §8.6: same shape as needcheck's cron -- CrawlSet, expected/
+// remaining, chunked enqueue -- targeting every food bank with an RSS feed.
+async function getArticles(env: Env, scheduledTime: number): Promise<void> {
+  const session = env.DB.withSession("first-unconstrained");
+  const runId = `articles-${new Date(scheduledTime).toISOString().slice(0, 10)}`;
+  const crawlSetId = await getOrCreateCrawlSet(session, "article", runId, "articles");
+  if (crawlSetId === null) return;
+
+  const foodbanks = await getFoodbanksWithRss(session);
+  await setCrawlSetExpected(session, crawlSetId, foodbanks.length);
+
+  const { enqueuedCount, failedChunks } = await enqueueChunked(
+    env.ARTICLES_Q,
+    foodbanks,
+    (fb) => ({ crawlSetId, foodbankId: fb.id, slug: fb.slug }) satisfies ArticlesMessage,
+    "articles",
+  );
+
+  if (failedChunks > 0) await recordEnqueueFailure(session, `articles ${runId}`, foodbanks.length - enqueuedCount, failedChunks);
+
+  console.log(`articles: enqueued ${enqueuedCount}/${foodbanks.length} food banks for ${runId} (crawlset ${crawlSetId})`);
 }
 
-async function charityInfo(env: Env): Promise<void> {
-  throw new Error("charityInfo: not implemented");
+// PLAN.md §8.7: ONE CrawlSet (matching crawlers.py's single daily
+// crawl_type='charity' run across all countries), fanned out across
+// THREE queues -- one per regulator, "so each regulator gets independent
+// concurrency and can be backed off without stalling the others" -- all
+// three sets of messages carrying the same crawlSetId, so
+// decrementCrawlSetRemaining still closes the one CrawlSet out correctly
+// regardless of which queue actually processed a given food bank.
+async function charityInfo(env: Env, scheduledTime: number): Promise<void> {
+  const session = env.DB.withSession("first-unconstrained");
+  const runId = `charity-${new Date(scheduledTime).toISOString().slice(0, 10)}`;
+  const crawlSetId = await getOrCreateCrawlSet(session, "charity", runId, "charityinfo");
+  if (crawlSetId === null) return;
+
+  const [ewFoodbanks, scotlandFoodbanks, niFoodbanks] = await Promise.all([
+    getFoodbanksByCountryForCharityCrawl(session, ["England", "Wales"]),
+    getFoodbanksByCountryForCharityCrawl(session, ["Scotland"]),
+    getFoodbanksByCountryForCharityCrawl(session, ["Northern Ireland"]),
+  ]);
+  const total = ewFoodbanks.length + scotlandFoodbanks.length + niFoodbanks.length;
+  await setCrawlSetExpected(session, crawlSetId, total);
+
+  const toBody = (fb: { id: number; slug: string }) => ({ crawlSetId, foodbankId: fb.id, slug: fb.slug }) satisfies CharityMessage;
+  const results = await Promise.all([
+    enqueueChunked(env.CHARITY_EW_Q, ewFoodbanks, toBody, "charity-ew"),
+    enqueueChunked(env.CHARITY_SCOTLAND_Q, scotlandFoodbanks, toBody, "charity-scotland"),
+    enqueueChunked(env.CHARITY_NI_Q, niFoodbanks, toBody, "charity-ni"),
+  ]);
+
+  const enqueuedCount = results.reduce((sum, r) => sum + r.enqueuedCount, 0);
+  const failedChunks = results.reduce((sum, r) => sum + r.failedChunks, 0);
+  if (failedChunks > 0) await recordEnqueueFailure(session, `charityinfo ${runId}`, total - enqueuedCount, failedChunks);
+
+  console.log(`charityinfo: enqueued ${enqueuedCount}/${total} food banks for ${runId} (crawlset ${crawlSetId})`);
 }
 
 async function dump(env: Env): Promise<void> {

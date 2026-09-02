@@ -33,7 +33,11 @@
     "producers": [
       { "queue": "needcheck-render", "binding": "RENDER_Q" },
       { "queue": "cache-purge", "binding": "PURGE_Q" },
-      { "queue": "jobs", "binding": "JOBS_Q" }
+      { "queue": "jobs", "binding": "JOBS_Q" },
+      { "queue": "articles", "binding": "ARTICLES_Q" },
+      { "queue": "charity-ew", "binding": "CHARITY_EW_Q" },
+      { "queue": "charity-scotland", "binding": "CHARITY_SCOTLAND_Q" },
+      { "queue": "charity-ni", "binding": "CHARITY_NI_Q" }
     ],
     "consumers": [
       {
@@ -59,7 +63,33 @@
         "queue": "jobs", "max_batch_size": 10, "max_batch_timeout": 30,
         "max_retries": 3, "dead_letter_queue": "jobs-dlq"
       },
-      { "queue": "jobs-dlq", "max_batch_size": 10, "max_retries": 1 }
+      { "queue": "jobs-dlq", "max_batch_size": 10, "max_retries": 1 },
+      // PLAN.md §8.6: articles' own concurrency figure -- each food
+      // bank's own (often tiny) hosting, not a shared API's rate limit.
+      {
+        "queue": "articles", "max_batch_size": 5, "max_batch_timeout": 30,
+        "max_retries": 3, "max_concurrency": 15, "dead_letter_queue": "articles-dlq"
+      },
+      { "queue": "articles-dlq", "max_batch_size": 10, "max_retries": 1 },
+      // PLAN.md §8.7: three queues, one per regulator, "so each regulator
+      // gets independent concurrency and can be backed off without
+      // stalling the others" -- concurrency kept conservative (no
+      // documented per-key rate limit for any of the three APIs).
+      {
+        "queue": "charity-ew", "max_batch_size": 5, "max_batch_timeout": 30,
+        "max_retries": 3, "max_concurrency": 10, "dead_letter_queue": "charity-ew-dlq"
+      },
+      { "queue": "charity-ew-dlq", "max_batch_size": 10, "max_retries": 1 },
+      {
+        "queue": "charity-scotland", "max_batch_size": 5, "max_batch_timeout": 30,
+        "max_retries": 3, "max_concurrency": 10, "dead_letter_queue": "charity-scotland-dlq"
+      },
+      { "queue": "charity-scotland-dlq", "max_batch_size": 10, "max_retries": 1 },
+      {
+        "queue": "charity-ni", "max_batch_size": 5, "max_batch_timeout": 30,
+        "max_retries": 3, "max_concurrency": 10, "dead_letter_queue": "charity-ni-dlq"
+      },
+      { "queue": "charity-ni-dlq", "max_batch_size": 10, "max_retries": 1 }
     ]
   },
 
