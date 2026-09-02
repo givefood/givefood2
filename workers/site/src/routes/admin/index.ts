@@ -23,6 +23,7 @@ import { adminCrawlSetJson } from "./crawlSet";
 import { adminFoodbankCheck, adminJobStatus } from "./foodbankCheck";
 import { adminFoodbankUseAiDetail } from "./useAi";
 import { adminQueryConsole } from "./query";
+import { adminFoodbankForceCheck, adminFoodbankForceArticleCrawl, adminFoodbankForceCharityCrawl } from "./foodbankForceCrawl";
 import {
   adminFoodbanksList,
   adminFoodbanksCsv,
@@ -89,6 +90,9 @@ adminApp.post("/foodbank/:slug/delete/", adminFoodbankDelete);
 adminApp.get("/foodbank/:slug/", adminFoodbankDetail);
 adminApp.get("/foodbank/:slug/tab/:tab/", adminFoodbankTab);
 adminApp.post("/foodbank/:slug/touch/", adminFoodbankTouch);
+adminApp.post("/foodbank/:slug/needcheck/", adminFoodbankForceCheck);
+adminApp.post("/foodbank/:slug/crawl/", adminFoodbankForceArticleCrawl);
+adminApp.post("/foodbank/:slug/charity-crawl/", adminFoodbankForceCharityCrawl);
 adminApp.get("/foodbank/:slug/edit/", adminFoodbankEdit);
 adminApp.post("/foodbank/:slug/edit/", adminFoodbankEdit);
 adminApp.get("/foodbank/:slug/politics/edit/", adminFoodbankPoliticsEdit);

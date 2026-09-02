@@ -18,6 +18,11 @@ export interface Env {
   PURGE_Q: Queue<unknown>;
   JOBS_Q: Queue<unknown>;
   WHATSAPP_Q: Queue<unknown>;
+  RENDER_Q: Queue<unknown>;
+  ARTICLES_Q: Queue<unknown>;
+  CHARITY_EW_Q: Queue<unknown>;
+  CHARITY_SCOTLAND_Q: Queue<unknown>;
+  CHARITY_NI_Q: Queue<unknown>;
 
   SITE_DOMAIN: string;
   GOOGLE_OAUTH_CLIENT_ID: string;

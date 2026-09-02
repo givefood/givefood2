@@ -52,7 +52,13 @@
       {% if foodbank.bankuet_slug %}<dt>Bankuet</dt><dd><a href="https://www.bankuet.co.uk/{{ foodbank.bankuet_slug }}/" target="_blank" rel="noopener">{{ foodbank.bankuet_slug }}</a></dd>{% endif %}
       {% if charity_register_url %}
       <dt>Charity register</dt>
-      <dd><a href="{{ charity_register_url }}" target="_blank" rel="noopener">{{ foodbank.charity_number }}</a></dd>
+      <dd>
+        <a href="{{ charity_register_url }}" target="_blank" rel="noopener">{{ foodbank.charity_number }}</a>
+        <form action="/admin/foodbank/{{ foodbank.slug }}/charity-crawl/" method="post" style="display:inline-block;margin-left:10px;">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button type="submit" class="button is-info is-small is-light">Force Charity Crawl</button>
+        </form>
+      </dd>
       {% if foodbank.charity_just_foodbank %}<dt>Charity just food bank</dt><dd>&#9989; Yes</dd>{% endif %}
       {% endif %}
       <dt>Network</dt><dd>{{ foodbank.network or "" }}</dd>
@@ -105,10 +111,26 @@
       <dt>Modified</dt><dd>{{ foodbank.modified }}</dd>
       <dt>Edited</dt><dd>{{ foodbank.edited or "" }}</dd>
       <dt>Last Need</dt><dd>{{ foodbank.last_need or "" }}</dd>
-      <dt>Last Need Check</dt><dd>{{ foodbank.last_need_check or "" }}</dd>
+      <dt>Last Need Check</dt>
+      <dd>
+        {{ foodbank.last_need_check or "" }}<br>
+        <form action="/admin/foodbank/{{ foodbank.slug }}/needcheck/" method="post">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button type="submit" class="button is-info is-small is-light">Force Check</button>
+        </form>
+      </dd>
       <dt>Last RFI</dt><dd>{{ foodbank.last_rfi or "" }}</dd>
       <dt>Last Discrepancy Check</dt><dd>{{ foodbank.last_discrepancy_check or "" }}</dd>
-      {% if foodbank.rss_url or foodbank.news_url %}<dt>Last Crawl</dt><dd>{{ foodbank.last_crawl or "" }}</dd>{% endif %}
+      {% if foodbank.rss_url or foodbank.news_url %}
+      <dt>Last Crawl</dt>
+      <dd>
+        {{ foodbank.last_crawl or "" }}
+        <form action="/admin/foodbank/{{ foodbank.slug }}/crawl/" method="post">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button type="submit" class="button is-info is-small is-light">Force Article Crawl</button>
+        </form>
+      </dd>
+      {% endif %}
     </dl>
 
     <h3 class="title is-5">Locations ({{ locations.length }})</h3>
