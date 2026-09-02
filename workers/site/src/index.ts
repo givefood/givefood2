@@ -75,6 +75,8 @@ import { gfdashHeatmap } from "./routes/dashboards/heatmap";
 import { gfdashPricePerCalorie } from "./routes/dashboards/pricePerCalorie";
 import { gfdashPricePerItemCategory } from "./routes/dashboards/pricePerItemCategory";
 import { writeIndex, writeConstituency, writeConstituencyByCode, writeEmail, writeSend, writeDone } from "./routes/write";
+import { adminSignIn, adminAuthReceiver, adminSignOut } from "./routes/admin/auth";
+import { adminApp, adminIndex } from "./routes/admin";
 import { notPortedYet, gone } from "./routes/notPortedYet";
 import { render404 } from "./render404";
 import { render500 } from "./render500";
@@ -445,8 +447,14 @@ app.route("/needs", notPortedYet("gfwfbn (translated pages)"));
 // catch-everything sub-app shape as notPortedYet() above (matches the
 // bare mount path too, not just subpaths), just returning 404 instead.
 app.route("/dumps", gone());
-app.route("/auth", notPortedYet("gfauth (Google OAuth)"));
-app.route("/admin", notPortedYet("gfadmin"));
+// gfauth (WP 6.1/6.2) -- kept at its exact 3 URLs (receiver in particular
+// is a registered Google redirect URI) but implemented under
+// routes/admin/, not as a standalone feature; see that file's own comment.
+app.get("/auth/", adminSignIn);
+app.get("/auth/receiver/", adminAuthReceiver);
+app.get("/auth/sign-out/", adminSignOut);
+app.get("/admin/", adminIndex); // same bare-mount-point quirk as api2Index/api2Docs above -- see routes/admin/index.ts's own comment
+app.route("/admin", adminApp);
 app.route("/", notPortedYet("public site"));
 
 // PLAN.md §3.5 "APPEND_SLASH". No platform equivalent -- Workers Static

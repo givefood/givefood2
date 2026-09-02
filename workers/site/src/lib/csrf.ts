@@ -1,6 +1,7 @@
 import type { Context } from "hono";
 import type { AppEnv } from "../types";
 import { hmacSha256Hex, timingSafeEqual } from "./hmac";
+import { parseCookie } from "./cookies";
 
 // New for gfwrite (WP 4.6, PLAN.md §6.9 R3): Django's CsrfViewMiddleware is
 // commented out in production (settings.py:97), so the `{% csrf_token %}`
@@ -27,16 +28,6 @@ function randomHex(byteLength: number): string {
   return Array.from(bytes)
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
-}
-
-function parseCookie(cookieHeader: string | undefined, name: string): string | null {
-  if (!cookieHeader) return null;
-  for (const part of cookieHeader.split(";")) {
-    const eq = part.indexOf("=");
-    if (eq === -1) continue;
-    if (part.slice(0, eq).trim() === name) return part.slice(eq + 1).trim();
-  }
-  return null;
 }
 
 // Mints a fresh raw token + its HMAC, and sets the signed value as a
