@@ -17,7 +17,7 @@
         <tr>
           {% for col in columns %}
           <th>
-            {% if col.sort %}<a href="?sort={{ col.sort }}&amp;page={{ page }}">{{ col.label }}</a>{% if sort == col.sort %} &darr;{% endif %}{% else %}{{ col.label }}{% endif %}
+            {% if col.sort %}<a href="?sort={{ col.sort }}&amp;page={{ page }}{{ extra_query }}">{{ col.label }}</a>{% if sort == col.sort %} &darr;{% endif %}{% else %}{{ col.label }}{% endif %}
           </th>
           {% endfor %}
           {% if row_actions %}<th></th>{% endif %}
@@ -36,8 +36,8 @@
     </table>
 
     <nav class="pagination" role="navigation" aria-label="pagination">
-      {% if page > 1 %}<a class="pagination-previous" href="?page={{ page - 1 }}{% if sort %}&amp;sort={{ sort }}{% endif %}">Previous</a>{% endif %}
-      {% if has_next %}<a class="pagination-next" href="?page={{ page + 1 }}{% if sort %}&amp;sort={{ sort }}{% endif %}">Next page</a>{% endif %}
+      {% if page > 1 %}<a class="pagination-previous" href="?page={{ page - 1 }}{% if sort %}&amp;sort={{ sort }}{% endif %}{{ extra_query }}">Previous</a>{% endif %}
+      {% if has_next %}<a class="pagination-next" href="?page={{ page + 1 }}{% if sort %}&amp;sort={{ sort }}{% endif %}{{ extra_query }}">Next page</a>{% endif %}
       <span class="pagination-list">Page {{ page }} of {{ total_pages }}</span>
     </nav>
   </div>

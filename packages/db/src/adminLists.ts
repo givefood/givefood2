@@ -221,4 +221,145 @@ export async function toggleArticleFeatured(session: Session, articleId: number)
   return row ? row.featured === 1 : null;
 }
 
+// WP 6.9: gfadmin/views.py:3028-3062 places() -- Django's own `Paginator
+// (all_places, 20000)` defeats the point of paginating at all (a 20,000-
+// row page is "load them all" with extra steps); real LIMIT/OFFSET here.
+// `place` (migrations/0009_aac.sql) was deliberately trimmed to read-only
+// columns per §4.8.7 (WP 6.5b's own note on why PlaceForm is deferred),
+// but `name`/`county`/`population` -- the 3 sortable fields -- all
+// survived the trim, so a read-only paginated list needs nothing new.
+export const PLACE_LIST_SORTS = ["name", "county", "population"] as const;
+export type PlaceListSort = (typeof PLACE_LIST_SORTS)[number];
+
+export interface PlaceListRow {
+  id: number;
+  name: string | null;
+  county: string | null;
+  population: number | null;
+}
+
+export async function getPlacesPage(session: Session, sort: PlaceListSort, direction: "asc" | "desc", page: number, pageSize: number): Promise<PageResult<PlaceListRow>> {
+  const offset = (page - 1) * pageSize;
+  const [countRow, result] = await Promise.all([
+    session.prepare("SELECT COUNT(*) AS n FROM place").first<{ n: number }>(),
+    session
+      .prepare(`SELECT id, name, county, population FROM place ORDER BY ${sort} ${direction === "desc" ? "DESC" : "ASC"} LIMIT ? OFFSET ?`)
+      .bind(pageSize, offset)
+      .all<PlaceListRow>(),
+  ]);
+  const total = countRow?.n ?? 0;
+  return { rows: result.results, total, page, pageSize, hasNext: offset + pageSize < total };
+}
+
+// WP 6.9: gfadmin/views.py:2890-2980 subscriptions() -- Django fully
+// materializes and Python-sorts FoodbankSubscriber/WhatsappSubscriber/
+// MobileSubscriber/WebPushSubscription into one list before paginating
+// the in-memory result, on every page view regardless of which page is
+// requested (WP 6.6 research's own description: "a real scaling risk").
+// A single `?type=` filter is a plain LIMIT/OFFSET SELECT on that one
+// table; "all" is a UNION ALL across the 3 tables this D1 schema has
+// (WhatsappSubscriber has no table here yet -- same gap WP 6.4's
+// getNeedSubscriberCounts already disclosed) with the ORDER BY/LIMIT
+// applied to the combined result, so D1 does the sort+page, not the
+// Worker's own memory.
+export type SubscriptionType = "all" | "email" | "mobile" | "webpush";
+
+export interface SubscriptionListRow {
+  type: "email" | "mobile" | "webpush";
+  identifier: string;
+  foodbank_name: string;
+  foodbank_slug: string;
+  created: string;
+  row_id: string; // email: "<email>|<foodbank_slug>" (delete key is the pair, no single id); mobile/webpush: the row's own id
+}
+
+function subscriptionUnionSql(subType: SubscriptionType): string {
+  const branches: string[] = [];
+  if (subType === "all" || subType === "email") {
+    branches.push(
+      `SELECT 'email' AS type, s.email AS identifier, f.name AS foodbank_name, f.slug AS foodbank_slug, s.created AS created, (s.email || '|' || f.slug) AS row_id
+       FROM foodbanksubscriber s JOIN foodbank f ON f.id = s.foodbank_id WHERE s.confirmed = 1`,
+    );
+  }
+  if (subType === "all" || subType === "mobile") {
+    branches.push(
+      `SELECT 'mobile' AS type, (s.platform || ' - ' || substr(s.device_id, 1, 20)) AS identifier, f.name AS foodbank_name, f.slug AS foodbank_slug, s.created AS created, CAST(s.id AS TEXT) AS row_id
+       FROM mobilesubscriber s JOIN foodbank f ON f.id = s.foodbank_id`,
+    );
+  }
+  if (subType === "all" || subType === "webpush") {
+    branches.push(
+      `SELECT 'webpush' AS type, (COALESCE(s.browser, 'Unknown') || ' - ' || substr(s.endpoint, 1, 30)) AS identifier, f.name AS foodbank_name, f.slug AS foodbank_slug, s.created AS created, CAST(s.id AS TEXT) AS row_id
+       FROM webpushsubscription s JOIN foodbank f ON f.id = s.foodbank_id`,
+    );
+  }
+  return branches.join(" UNION ALL ");
+}
+
+export async function getSubscriptionsPage(session: Session, subType: SubscriptionType, page: number, pageSize: number): Promise<PageResult<SubscriptionListRow>> {
+  const offset = (page - 1) * pageSize;
+  const unionSql = subscriptionUnionSql(subType);
+  const [countRow, result] = await Promise.all([
+    session.prepare(`SELECT COUNT(*) AS n FROM (${unionSql})`).first<{ n: number }>(),
+    session.prepare(`SELECT * FROM (${unionSql}) ORDER BY created DESC LIMIT ? OFFSET ?`).bind(pageSize, offset).all<SubscriptionListRow>(),
+  ]);
+  const total = countRow?.n ?? 0;
+  return { rows: result.results, total, page, pageSize, hasNext: offset + pageSize < total };
+}
+
+// gfadmin/views.py:2997-3020 delete_subscription, @require_POST --
+// "whatsapp" omitted, same missing-table reason as above.
+export async function deleteSubscription(session: Session, type: "email" | "mobile" | "webpush", rowId: string): Promise<boolean> {
+  if (type === "email") {
+    const [email, foodbankSlug] = rowId.split("|");
+    if (!email || !foodbankSlug) return false;
+    const foodbank = await session.prepare("SELECT id FROM foodbank WHERE slug = ?").bind(foodbankSlug).first<{ id: number }>();
+    if (!foodbank) return false;
+    const result = await session.prepare("DELETE FROM foodbanksubscriber WHERE email = ? AND foodbank_id = ?").bind(email, foodbank.id).run();
+    return result.meta.changes > 0;
+  }
+  const table = type === "mobile" ? "mobilesubscriber" : "webpushsubscription";
+  const id = Number(rowId);
+  if (!Number.isInteger(id)) return false;
+  const result = await session.prepare(`DELETE FROM ${table} WHERE id = ?`).bind(id).run();
+  return result.meta.changes > 0;
+}
+
+// WP 6.9: gfadmin/views.py:3090-3111 foodbanks_without_need -- Django's
+// own comment explains the DISTINCT ON's purpose ("one query for the
+// latest published need per food bank name, rather than a .latest() per
+// food bank"). D1/SQLite has no DISTINCT ON; ROW_NUMBER() OVER (PARTITION
+// BY ...) is the named-in-this-WP portable equivalent -- one query, same
+// result shape (latest published need per foodbank_name, joined by name
+// not id, matching Django's own join key exactly). `Foodbank.objects
+// .all()` is also unbounded in Django (open and closed); paginated here
+// like every other list this phase has built.
+export interface FoodbankWithoutNeedRow {
+  id: number;
+  name: string;
+  slug: string;
+  latest_need_id: string | null; // foodbankchange.need_id (the public uuid), null if this foodbank has never had a published need
+  latest_need_created: string | null;
+}
+
+export async function getFoodbanksWithoutNeedPage(session: Session, page: number, pageSize: number): Promise<PageResult<FoodbankWithoutNeedRow>> {
+  const offset = (page - 1) * pageSize;
+  const sql = `
+    SELECT f.id, f.name, f.slug, latest.need_id AS latest_need_id, latest.created AS latest_need_created
+    FROM foodbank f
+    LEFT JOIN (
+      SELECT foodbank_name, need_id, created,
+             ROW_NUMBER() OVER (PARTITION BY foodbank_name ORDER BY created DESC) AS rn
+      FROM foodbankchange
+      WHERE published = 1
+    ) latest ON latest.foodbank_name = f.name AND latest.rn = 1
+  `;
+  const [countRow, result] = await Promise.all([
+    session.prepare("SELECT COUNT(*) AS n FROM foodbank").first<{ n: number }>(),
+    session.prepare(`${sql} ORDER BY f.name LIMIT ? OFFSET ?`).bind(pageSize, offset).all<FoodbankWithoutNeedRow>(),
+  ]);
+  const total = countRow?.n ?? 0;
+  return { rows: result.results, total, page, pageSize, hasNext: offset + pageSize < total };
+}
+
 export { totalPages };

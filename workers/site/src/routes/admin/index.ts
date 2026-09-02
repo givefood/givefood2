@@ -31,6 +31,10 @@ import {
   adminOrdersList,
   adminOrdersCsv,
   adminNeedsCsv,
+  adminPlacesList,
+  adminSubscriptionsList,
+  adminDeleteSubscription,
+  adminFoodbanksWithoutNeedList,
 } from "./lists";
 
 // gfadmin (WP 6.1/6.2 scaffolding only -- the real index page, need-review
@@ -123,6 +127,13 @@ adminApp.get("/orders/", adminOrdersList);
 adminApp.get("/orders/csv/", adminOrdersCsv);
 
 adminApp.get("/needs/csv/", adminNeedsCsv);
+
+// WP 6.9: real SQL pagination for the two views PLAN.md names as a
+// scaling risk, plus the DISTINCT ON -> ROW_NUMBER() rewrite.
+adminApp.get("/places/", adminPlacesList);
+adminApp.get("/subscriptions/", adminSubscriptionsList);
+adminApp.post("/subscriptions/delete/", adminDeleteSubscription);
+adminApp.get("/foodbanks/without_need/", adminFoodbanksWithoutNeedList);
 
 adminApp.post("/article/:id/toggle-featured/", adminArticleToggleFeatured);
 
