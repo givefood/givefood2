@@ -1,5 +1,5 @@
 import type { Context } from "hono";
-import { getLatestDumps, getPublishedNeeds, toDashedUuid } from "@givefood/db";
+import { getPublishedNeeds, toDashedUuid } from "@givefood/db";
 import { buildPageContext, render } from "@givefood/templates";
 import type { AppEnv } from "../types";
 import { dbSession } from "../lib/session";
@@ -20,14 +20,12 @@ export async function api1Index(c: Context<AppEnv>): Promise<Response> {
   return c.html(await render("api1.njk", pageContext(c, "gfapi1")));
 }
 
-// gfapi2 `index` (GET /api/2/) -- the one dynamic bit is `dumps`, which the
-// local D1 legitimately returns zero rows for until Phase 5 (§5.8)
-// populates the metadata table from Postgres; that's correct behaviour for
-// this build pass, not a bug.
+// gfapi2 `index` (GET /api/2/). The real page's "Dumps" table (dumps were
+// gfdumps' own daily CSV/JSON/XML exports) is gone -- WP 5.6, maintainer
+// decision 2026-09-02: dropped entirely rather than built. See index.njk's
+// own comment and PLAN.md §8.8.
 export async function api2Index(c: Context<AppEnv>): Promise<Response> {
-  const session = dbSession(c);
-  const dumps = await getLatestDumps(session);
-  return c.html(await render("api2/index.njk", { ...pageContext(c, "gfapi2"), dumps }));
+  return c.html(await render("api2/index.njk", pageContext(c, "gfapi2")));
 }
 
 // gfapi2/views.py:33-40 -- static, verbatim from the Python source.

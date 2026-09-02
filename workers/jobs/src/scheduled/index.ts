@@ -24,7 +24,8 @@ const HANDLERS: Record<string, (env: Env, scheduledTime: number) => Promise<void
   "0 15 * * *": needcheck,
   "20 8-22/2 * * *": getArticles,
   "30 5 * * *": charityInfo,
-  "30 4 * * *": dump,
+  // dump's "30 4 * * *" slot deliberately gone, not repurposed -- WP 5.6,
+  // maintainer decision 2026-09-02: PLAN.md §8.8.
   "30 3 * * 0": daysBetweenNeeds,
   "10 3 * * *": crawlItemPrune,
   "*/5 * * * *": fragRefresh,
@@ -204,10 +205,6 @@ async function charityInfo(env: Env, scheduledTime: number): Promise<void> {
   if (failedChunks > 0) await recordEnqueueFailure(session, `charityinfo ${runId}`, total - enqueuedCount, failedChunks);
 
   console.log(`charityinfo: enqueued ${enqueuedCount}/${total} food banks for ${runId} (crawlset ${crawlSetId})`);
-}
-
-async function dump(env: Env): Promise<void> {
-  throw new Error("dump: not implemented");
 }
 
 async function daysBetweenNeeds(env: Env): Promise<void> {

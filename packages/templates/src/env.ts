@@ -16,7 +16,6 @@ import {
   djangoDate,
   djangoSlice,
   djangoTitle,
-  filesizeformat,
   floatformat,
   formatDjangoDateTokens,
   friendlyPhone,
@@ -71,7 +70,6 @@ function buildEnvironment(): Environment {
   env.addFilter("friendly_url", friendlyUrl);
   env.addFilter("comma_separated", commaSeparated);
   env.addFilter("slugify", slugify);
-  env.addFilter("filesizeformat", filesizeformat);
   env.addFilter("intcomma", intcomma);
   env.addFilter("date", djangoDate);
   env.addFilter("djslice", djangoSlice);

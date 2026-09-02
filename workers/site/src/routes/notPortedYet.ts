@@ -13,3 +13,14 @@ export function notPortedYet(name: string) {
   );
   return app;
 }
+
+// Same shape as notPortedYet() above, for a route group PLAN.md once
+// specified but a later maintainer decision dropped entirely -- a real
+// 404 rather than the 501 "still coming" signal, since nothing is coming.
+// Call sites should say why (a maintainer-decision comment), same as
+// every other permanently-out-of-scope route in this codebase.
+export function gone() {
+  const app = new Hono<AppEnv>();
+  app.all("*", (c) => c.notFound());
+  return app;
+}

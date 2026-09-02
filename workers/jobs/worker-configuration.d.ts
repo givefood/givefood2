@@ -7,7 +7,6 @@ export interface Env {
   DATA: KVNamespace;
   MEDIA: R2Bucket;
   GEO: R2Bucket;
-  DUMPS: R2Bucket;
   OPS: R2Bucket;
   BROWSER: Fetcher;
   HITS: AnalyticsEngineDataset;

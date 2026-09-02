@@ -18,7 +18,8 @@
       "0 15 * * *",       // needcheck  (was 45 7,11,15,19 in docs -- see above)
       "20 8-22/2 * * *",  // getarticles
       "30 5 * * *",       // charityinfo
-      "30 4 * * *",       // dump
+      // dump's "30 4 * * *" slot deliberately gone, not repurposed --
+      // WP 5.6, maintainer decision 2026-09-02: PLAN.md §8.8.
       "30 3 * * 0",       // days_between_needs  (one SQL statement, not a fan-out)
       "10 3 * * *",       // crawlitem retention prune (repurposed slot)
       "*/5 * * * *"       // /frag/ payload refresh into KV
@@ -110,7 +111,6 @@
   "r2_buckets": [
     { "binding": "MEDIA", "bucket_name": "givefood-media" },
     { "binding": "GEO", "bucket_name": "givefood-geo" },
-    { "binding": "DUMPS", "bucket_name": "givefood-dumps" },
     { "binding": "OPS", "bucket_name": "givefood-ops" }
   ],
   "analytics_engine_datasets": [

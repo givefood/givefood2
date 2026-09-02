@@ -8816,6 +8816,25 @@ This is strictly better than what Django does today, and it costs nothing.
 
 ### 8.8 dump
 
+> ❌ **REMOVED 2026-09-02, maintainer decision.** Everything below this
+> point in §8.8 describes the design that was proposed but never built.
+> `gfdumps` (the generation cron, the `/dumps/*` download and listing
+> pages, the `dump` D1 table, the `DUMPS` R2 binding, the "Dumps" table on
+> `/api/2/`, and the llms.txt bullet advertising it) is gone from the site
+> entirely -- not deferred to a later phase.
+>
+> Why: this design was the one place in the whole migration genuinely
+> unverifiable inside this build environment (no Docker, so the Container
+> image itself could never be built or run; the R2-write-through-a-
+> container-outbound-proxy mechanics for a ~140 MB streamed payload could
+> only be confirmed as "the pattern exists" from the live docs, not proven
+> against a real payload). Every other WP in this plan was verified
+> end-to-end against real data before being called done; this is the one
+> that couldn't be, and the maintainer chose to drop the feature rather
+> than ship an unverified Container pipeline. `/dumps/*` now 404s
+> (`workers/site/src/index.ts`'s `gone()` route, matching the same
+> "PERMANENTLY out of scope" pattern as the Place gazetteer browse page).
+
 **Current:** `30 4 * * *`, `gfdumps/management/commands/dump.py` (645 lines). 4 types × 3 formats = **12 artefacts per run**. Measured raw sizes: `items` XML **~140 MB**, `items` JSON ~135 MB, `items` CSV ~63 MB; the whole daily output is ~415 MB uncompressed. Retention (`dump.py:634-642`): delete anything older than 14 days **except** rows created on the 1st of the month. 279 rows / 1,474 MB of TOAST today. Ends with two `decache()` calls.
 
 **Target: a Cloudflare Container running the existing Python, essentially unchanged, streaming to R2.**
@@ -10684,7 +10703,7 @@ Two adjacent geo items to check before porting: `find_donationpoints` applies it
 | 5.3 | Preserve the safety guards **verbatim**: empty extraction with an existing published need → `FoodbankDiscrepancy`, never an empty change; render failure → discrepancy; unparseable model reply → retryable failure, **never** an empty shopping list. | Injected failures produce discrepancies, not wipes. | 2 |
 | 5.4 | **Every queue gets a DLQ whose consumer writes a `FoodbankDiscrepancy`.** Without one, repeatedly failing messages "will eventually be discarded" — silently. Classify OpenRouter 402 as non-retryable so an empty balance dead-letters instead of retrying ~1,024×. (Production lost two full days in Aug 2026 to a 402.) | A forced 402 produces one discrepancy per food bank, not 1,024 retries. | 2 |
 | 5.5 | getarticles + charityinfo → Cron + Queue. Rewrite `feedparser` in JS — **validate against all 480 live feeds first**, because a silent parse regression looks exactly like "that food bank stopped posting". Three queues for the three charity regulators. | Article and charity-year counts match a Django run for the same window. | 5 |
-| 5.6 | `dump` → **Container** (`standard-2`), running `gfdumps/management/commands/dump.py` unchanged, streaming to R2 multipart. A daily 5-minute run is inside all three Workers Paid inclusions. Make it **atomic**: staging prefix, promote only when all 12 objects exist. | 12 objects/day. The 2026-08-15 half-run failure mode (6 of 12 rows) cannot recur. | 4 |
+| 5.6 | ❌ **REMOVED 2026-09-02, maintainer decision.** Was: `dump` → Container (`standard-2`), running `gfdumps/management/commands/dump.py` unchanged, streaming to R2 multipart. Dropped rather than built -- see §8.8's own note for why. gfdumps (the cron, the `/dumps/*` download/listing routes, `dump` D1 table, `DUMPS` R2 binding, the `/api/2/` "Dumps" table, and the llms.txt bullet advertising it) is gone from the site entirely, not deferred. | — | 0 |
 | 5.7 | `days_between_needs` → **one window-function statement**, not a fan-out (the current per-food-bank N+1 is a design mistake; reproducing it on Queues is worse). Repurpose the `10 3 * * *` prune slot to a `CrawlItem` 30-day retention delete. | Weekly job completes in one query. | 2 |
 | 5.8 | `db_worker` and `prune_db_task_results` **deleted**. Queues are push-based. This also deletes `django_tasks_database_dbtaskresult` (62 MB) and the django-tasks dependencies. | Both cron slots removed from Coolify. | 1 |
 | 5.9 | **Pipeline health dead-man's switch** (§10.7.4). | A simulated OpenRouter outage alerts within 30 minutes. | 3 |

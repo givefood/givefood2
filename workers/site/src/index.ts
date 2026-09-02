@@ -7,7 +7,6 @@ import { resolveLanguage } from "./middleware/resolveLanguage";
 import { geoJsonPreload } from "./middleware/geoJsonPreload";
 import { mediaApp } from "./routes/media";
 import { staticMediaApp } from "./routes/staticMedia";
-import { dumpsApp } from "./routes/dumps";
 import { api1App } from "./routes/api1";
 import { api2FoodbanksApp } from "./routes/api2/foodbanks";
 import { api2LocationsApp } from "./routes/api2/locations";
@@ -76,7 +75,7 @@ import { gfdashHeatmap } from "./routes/dashboards/heatmap";
 import { gfdashPricePerCalorie } from "./routes/dashboards/pricePerCalorie";
 import { gfdashPricePerItemCategory } from "./routes/dashboards/pricePerItemCategory";
 import { writeIndex, writeConstituency, writeConstituencyByCode, writeEmail, writeSend, writeDone } from "./routes/write";
-import { notPortedYet } from "./routes/notPortedYet";
+import { notPortedYet, gone } from "./routes/notPortedYet";
 import { render404 } from "./render404";
 import { render500 } from "./render500";
 
@@ -115,10 +114,6 @@ app.route("/needs", mediaApp);
 // served by Workers Static Assets (asset-first, never reaches this Worker);
 // only these two excluded families fall through to here. See PLAN.md WP 1.6.
 app.route("/static", staticMediaApp);
-
-// The two download URL shapes redirect to dumps.givefood.org.uk (R2 custom
-// domain, no Worker in that request path). See PLAN.md WP 1.4/1.5.
-app.route("/dumps", dumpsApp);
 
 // WP 2.4: the 20 JSON/XML/YAML/CSV/geojson API endpoints. gfapi2 is
 // dual-mounted at /api/2/* AND /api/* per PLAN.md §10.2.2 -- "every gfapi2
@@ -441,9 +436,15 @@ app.get("/write/to/:slug/email/done/", writeDone);
 // 501 so the gap is loud during development. Build order follows PLAN.md
 // §10's phases: wfbn (translated pages) and the APIs next, admin last.
 app.route("/needs", notPortedYet("gfwfbn (translated pages)"));
-// The three listing pages (dump_index, dump_type, dump_format) -- unmatched
-// by dumpsApp above, so they fall through to here.
-app.route("/dumps", notPortedYet("gfdumps listing pages"));
+// gfdumps -- PERMANENTLY out of scope, not deferred: maintainer decision
+// 2026-09-02 (WP 5.6's Container-based dump-generation cron, and the
+// R2-served download/listing pages that depended on it, were dropped
+// entirely rather than built -- see PLAN.md §8.8's own note on this
+// decision). A real 404 for the whole subtree, not notPortedYet's 501 --
+// this isn't "not built yet", it's "never coming". Same `.route()` +
+// catch-everything sub-app shape as notPortedYet() above (matches the
+// bare mount path too, not just subpaths), just returning 404 instead.
+app.route("/dumps", gone());
 app.route("/auth", notPortedYet("gfauth (Google OAuth)"));
 app.route("/admin", notPortedYet("gfadmin"));
 app.route("/", notPortedYet("public site"));

@@ -24,10 +24,12 @@ export async function securityTxt(): Promise<Response> {
 // page, so page.njk's machinery doesn't apply (same reasoning as
 // sitemaps.ts/robots.ts/manifest.ts).
 //
-// Three content fixes applied per WP 4.2 scoping, not a verbatim port:
-// 1. The Data Dumps bullet claimed "CSV, JSON, XML, and YAML exports" --
-//    no YAML dump has ever existed (confirmed: gfdumps only ever produces
-//    CSV/JSON/XML). Dropped "and YAML".
+// Content fixes applied, not a verbatim port:
+// 1. The Data Dumps bullet is gone entirely -- WP 5.6, maintainer decision
+//    2026-09-02: gfdumps' daily CSV/JSON/XML exports were dropped, not
+//    built (PLAN.md §8.8). Advertising a page that will never exist to
+//    crawlers would be worse than the pre-existing "and YAML" inaccuracy
+//    this bullet also had (no YAML dump ever existed either).
 // 2. The "Multi-Language Support" section named 20 languages (not even
 //    the real 21, and omitting Welsh entirely) -- rewritten for the 4
 //    languages this migration actually supports (PLAN.md §2.7.1).
@@ -143,7 +145,6 @@ API endpoints support multiple formats via \`?format=\` parameter:
 ## Data Resources
 
 - [Open Data Repository](https://github.com/givefood/data): Versioned food bank data on GitHub with daily updates
-- [Data Dumps](${domain}/dumps/): Downloadable CSV, JSON, and XML exports
 - [Food Banks CSV](https://github.com/givefood/data/blob/main/foodbanks.csv): Complete list of food banks with metadata
 - [API Usage Guidelines](${domain}/api/): Best practices for using Give Food data responsibly
 

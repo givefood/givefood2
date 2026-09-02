@@ -26,32 +26,9 @@
 
         <a href="{{ url('api2:docs') }}" class="button is-light is-info">View documentation</a>
 
-        <h2>Dumps</h2>
-        <p>These are daily updated dumps of our data. Use the 'latest' URL to get the most recent dump for each type and format.</p>
-        <table class="table is-striped is-fullwidth">
-          <thead>
-            <tr>
-              <th>Date</th>
-              <th>Dump Type</th>
-              <th>Size</th>
-              <th>Rows</th>
-              <th>Format</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for dump in dumps %}
-            <tr>
-              <td><a href="{{ url('dumps:dump_latest', dump.dump_type, dump.dump_format) }}">{{ dump.created|date("Y-m-d") }}</a></td>
-              <td>{{ dump.dump_type }}</td>
-              <td>{{ dump.size|filesizeformat }}</td>
-              <td>{{ dump.row_count|intcomma }}</td>
-              <td>{{ dump.dump_format|upper }}</td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-        <p>Dumps are also available for older data.</p>
-        <a href="{{ url('dumps:dump_index') }}" class="button is-light is-info">Browse dumps</a>
+        {# The "Dumps" table (gfdumps' daily CSV/JSON/XML exports) sat here
+           -- removed entirely, not carried forward. WP 5.6, maintainer
+           decision 2026-09-02: PLAN.md §8.8. #}
 
         <h2>Useful Links</h2>
         <nav>

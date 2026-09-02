@@ -56,7 +56,6 @@ export const ROUTES: Record<string, string> = {
   "dash:price_per_item_category": "/dashboard/price-per/item-category/",
   "api2:index": "/api/2/",
   "api2:docs": "/api/2/docs/",
-  "dumps:dump_index": "/dumps/",
   "wfbn:index": "/needs/",
   "wfbn:constituencies": "/needs/in/constituencies/",
   "wfbn:rss": "/needs/rss.xml",
@@ -77,7 +76,6 @@ export const ROUTES: Record<string, string> = {
 
 export const PARAMETERISED: Record<string, (...args: string[]) => string> = {
   frag: (slug) => `/frag/${slug}/`,
-  "dumps:dump_latest": (dumpType, dumpFormat) => `/dumps/${dumpType}/${dumpFormat}/latest/`,
   "wfbn:foodbank": (slug) => `/needs/at/${slug}/`,
   "wfbn:foodbank_location": (slug, locslug) => `/needs/at/${slug}/${locslug}/`,
   "wfbn:foodbank_donationpoint": (slug, dpslug) => `/needs/at/${slug}/donationpoint/${dpslug}/`,

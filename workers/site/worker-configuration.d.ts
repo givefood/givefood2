@@ -11,7 +11,6 @@ export interface Env {
   MEDIA: R2Bucket;
   GEO: R2Bucket;
   STATIC_MEDIA: R2Bucket;
-  DUMPS: R2Bucket;
   ASSETS: Fetcher;
   SESSIONS: KVNamespace;
   DATA: KVNamespace;
