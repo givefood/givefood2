@@ -7,13 +7,6 @@
 
 {% if foodbank.is_closed %}<span class="tag is-danger">Closed</span>{% endif %}
 
-<p><a href="/admin/foodbank/{{ foodbank.slug }}/edit/">Edit</a> &middot; <a href="/admin/foodbank/{{ foodbank.slug }}/check/">Check</a></p>
-
-<form action="/admin/foodbank/{{ foodbank.slug }}/touch/" method="post" style="margin-top:10px">
-  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-  <button type="submit" class="button is-link is-light" hx-post="/admin/foodbank/{{ foodbank.slug }}/touch/" hx-vals='{"csrf_token": "{{ csrf_token }}"}' hx-swap="outerHTML">Touch</button>
-</form>
-
 <div class="tabs is-boxed">
   <ul role="tablist" aria-label="Foodbank">
     <li class="is-active" role="presentation"><a data-tab="generallocations" role="tab" aria-selected="true" aria-controls="generallocations-panel" id="generallocations-tab"><span class="icon"><i class="mdi mdi-bank"></i></span><span>General &amp; Locations <span class="tag is-info is-normal is-light">{{ counts.locations }}</span></span></a></li>
@@ -27,7 +20,24 @@
 </div>
 
 <div class="columns sections">
+  {# THREE sibling columns share the `generallocations` class, exactly as
+     gfadmin/templates/admin/foodbank.html:65 / :303 / :392 do -- tabber.js
+     shows and hides by CLASS, so all three toggle together as one tab while
+     laying out side by side. Only the first carries the panel id/ARIA. The
+     port previously stacked all of this into ONE column, which is why the
+     page rendered as a single narrow strip. #}
   <div class="column tabcontent generallocations" id="generallocations-panel" role="tabpanel" aria-labelledby="generallocations-tab">
+
+    {# foodbank.html:71-79. Check is the AI icon pulled right, Edit is a real
+       button -- both were bare "Edit · Check" text links here before. #}
+    <a href="/admin/foodbank/{{ foodbank.slug }}/check/" class="is-pulled-right" title="Check"><img src="/static/img/ai.png" style="width:32px;" alt="Check"></a>
+
+    <a href="/admin/foodbank/{{ foodbank.slug }}/edit/" class="button is-link is-light">Edit Food Bank</a>
+
+    <form action="/admin/foodbank/{{ foodbank.slug }}/touch/" method="post" style="margin-top:10px">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="button is-link is-light" hx-post="/admin/foodbank/{{ foodbank.slug }}/touch/" hx-vals='{"csrf_token": "{{ csrf_token }}"}' hx-swap="outerHTML">Touch</button>
+    </form>
 
     {% if foodbank.notes %}<div class="box" style="margin-top:20px;">{{ foodbank.notes | linebreaksbr | safe }}</div>{% endif %}
 
@@ -134,6 +144,24 @@
       {% endif %}
     </dl>
 
+
+    {# foodbank.html:295-299's "Really Dangerous Zone". Django's other two
+       danger zones there -- Resave Everything and Send RFI -- are deliberately
+       not ported (the maintainer scoped both out), so this is the only one. #}
+    <h3 class="title is-5"><span class="mdi mdi-alert"></span> Really Dangerous Zone</h3>
+    <form action="/admin/foodbank/{{ foodbank.slug }}/delete/" method="post" data-name="{{ foodbank.name }}" onsubmit="return confirm('DELETE ' + this.dataset.name + '?');">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="button is-danger is-light">Delete {{ full_name }}</button>
+    </form>
+
+  </div>
+
+  {# foodbank.html:303 -- COLUMN 2: locations, and the buttons that add them. #}
+  <div class="column tabcontent generallocations">
+
+    <a href="/admin/foodbank/{{ foodbank.slug }}/location/new/" class="button is-link is-light">New Location</a>
+    <a href="/admin/foodbank/{{ foodbank.slug }}/location/new/area/" class="button is-link is-light">New Location Area</a>
+
     <h3 class="title is-5">Locations ({{ locations.length }})</h3>
     <table class="table is-fullwidth">
       <tbody>
@@ -147,8 +175,10 @@
         {% endfor %}
       </tbody>
     </table>
-    <a href="/admin/foodbank/{{ foodbank.slug }}/location/new/" class="button is-light is-small">New Location</a>
-    <a href="/admin/foodbank/{{ foodbank.slug }}/location/new/area/" class="button is-light is-small">New Location Area</a>
+  </div>
+
+  {# foodbank.html:392 -- COLUMN 3: the latest need. #}
+  <div class="column tabcontent generallocations">
 
     {# gfadmin/templates/admin/foodbank.html:394 and :461 -- Django puts a
        "New Need" button on this page twice, both carrying ?foodbank=<slug>
@@ -167,12 +197,6 @@
     {% else %}
       <p>No published need yet.</p>
     {% endif %}
-
-    <h3 class="title is-5">Delete</h3>
-    <form action="/admin/foodbank/{{ foodbank.slug }}/delete/" method="post" data-name="{{ foodbank.name }}" onsubmit="return confirm('DELETE ' + this.dataset.name + '?');">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <button type="submit" class="button is-danger is-light">Delete {{ full_name }}</button>
-    </form>
   </div>
 
   <div class="column tabcontent needsorders is-hidden" id="needsorders-panel" role="tabpanel" aria-labelledby="needsorders-tab"

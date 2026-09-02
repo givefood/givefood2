@@ -66,6 +66,12 @@ export async function adminDonationPointForm(c: Context<AppEnv>): Promise<Respon
     data,
     back_url: `/admin/foodbank/${foodbank.slug}/`,
     delete_url: existing ? `/admin/foodbank/${foodbank.slug}/donationpoint/${existing.slug}/delete/` : null,
+    // admin/form.html:30-36 renders the food bank's own site beside the
+    // fields so an admin can read from it while typing. `preview_field`
+    // rather than Django's `?url=`: routes/admin/proxy.ts resolves the URL
+    // from D1 by field name, which is the fix for the SSRF that parameter was.
+    preview_foodbank_slug: foodbank.url ? foodbank.slug : null,
+    preview_field: foodbank.url ? "url" : null,
   });
   return c.html(html);
 }

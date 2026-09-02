@@ -37,7 +37,10 @@
   </p>
 
   <div class="columns">
-    <div class="column is-half">
+    {# check.html:10 -- a plain flexible column, so the details take ~2/3
+       and the preview column below takes the remaining third. Two is-half
+       columns split it 50/50 and squeezed the comparison tables. #}
+    <div class="column">
       <h3 class="title is-5">Details</h3>
       <table class="table is-fullwidth">
         <thead><tr><th></th><th>Ours</th><th>Found</th><th></th></tr></thead>
@@ -104,7 +107,8 @@
       </ul>
     </div>
 
-    <div class="column is-half">
+    {# check.html:293 -- is-one-third for the preview. #}
+    <div class="column is-one-third">
       <h3 class="title is-5">Pages fetched</h3>
       <div class="tabs is-boxed">
         <ul role="tablist">

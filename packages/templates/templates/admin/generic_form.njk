@@ -32,5 +32,19 @@
     </form>
     {% endif %}
   </div>
+
+  {# admin/form.html:20-36 -- Django's generic form renders the source page
+     beside the fields, so an admin can read the food bank's own site while
+     retyping from it. The port had NO preview on any edit form at all.
+     Driven by an optional `preview_field` the route sets (one of
+     routes/admin/proxy.ts's five PROXYABLE_FIELDS), rather than Django's
+     `?url=` -- that parameter is the unrestricted SSRF WP 6.3 fixed, so the
+     caller names a field and the proxy resolves the URL from D1 itself. #}
+  {% if preview_field and preview_foodbank_slug %}
+  <div class="column">
+    <iframe class="preview-frame" src="/admin/proxy/?foodbank={{ preview_foodbank_slug }}&amp;field={{ preview_field }}" style="width:100%;height:1000px;border:none;" loading="lazy"></iframe>
+  </div>
+  {% endif %}
+
 </div>
 {% endblock %}

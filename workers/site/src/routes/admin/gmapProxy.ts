@@ -45,9 +45,11 @@ export async function adminGmapProxy(c: Context<AppEnv>): Promise<Response> {
 
   const key = c.env.GMAP_PLACES_KEY;
   if (!key) {
-    // Not set on the account yet (see routes/admin/pageContext.ts). A clear
-    // JSON error beats a Google error the caller can't act on -- admin.js
-    // logs the failure and alerts, so this text reaches the admin.
+    // Set on the account and listed in wrangler.jsonc's `secrets.required`
+    // since 2026-09-02, so this branch is now only reachable if the secret is
+    // later revoked or rotated away. Kept: a clear JSON error beats a Google
+    // error the caller can't act on -- admin.js logs the failure and alerts,
+    // so this text reaches the admin.
     return c.json({ status: "REQUEST_DENIED", error_message: "GMAP_PLACES_KEY is not configured on this Worker" }, 503);
   }
 

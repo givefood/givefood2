@@ -199,6 +199,23 @@
     // Area" form (mapit.mysociety.org's area/geometry + area.geojson
     // calls). Already named in PLAN.md §10.2.7's own secrets table. Set
     // 2026-09-02, confirmed via `wrangler secret list`.
+    //
+    // GMAP_PLACES_KEY / GMAP_STATIC_KEY: this Worker DOES call Google
+    // directly, which the note below this list used to deny -- that claim
+    // predated the admin port. routes/admin/gmapProxy.ts is the CORS shim
+    // behind admin.js's "Lookup Location" / "Lookup Donation Point"
+    // buttons and injects GMAP_PLACES_KEY server-side (deliberately: unlike
+    // Django, the Places key never reaches the browser). GMAP_STATIC_KEY is
+    // published to the admin page for admin.js's staticmap <img>, which is
+    // a browser-side URL by construction. Both set 2026-09-02, confirmed
+    // via `wrangler secret list`.
+    //
+    // CF_API_KEY / CF_ZONE_ID: routes/admin/clearCache.ts's zone purge --
+    // the Settings page's "Clear Cache" button. The token needs Zone.Cache
+    // Purge on givefood.org.uk. Set 2026-09-02, confirmed via `wrangler
+    // secret list`. Until they were set the handler degraded to a KV-only
+    // purge with a warning banner; that branch stays, since it is also what
+    // a revoked token should do.
     "required": [
       "GMAP_GEOCODE_KEY",
       "VAPID_PUBLIC_KEY",
@@ -210,12 +227,15 @@
       "WHATSAPP_APP_SECRET",
       "GOOGLE_OAUTH_CLIENT_SECRET",
       "SESSION_HMAC_KEY",
-      "MAPIT_KEY"
+      "MAPIT_KEY",
+      "GMAP_PLACES_KEY",
+      "GMAP_STATIC_KEY",
+      "CF_API_KEY",
+      "CF_ZONE_ID"
     ]
-    // GMAP_STATIC_KEY, GMAP_PLACES_KEY -- media backfill, queued not inline
-    // (§3.7) -- this Worker never calls Google directly; see
-    // workers/jobs/wrangler.jsonc for where GMAP_STATIC_KEY actually lives.
-    // CF_API_KEY, CF_ZONE_ID -- cache-tag purge (§3.6)
+    // workers/jobs/wrangler.jsonc has its OWN GMAP_STATIC_KEY, for the
+    // queued media backfill (§3.7). Two Workers, two copies of the same
+    // value -- that is how Worker secrets work; neither is the other's.
   },
 
   "observability": { "enabled": true, "head_sampling_rate": 1 },

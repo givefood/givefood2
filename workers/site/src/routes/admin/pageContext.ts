@@ -48,11 +48,10 @@ export async function adminPageContext(c: Context<AppEnv>, section: string): Pro
     // Django this one never reaches the browser at all. `gmap_key` (the Maps
     // JS API key) has no consumer in any ported admin template yet.
     //
-    // `?? ""` rather than a hard read: GMAP_PLACES_KEY is not set on the
-    // account (`wrangler secret list`, 2026-09-02) and this repo's rule is
-    // that a name only enters wrangler.jsonc's `secrets.required` in the same
-    // change that actually sets it. Missing keys degrade one button; a hard
-    // read would 500 every admin page.
+    // `?? ""` rather than a hard read even though both ARE set and both are
+    // now in wrangler.jsonc's `secrets.required` (2026-09-02): a revoked or
+    // rotated-away key should break the one button that needs it, not 500
+    // every page in the admin.
     gmap_key: "",
     gmap_places_key: "",
     gmap_static_key: c.env.GMAP_STATIC_KEY ?? "",

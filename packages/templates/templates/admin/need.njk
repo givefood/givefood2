@@ -164,11 +164,17 @@
       </div>
     {% endif %}
 
-    {% if show_proxy %}
-      <h3>Preview</h3>
-      <iframe class="preview-frame" src="/admin/proxy/?foodbank={{ foodbank_slug }}&amp;field=shopping_list_url" style="width:100%;height:1000px;border:none;" loading="lazy"></iframe>
-    {% endif %}
   </div>
+
+  {# need.html:259-264 -- the source preview is its OWN top-level column, a
+     sibling of the detail and diff columns, not something nested inside the
+     half-width one. Nested (as it was here) it renders squashed under the
+     diffs instead of beside them, which is the whole point of the layout. #}
+  {% if show_proxy %}
+  <div class="column">
+    <iframe class="preview-frame" src="/admin/proxy/?foodbank={{ foodbank_slug }}&amp;field=shopping_list_url" style="width:100%;height:1000px;border:none;" loading="lazy"></iframe>
+  </div>
+  {% endif %}
 
 </div>
 {% endblock %}
