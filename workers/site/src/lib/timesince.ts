@@ -30,6 +30,13 @@ function unitText(count: number, unit: (typeof UNITS)[number]): string {
 // naive-datetime arithmetic Django's timesince does.
 function parseUtc(s: string): Date {
   const [datePart, rawTimePart] = s.split(/[ T]/);
+  // A date-only value (no space, no "T" at all) is real: confirmed live
+  // against production D1 data (a foodbank list page 500'd on it) -- some
+  // stored dates genuinely have no time component. rawTimePart is then
+  // undefined, not an empty string, so this can't be a `|| ""` default on
+  // the split result itself; midnight is the only sane reading of "just a
+  // date" anyway.
+  //
   // A "Z" suffix (any app-written value: new Date().toISOString() always
   // appends one) has to come off the WHOLE time part before splitting on
   // "." -- left in place, it either contaminates the fractional-seconds
@@ -37,7 +44,7 @@ function parseUtc(s: string): Date {
   // when there's no "." at all, contaminates the seconds field itself
   // ("00Z" as a Number is NaN). D1's own naive-format values (no "Z") are
   // untouched by this replace.
-  const timePart = (rawTimePart as string).replace(/Z$/, "");
+  const timePart = rawTimePart === undefined ? "00:00:00" : rawTimePart.replace(/Z$/, "");
   const [year, month, day] = (datePart as string).split("-").map(Number);
   const [hms, frac] = timePart.split(".");
   const [hour, minute, second] = (hms as string).split(":").map(Number);
