@@ -35,6 +35,26 @@ const GOOGLE_JWKS_URI = "https://www.googleapis.com/oauth2/v3/certs";
 const GOOGLE_ISSUERS = ["https://accounts.google.com", "accounts.google.com"];
 const HOSTED_DOMAIN = "givefood.org.uk";
 
+// `redirect_uri` must be identical between the initial authorize redirect
+// and the token exchange (Google rejects a mismatch), and must exactly
+// match one of the URIs registered on the OAuth client -- so this can't
+// just reflect an arbitrary incoming Host header. `beta.givefood.org.uk`
+// is PLAN.md's own documented "proving-ground host" (§10.1.1a) -- a real
+// custom domain used to test against real infra before the single
+// production launch, distinct from the live `www` zone -- so it needs to
+// work standalone, not only redirect back to www. Falls back to
+// SITE_DOMAIN for any host not on this list (never trusts an unrecognised
+// Host header into a redirect_uri Google would reject anyway).
+const OAUTH_HOSTS = ["www.givefood.org.uk", "beta.givefood.org.uk"];
+
+function oauthOrigin(c: Context<AppEnv>): string {
+  const host = c.req.header("Host");
+  if (host && (OAUTH_HOSTS.includes(host) || host.startsWith("localhost:") || host.startsWith("127.0.0.1:"))) {
+    return `${new URL(c.req.url).protocol}//${host}`;
+  }
+  return c.env.SITE_DOMAIN;
+}
+
 const OAUTH_COOKIE_NAME = "__Host-oauth";
 const OAUTH_COOKIE_MAX_AGE_SECONDS = 600; // 10 minutes -- long enough for a real sign-in, short enough that a stale cookie isn't a lingering replay surface
 
@@ -307,7 +327,7 @@ export async function startGoogleOAuth(c: Context<AppEnv>, next: string | undefi
 
   const params = new URLSearchParams({
     client_id: c.env.GOOGLE_OAUTH_CLIENT_ID,
-    redirect_uri: `${c.env.SITE_DOMAIN}/auth/receiver/`,
+    redirect_uri: `${oauthOrigin(c)}/auth/receiver/`,
     response_type: "code",
     scope: "openid email profile",
     state,
@@ -343,7 +363,7 @@ export async function handleGoogleOAuthCallback(c: Context<AppEnv>): Promise<Res
       code,
       client_id: c.env.GOOGLE_OAUTH_CLIENT_ID,
       client_secret: clientSecret,
-      redirect_uri: `${c.env.SITE_DOMAIN}/auth/receiver/`,
+      redirect_uri: `${oauthOrigin(c)}/auth/receiver/`,
       grant_type: "authorization_code",
       code_verifier: oauthPayload.codeVerifier,
     }).toString(),
