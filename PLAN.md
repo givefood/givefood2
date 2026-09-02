@@ -8898,12 +8898,7 @@ UPDATE foodbank
  WHERE is_closed = 0;
 ```
 
-⚠ **Verify the truncation semantics match.** Python's `(a - b).days` truncates toward negative infinity for a `timedelta`, then `int(-x / 5)` truncates toward zero. `CAST(... AS INTEGER)` in SQLite truncates toward zero. For positive day counts — which is every real case, since the 5th-newest need is always in the past — the two agree. Assert this against production values for all 1,024 food banks before switching:
-
-```sql
--- run against Postgres and D1, diff the results
-SELECT slug, days_between_needs FROM foodbank WHERE is_closed = false ORDER BY slug;
-```
+✅ **Verified 2026-09-02 (WP 5.7) — and this section's own claim above was wrong.** "For positive day counts the two agree" does **not** hold: `.days` on the *negative* timedelta floors first (toward −∞), THEN `int(-x/5)` truncates — two separate roundings, not one. A bare `CAST(julianday_diff / 5 AS INTEGER)` only does the second. Confirmed both empirically and by construction: an elapsed time of 9.99 days must give **2** (Django: `floor(-9.99) = -10`, `int(10/5) = 2`), but the bare SQL form above gives **1** (`9.99/5 = 1.998`, truncated). Fixed by ceiling the elapsed value first — `CAST(x AS INTEGER) + (CAST(x AS INTEGER) < x)`, i.e. `floor(-x)` negated — matching Django's floor-then-truncate exactly (see the real statement in `packages/db/src/maintenance.ts`'s `updateDaysBetweenNeeds`, not the sketch above). Verified two ways: simulated both formulas in Python against all 1,023 real open food banks on production Postgres (0 mismatches), and ran the actual corrected SQL against real D1 at the 9.99-day boundary case directly (matched).
 
 ---
 
@@ -8948,6 +8943,11 @@ async function pruneCrawlItems(env: Env) {
   ).run();
 }
 ```
+
+✅ **Built 2026-09-02 (WP 5.7)**, with two adjustments from the sketch above:
+
+- The finish-timestamp backstop is exactly that -- a backstop, not the primary mechanism this section originally assumed. WP 5.2's own expected/remaining counter (`decrementCrawlSetRemaining`, needcheck.ts) already self-stamps every CrawlSet's `finish` the instant it reaches 0, for every fan-out cron (needcheck/articles/charityinfo, WP 5.2/5.5) -- this `UPDATE ... WHERE finish IS NULL` only catches the rare case that counter never reached 0 for (e.g. a food bank deleted mid-run, whose message never decremented it). Verified directly: seeded a CrawlSet with `finish IS NULL` and a closed CrawlItem, ran the real prune cron, confirmed the backstop correctly stamped it from the CrawlItem's own finish.
+- The R2 archival ("before the first prune") is deliberately **not yet built**. `crawlitem` is confirmed empty on production D1 today (verified directly) -- no cron that writes to it has run there yet, so there is nothing to lose by pruning now. This becomes a real requirement once needcheck/articles/charityinfo start running against production D1 for real, which is closer to launch than to this WP.
 
 Full history archives to R2 as `crawlitem/YYYY-MM.ndjson.gz` (~180 MB gzipped) before the first prune. New writes additionally emit an Analytics Engine data point so the 24h dashboard counts and latency percentiles come from AE rather than a growing table:
 
@@ -10704,7 +10704,7 @@ Two adjacent geo items to check before porting: `find_donationpoints` applies it
 | 5.4 | **Every queue gets a DLQ whose consumer writes a `FoodbankDiscrepancy`.** Without one, repeatedly failing messages "will eventually be discarded" — silently. Classify OpenRouter 402 as non-retryable so an empty balance dead-letters instead of retrying ~1,024×. (Production lost two full days in Aug 2026 to a 402.) | A forced 402 produces one discrepancy per food bank, not 1,024 retries. | 2 |
 | 5.5 | getarticles + charityinfo → Cron + Queue. Rewrite `feedparser` in JS — **validate against all 480 live feeds first**, because a silent parse regression looks exactly like "that food bank stopped posting". Three queues for the three charity regulators. | Article and charity-year counts match a Django run for the same window. | 5 |
 | 5.6 | ❌ **REMOVED 2026-09-02, maintainer decision.** Was: `dump` → Container (`standard-2`), running `gfdumps/management/commands/dump.py` unchanged, streaming to R2 multipart. Dropped rather than built -- see §8.8's own note for why. gfdumps (the cron, the `/dumps/*` download/listing routes, `dump` D1 table, `DUMPS` R2 binding, the `/api/2/` "Dumps" table, and the llms.txt bullet advertising it) is gone from the site entirely, not deferred. | — | 0 |
-| 5.7 | `days_between_needs` → **one window-function statement**, not a fan-out (the current per-food-bank N+1 is a design mistake; reproducing it on Queues is worse). Repurpose the `10 3 * * *` prune slot to a `CrawlItem` 30-day retention delete. | Weekly job completes in one query. | 2 |
+| 5.7 | ✅ **DONE 2026-09-02.** `days_between_needs` → **one window-function statement**, not a fan-out (the current per-food-bank N+1 is a design mistake; reproducing it on Queues is worse). Repurpose the `10 3 * * *` prune slot to a `CrawlItem` 30-day retention delete. | Weekly job completes in one query. | 2 |
 | 5.8 | `db_worker` and `prune_db_task_results` **deleted**. Queues are push-based. This also deletes `django_tasks_database_dbtaskresult` (62 MB) and the django-tasks dependencies. | Both cron slots removed from Coolify. | 1 |
 | 5.9 | **Pipeline health dead-man's switch** (§10.7.4). | A simulated OpenRouter outage alerts within 30 minutes. | 3 |
 

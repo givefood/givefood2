@@ -1,5 +1,6 @@
 import type { Env } from "../../worker-configuration";
 import {
+  finishStaleCrawlSets,
   FRAG_KV_KEY_LAST_UPDATED,
   FRAG_KV_KEY_NEED_HITS,
   findCrawlSetByRunId,
@@ -10,7 +11,10 @@ import {
   getRecentHitsTotal,
   insertCrawlSet,
   insertFoodbankDiscrepancy,
+  pruneCrawlItems,
+  pruneCrawlSets,
   setCrawlSetExpected,
+  updateDaysBetweenNeeds,
   type Session,
 } from "@givefood/db";
 import type { NeedcheckRenderMessage } from "../queues/needcheckRender";
@@ -207,12 +211,36 @@ async function charityInfo(env: Env, scheduledTime: number): Promise<void> {
   console.log(`charityinfo: enqueued ${enqueuedCount}/${total} food banks for ${runId} (crawlset ${crawlSetId})`);
 }
 
+// PLAN.md §8.9: replaces days_between_needs.py's per-food-bank N+1
+// (~4,000 queries + 1,024 full model saves) with the one window-function
+// statement in updateDaysBetweenNeeds -- weekly, ≥1-hour interval, so this
+// handler has 15 minutes of CPU for a statement that takes milliseconds.
 async function daysBetweenNeeds(env: Env): Promise<void> {
-  throw new Error("daysBetweenNeeds: not implemented");
+  const session = env.DB.withSession("first-unconstrained");
+  await updateDaysBetweenNeeds(session);
+  console.log("daysBetweenNeeds: done");
 }
 
+// PLAN.md §8.10.2: prune_db_task_results's old slot, repointed at
+// crawlitem -- no retention policy existed at all in Django, and it grows
+// ~5,845 rows/day forever. Order matches PLAN's own: prune items, then
+// sets, then backstop-stamp any crawlset the expected/remaining mechanism
+// (needcheck.ts) didn't reach 0 for -- see finishStaleCrawlSets's own
+// comment on why that's a backstop, not the primary mechanism, here.
+//
+// No R2 archival of pruned history yet (PLAN.md §8.10.2 also calls for
+// "crawlitem/YYYY-MM.ndjson.gz before the first prune") -- deliberately
+// deferred, not forgotten: crawlitem is confirmed empty on production D1
+// today (verified directly), since no cron that writes to it has run
+// there yet. There is nothing to lose by pruning now; the archival step
+// only matters once real rows start accumulating, which is closer to
+// launch than to this WP.
 async function crawlItemPrune(env: Env): Promise<void> {
-  throw new Error("crawlItemPrune: not implemented");
+  const session = env.DB.withSession("first-unconstrained");
+  const itemsDeleted = await pruneCrawlItems(session);
+  const setsDeleted = await pruneCrawlSets(session);
+  await finishStaleCrawlSets(session);
+  console.log(`crawlItemPrune: deleted ${itemsDeleted} crawlitem(s), ${setsDeleted} crawlset(s)`);
 }
 
 // WP 4.4: precomputes the two expensive /frag/ values (last-updated,
