@@ -373,13 +373,16 @@ export async function handleGoogleOAuthCallback(c: Context<AppEnv>): Promise<Res
     return c.text("Sign-in failed", 403);
   }
   const tokenJson = (await tokenRes.json()) as { id_token?: string };
-  if (!tokenJson.id_token) return c.text("Sign-in failed", 403);
+  if (!tokenJson.id_token) return c.redirect("/auth/", 302);
 
   const claims = await verifyGoogleIdToken(tokenJson.id_token, c.env.GOOGLE_OAUTH_CLIENT_ID);
-  if (!claims) return c.text("Sign-in failed", 403);
+  if (!claims) return c.redirect("/auth/", 302);
 
-  // givefood/middleware.py:68's LoginRequiredAccess gate, verbatim.
-  if (!claims.email_verified || claims.hd !== HOSTED_DOMAIN) return c.text("Forbidden", 403);
+  // givefood/middleware.py:68's LoginRequiredAccess gate, verbatim. Django
+  // redirects a rejected user back to the (real, branded, WP 6.1/6.2+)
+  // sign-in page rather than a bare 403 -- they can just try again with a
+  // different account, no need to dead-end them.
+  if (!claims.email_verified || claims.hd !== HOSTED_DOMAIN) return c.redirect("/auth/", 302);
 
   const sessionId = await createSession(c.env, claims);
   setSessionCookie(c, sessionId);

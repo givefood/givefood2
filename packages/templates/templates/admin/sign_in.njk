@@ -1,0 +1,25 @@
+{% extends "admin/page.njk" %}
+
+{% block title %}Sign in{% endblock %}
+
+{% block body %}
+<div class="columns is-centered">
+  <div class="column is-one-quarter" style="margin-top:50px">
+    {% if admin_user %}
+    <div>
+      {% if admin_user.picture %}<img src="{{ admin_user.picture }}" alt="User picture">{% endif %}
+      <p>
+        <strong>{{ admin_user.givenName }}</strong>
+        <br>{{ admin_user.email }}
+      </p>
+      <p><a href="/admin/">Admin</a></p>
+      <p><a href="/auth/sign-out/">Sign out</a></p>
+    </div>
+    {% else %}
+    <div>
+      <a href="/auth/?next=%2Fadmin%2F" class="button is-link">Sign in with Google</a>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
