@@ -37,7 +37,12 @@
       {{ fieldset(fields, data) }}
       <div class="field">
         <div class="control">
-          <button type="submit" class="button is-link is-light">Save</button>
+          {# admin/form.html:16 -- every one of this template's Django callers
+             (Parliamentary Constituency, Slug Redirect, Order Group, Location,
+             Donation Point) funnels through this one shared template, so
+             "Submit" plus the double-submit guard is Django's literal button
+             here, not a per-page choice. #}
+          <button type="submit" class="button is-link is-light" onclick="this.form.submit();this.disabled = true;">Submit</button>
         </div>
       </div>
     </form>

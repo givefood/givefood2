@@ -22,14 +22,21 @@
    static/js/admin.js selects on (admin.js:97-111); none of its initialisers
    fire on this form (they are all gated on #id_lat_lng, #id_company or a
    food-bank/location/donation-point form class), which is correct -- Django's
-   items form has no lookup buttons either. #}
+   items form has no lookup buttons either.
+
+   FIXES admin/form.html:8-10's column-is-half bug (defect class named in
+   generic_form.njk's own header comment): Bulma's `.column.is-half` is a
+   hard 50% whether or not a sibling column exists, and this page NEVER
+   gets a second column (the preview never renders here, per the note
+   above), so pinning it drew every visit to this form as a permanent
+   half-width strip with an empty right half. #}
 {% extends "admin/page.njk" %}
 
 {% block title %}{{ title }}{% endblock %}
 
 {% block body %}
 <div class="columns">
-  <div class="column is-half">
+  <div class="column">
     <h1 class="title">{{ title }}</h1>
     <p><a href="/admin/items/">&larr; Back</a></p>
 
@@ -62,9 +69,12 @@
         <p class="help">Per 100g</p>
       </div>
 
+      {# admin/form.html:14's `onclick="this.form.submit();this.disabled = true;"`
+         double-submit guard, on every Django admin submit button -- this
+         one had been dropped. #}
       <div class="field">
         <div class="control">
-          <button type="submit" class="button is-link is-light">Save</button>
+          <button type="submit" class="button is-link is-light" onclick="this.form.submit();this.disabled = true;">Submit</button>
         </div>
       </div>
     </form>

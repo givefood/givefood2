@@ -1,6 +1,18 @@
-{% extends "admin/page.njk" %}
+{# gfauth/templates/auth/sign_in.html:1 extends "public/page.html", NOT
+   admin/page.html -- /auth/ (gfauth/urls.py) is registered outside
+   gfadmin entirely and sits outside i18n_patterns too (givefood/urls.py:92-103),
+   so Django renders it with the public site's chrome (public footer,
+   Plausible/GTM, no admin nav) rather than the admin navbar an
+   unauthenticated visitor has no business seeing anyway. Was wrongly
+   extending admin/page.njk here, which drew the full Food
+   Banks/Locations/.../Settings navbar (and its search box) on a page
+   nobody is signed in to see it from. #}
+{% extends "page.njk" %}
 
-{% block title %}Sign in{% endblock %}
+{# sign_in.html has no {% block title %} override of its own, so Django
+   renders a literally empty <title></title> on this page -- kept as-is
+   rather than "fixed" with a title, same philosophy as WP 6.12's other
+   kept-not-fixed Django quirks. #}
 
 {% block body %}
 <div class="columns is-centered">

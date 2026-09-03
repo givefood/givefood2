@@ -8,6 +8,10 @@ import { adminPageContext } from "./pageContext";
 
 const MAPIT_TIMEOUT_MS = 20_000;
 
+// givefood/forms.py:168 `name = forms.CharField(max_length=100, ...)` --
+// same NAME_MAX_LENGTH guard and message as items.ts/orderGroup.ts.
+const NAME_MAX_LENGTH = 100;
+
 interface MapItGeometry {
   centre_lat?: number;
   centre_lon?: number;
@@ -44,7 +48,14 @@ export async function adminFoodbankLocationAreaForm(c: Context<AppEnv>): Promise
 
     if (!name) {
       error = "Name is required";
-    } else if (!mapitId || !Number.isInteger(mapitIdNum) || mapitIdNum <= 0) {
+    } else if (name.length > NAME_MAX_LENGTH) {
+      error = `Name must be ${NAME_MAX_LENGTH} characters or fewer`;
+    } else if (!mapitId || !Number.isInteger(mapitIdNum)) {
+      // forms.py:169 `mapit_id = forms.IntegerField(...)` has no min_value,
+      // so Django itself accepts 0 or a negative id and lets the MapIt
+      // fetch below fail with a real "Failed to fetch geometry" error --
+      // rejecting <= 0 here up front would show a different, wrong error
+      // for a case Django would happily forward to the API.
       error = "MapIt Area ID is required and must be a whole number";
     } else {
       const result = await fetchMapItArea(c.env.MAPIT_KEY, mapitIdNum);

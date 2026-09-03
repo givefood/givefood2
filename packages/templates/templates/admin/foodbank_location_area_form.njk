@@ -3,8 +3,13 @@
 {% block title %}{{ title }}{% endblock %}
 
 {% block body %}
+{# gfadmin/templates/admin/fblocation_area_form.html:8-10 wraps the form in
+   a BARE `<div class="column">` -- no second column ever exists on this
+   page (unlike order_form.njk's preview pane), so pinning `is-half` here
+   draws a half-width strip with an empty right half. Same bug generic_form.njk's
+   own history already fixed for this exact reason. #}
 <div class="columns">
-  <div class="column is-half">
+  <div class="column">
     <h1 class="title">{{ title }}</h1>
 
     {% if error %}
@@ -17,12 +22,19 @@
       <div class="field">
         <label class="label">Name</label>
         <div class="control">
-          <input class="input" type="text" name="name" value="{{ name }}" required>
+          <input class="input" type="text" name="name" value="{{ name }}" maxlength="100" required>
         </div>
         <p class="help">Name of the location</p>
       </div>
+      {# givefood/forms.py:169 `mapit_id = forms.IntegerField(help_text="MapIt
+         Area ID")` -- a plain forms.Form field with no explicit `label=`, so
+         Django's BoundField falls back to pretty_name("mapit_id"): underscore
+         to space then str.capitalize(), giving the literal label "Mapit id"
+         (only the leading M capitalised). The help text is the readable
+         "MapIt Area ID" string; the label is not -- they are two different
+         strings in Django and must stay that way here. #}
       <div class="field">
-        <label class="label">MapIt Area ID</label>
+        <label class="label">Mapit id</label>
         <div class="control">
           <input class="input" type="number" name="mapit_id" value="{{ mapit_id }}" required>
         </div>
@@ -30,7 +42,13 @@
       </div>
       <div class="field">
         <div class="control">
-          <button type="submit" class="button is-link is-light">Submit</button>
+          {# gfadmin/templates/admin/fblocation_area_form.html:16's double-submit
+             guard -- matters here more than on most ported forms: the create
+             path (lib/db's upsertLocation with no existingId) is a bare INSERT,
+             same as Django's `foodbank_location.save()` at views.py:1723, with
+             no ON CONFLICT dedupe. A double click creates two identical
+             locations, not a harmless no-op. #}
+          <button type="submit" class="button is-link is-light" onclick="this.form.submit();this.disabled = true;">Submit</button>
         </div>
       </div>
     </form>

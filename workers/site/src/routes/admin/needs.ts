@@ -19,6 +19,9 @@ import {
   getAllTranslationsForNeed,
   updateNeedRawFields,
   getFoodbankBySlug,
+  getOpenFoodbankOptions,
+  type FoodbankWithLatestNeed,
+  type FoodbankChangeRow,
 } from "@givefood/db";
 import { render } from "@givefood/templates";
 import type { AppEnv } from "../../types";
@@ -46,6 +49,42 @@ function sameOrigin(a: string, b: string): boolean {
 // matches on the first entry.
 const NEED_URI_PROXY_FIELDS = ["shopping_list_url", "url"] as const;
 
+// gfadmin/templates/admin/need.html:258-264 AND admin/form.html:23-29 --
+// Django renders this exact same `{% if need.uri %}` preview (minus
+// facebook.com/bankthefood.org, neither of which can be framed) from BOTH
+// the need detail page and the need edit form, off the same `need`
+// template var either view sets. Shared here for the same reason: one
+// place to resolve which food bank field's origin the need's `uri` came
+// from, not two copies that could drift.
+//
+// Django previews the need's OWN `uri` (`?url={{ need.uri|urlencode }}`),
+// i.e. the page the shopping list was extracted from -- not whatever
+// `shopping_list_url` holds now. That distinction matters: `uri` is a
+// snapshot taken at crawl time and the food bank's URL fields are edited
+// in the admin, so an older need previewed against the current field
+// silently compares the extraction to a different page.
+//
+// WP 6.3's proxy can't take a raw URL (that was Django's SSRF). So name
+// the field whose origin matches and pin the exact page with `target=`,
+// which proxy.ts:35-60 only honours when its origin matches the resolved
+// field URL's origin -- the same mechanism discrepancies.ts:41-50 uses.
+// If no field's origin matches (a legacy Distill-era uri, or an edited
+// shopping_list_url), show no preview rather than a wrong one -- the
+// policy discrepancies.ts:32-40 already states.
+//
+// Consequence of the field-based proxy, disclosed rather than worked
+// around: a need with no food bank cannot be previewed at all, where
+// Django's `{% if need.uri %}` alone would still show one.
+function computeNeedProxySrc(foodbank: FoodbankWithLatestNeed | null, foodbankSlug: string | null, needUri: string | null): string | null {
+  if (!foodbank || !foodbankSlug || !needUri || needUri.includes("facebook.com") || needUri.includes("bankthefood.org")) return null;
+  for (const field of NEED_URI_PROXY_FIELDS) {
+    if (sameOrigin(foodbank[field], needUri)) {
+      return `/admin/proxy/?foodbank=${encodeURIComponent(foodbankSlug)}&field=${field}&target=${encodeURIComponent(needUri)}`;
+    }
+  }
+  return null;
+}
+
 // gfadmin/views.py:1753-1831 need() -- the detail page. `id` is the
 // public need_id UUID (dashed or dashless, getNeedByUuid normalises).
 export async function adminNeedDetail(c: Context<AppEnv>): Promise<Response> {
@@ -66,37 +105,7 @@ export async function adminNeedDetail(c: Context<AppEnv>): Promise<Response> {
   const changeList = need.change_text.split("\n");
   const excessList = need.excess_change_text ? need.excess_change_text.split("\n") : [];
 
-  // gfadmin/templates/admin/need.html:258-264's `"facebook.com" not in
-  // need.uri and "bankthefood.org" not in need.uri` gate -- neither source
-  // can be framed/isn't worth proxying.
-  //
-  // Django previews the need's OWN `uri` (`?url={{ need.uri|urlencode }}`),
-  // i.e. the page the shopping list was extracted from -- not whatever
-  // `shopping_list_url` holds now. That distinction matters: `uri` is a
-  // snapshot taken at crawl time and the food bank's URL fields are edited
-  // in the admin, so an older need previewed against the current field
-  // silently compares the extraction to a different page.
-  //
-  // WP 6.3's proxy can't take a raw URL (that was Django's SSRF). So name
-  // the field whose origin matches and pin the exact page with `target=`,
-  // which proxy.ts:35-60 only honours when its origin matches the resolved
-  // field URL's origin -- the same mechanism discrepancies.ts:41-50 uses.
-  // If no field's origin matches (a legacy Distill-era uri, or an edited
-  // shopping_list_url), show no preview rather than a wrong one -- the
-  // policy discrepancies.ts:32-40 already states.
-  //
-  // Consequence of the field-based proxy, disclosed rather than worked
-  // around: a need with no food bank cannot be previewed at all, where
-  // Django's `{% if need.uri %}` alone would still show one.
-  let proxySrc: string | null = null;
-  if (foodbank && foodbankSlug && need.uri && !need.uri.includes("facebook.com") && !need.uri.includes("bankthefood.org")) {
-    for (const field of NEED_URI_PROXY_FIELDS) {
-      if (sameOrigin(foodbank[field], need.uri)) {
-        proxySrc = `/admin/proxy/?foodbank=${encodeURIComponent(foodbankSlug)}&field=${field}&target=${encodeURIComponent(need.uri)}`;
-        break;
-      }
-    }
-  }
+  const proxySrc = computeNeedProxySrc(foodbank, foodbankSlug, need.uri);
   const now = new Date();
 
   const html = await render("admin/need.njk", {
@@ -328,7 +337,40 @@ export async function adminNeedTranslations(c: Context<AppEnv>): Promise<Respons
 // published -- see needAdmin.ts's updateNeedRawFields. `foodbank` is a
 // slug text input here rather than Django's 1000+-row `<select>` (its
 // ModelChoiceField has no scoping at all, `Foodbank.objects.filter()` --
-// every food bank, open or closed).
+// every food bank, open or closed) -- the same substitution needNew.ts's
+// create half already made, now backed by the same datalist of open food
+// banks (needNew.ts:34-42's reasoning applies verbatim here).
+//
+// Re-render helper, mirroring needNew.ts's renderForm: an invalid submit
+// re-shows the typed values plus one error banner rather than the bare
+// `c.text(error, 400)` other ported forms return, and 200 even when
+// `error` is set -- a Django ModelForm that fails validation re-renders
+// the same bound page, it does not return a 4xx.
+async function renderNeedEditForm(
+  c: Context<AppEnv>,
+  db: ReturnType<typeof dbSession>,
+  need: FoodbankChangeRow,
+  formValues: { change_text: string; excess_change_text: string | null; published: boolean },
+  foodbankSlug: string | null,
+  error: string | null,
+): Promise<Response> {
+  const [foodbankOptions, foodbank] = await Promise.all([getOpenFoodbankOptions(db), foodbankSlug ? getFoodbankBySlug(db, foodbankSlug) : Promise.resolve(null)]);
+  // admin/form.html:23-29's need.uri preview -- see computeNeedProxySrc's
+  // own comment. Uses `need.uri` (the crawl-time snapshot), never
+  // whichever food bank is currently typed into the field above.
+  const proxySrc = computeNeedProxySrc(foodbank, foodbankSlug, need.uri);
+  const html = await render("admin/need_form.njk", {
+    ...(await adminPageContext(c, "needs")),
+    need: { ...need, change_text: formValues.change_text, excess_change_text: formValues.excess_change_text, published: formValues.published },
+    foodbank_slug: foodbankSlug,
+    foodbank_options: foodbankOptions,
+    show_proxy: !!proxySrc,
+    proxy_src: proxySrc,
+    error,
+  });
+  return c.html(html);
+}
+
 export async function adminNeedEditForm(c: Context<AppEnv>): Promise<Response> {
   const db = dbSession(c);
   const need = await getNeedByUuid(db, c.req.param("id")!);
@@ -343,28 +385,55 @@ export async function adminNeedEditForm(c: Context<AppEnv>): Promise<Response> {
     const excessChangeText = typeof body.excess_change_text === "string" && body.excess_change_text.trim() !== "" ? body.excess_change_text : null;
     const published = !!body.published;
     const foodbankSlug = typeof body.foodbank_slug === "string" ? body.foodbank_slug.trim() : "";
+    const formValues = { change_text: changeText, excess_change_text: excessChangeText, published };
 
     let foodbankId: number | null = null;
     let foodbankName: string | null = need.foodbank_name;
     if (foodbankSlug) {
       const foodbank = await getFoodbankBySlug(db, foodbankSlug);
-      if (!foodbank) return c.text(`No food bank with slug "${foodbankSlug}"`, 400);
+      // Fixes gfadmin/views.py:1928's unguarded `Foodbank.objects.get()`
+      // (DoesNotExist -> 500) the same way needNew.ts:113 already does for
+      // the create half of this same view -- re-rendered with the typed
+      // shopping list intact rather than a bare 400 that throws it away.
+      if (!foodbank) return renderNeedEditForm(c, db, need, formValues, foodbankSlug, `No food bank with slug "${foodbankSlug}"`);
       foodbankId = foodbank.id;
       foodbankName = foodbank.name;
     } else {
       foodbankName = null;
     }
 
+    // givefood/models/needs.py:64 -- `change_text` has no blank=True, so
+    // NeedForm's is_valid() rejects an empty shopping list with "This field
+    // is required." instead of saving, matching needNew.ts:127-129's
+    // identical check on the create half of this same Django view.
+    if (changeText.trim() === "") {
+      return renderNeedEditForm(c, db, need, formValues, foodbankSlug, "This field is required.");
+    }
+
+    // FoodbankChange.clean() (needs.py:77-79), enforced by
+    // ModelForm.full_clean() on this path -- matching needNew.ts:135-137's
+    // identical check on the create half.
+    if (published && foodbankId === null) {
+      return renderNeedEditForm(c, db, need, formValues, foodbankSlug, "Need to set a food bank to publish need");
+    }
+
     const updated = await updateNeedRawFields(db, need.need_id, { changeText, excessChangeText, published, foodbankId, foodbankName });
     if (!updated) return c.notFound();
+
+    // needs.py:305-317's `do_translate = self.published` (default) fires
+    // on EVERY save while published=True, not only the first one -- the
+    // model's own comment states this explicitly ("translations are
+    // triggered whenever a need is published, whether via form save or the
+    // publish button"). needNew.ts:151-153 and handlePublishTransition
+    // above already cover the create and publish-button paths; this is the
+    // third and last place a need's `published` flag can become/stay true.
+    if (published) {
+      await c.env.JOBS_Q.sendBatch(TRANSLATE_LANGUAGES.map((language) => ({ body: { type: "translate-need", needId: need.id, language } })));
+    }
+
     return c.redirect(`/admin/need/${need.need_id}/`, 302);
   }
 
   const foodbankSlug = need.foodbank_id !== null ? await getFoodbankSlugById(db, need.foodbank_id) : null;
-  const html = await render("admin/need_form.njk", {
-    ...(await adminPageContext(c, "needs")),
-    need,
-    foodbank_slug: foodbankSlug,
-  });
-  return c.html(html);
+  return renderNeedEditForm(c, db, need, { change_text: need.change_text, excess_change_text: need.excess_change_text, published: need.published }, foodbankSlug, null);
 }

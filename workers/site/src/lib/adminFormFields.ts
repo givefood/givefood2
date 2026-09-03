@@ -73,19 +73,30 @@ const DONATION_POINT_COMPANIES = [
   "Waitrose",
 ] as const;
 
+// Labels below are Django's OWN default, for every one of these fields
+// that declares no explicit `verbose_name`: `fields_for_model()` builds
+// `field.name.replace('_', ' ')` then applies `capfirst()` -- which
+// capitalises only the very first character, not every word (confirmed
+// against the real `django.utils.text.capfirst`: capfirst("alt_name"
+// .replace("_"," ")) == "Alt name", not "Alt Name"). Several of these were
+// Title-Cased here instead, which is a real rendered-text mismatch, not a
+// style choice -- fields that DO carry an explicit verbose_name in
+// foodbank.py (URL, Place ID, Latitude/Longitude, the FSA one, the two
+// boolean questions) are left as their exact verbose_name text, unaffected
+// by this rule.
 export const FOODBANK_FIELDS: readonly AdminFieldSpec[] = [
   { name: "name", label: "Name", kind: "text", required: true },
-  { name: "alt_name", label: "Alt Name", kind: "text", required: false, helpText: "E.g. Welsh version of the name" },
+  { name: "alt_name", label: "Alt name", kind: "text", required: false, helpText: "E.g. Welsh version of the name" },
   { name: "address", label: "Address", kind: "textarea", required: true },
   { name: "postcode", label: "Postcode", kind: "text", required: true },
   { name: "country", label: "Country", kind: "select", required: true, options: COUNTRIES },
   { name: "lat_lng", label: "Latitude, Longitude", kind: "text", required: true },
   { name: "place_id", label: "Place ID", kind: "text", required: false },
-  { name: "delivery_address", label: "Delivery Address", kind: "textarea", required: false },
+  { name: "delivery_address", label: "Delivery address", kind: "textarea", required: false },
   { name: "network", label: "Network", kind: "select", required: false, options: FOODBANK_NETWORKS },
-  { name: "network_id", label: "Network ID", kind: "text", required: false },
+  { name: "network_id", label: "Network id", kind: "text", required: false },
   { name: "notes", label: "Notes", kind: "textarea", required: false },
-  { name: "charity_number", label: "Charity Number", kind: "text", required: false },
+  { name: "charity_number", label: "Charity number", kind: "text", required: false },
   {
     name: "charity_just_foodbank",
     label: "Charity just foodbank",
@@ -93,14 +104,14 @@ export const FOODBANK_FIELDS: readonly AdminFieldSpec[] = [
     required: false,
     helpText: "Tick this if the charity is purely used for the foodbank, rather than other uses such as a church",
   },
-  { name: "facebook_page", label: "Facebook Page", kind: "text", required: false },
-  { name: "bankuet_slug", label: "Bankuet Slug", kind: "text", required: false },
+  { name: "facebook_page", label: "Facebook page", kind: "text", required: false },
+  { name: "bankuet_slug", label: "Bankuet slug", kind: "text", required: false },
   { name: "fsa_id", label: "Food Standards Agency Business ID", kind: "text", required: false },
-  { name: "contact_email", label: "Contact Email", kind: "email", required: true },
-  { name: "notification_email", label: "Notification Email", kind: "email", required: false },
-  { name: "phone_number", label: "Phone Number", kind: "text", required: false },
-  { name: "secondary_phone_number", label: "Secondary Phone Number", kind: "text", required: false },
-  { name: "delivery_phone_number", label: "Delivery Phone Number", kind: "text", required: false },
+  { name: "contact_email", label: "Contact email", kind: "email", required: true },
+  { name: "notification_email", label: "Notification email", kind: "email", required: false },
+  { name: "phone_number", label: "Phone number", kind: "text", required: false },
+  { name: "secondary_phone_number", label: "Secondary phone number", kind: "text", required: false },
+  { name: "delivery_phone_number", label: "Delivery phone number", kind: "text", required: false },
   { name: "url", label: "URL", kind: "url", required: true },
   { name: "shopping_list_url", label: "Shopping list URL", kind: "url", required: true },
   { name: "rss_url", label: "RSS feed URL", kind: "url", required: false },
@@ -109,37 +120,51 @@ export const FOODBANK_FIELDS: readonly AdminFieldSpec[] = [
   { name: "locations_url", label: "Locations URL", kind: "url", required: false },
   { name: "contacts_url", label: "Contacts URL", kind: "url", required: false },
   { name: "address_is_administrative", label: "Is the main address just used for administrative purposes?", kind: "checkbox", required: false },
-  { name: "is_closed", label: "Is Closed", kind: "checkbox", required: false },
-  { name: "is_school", label: "Is School", kind: "checkbox", required: false },
+  { name: "is_closed", label: "Is closed", kind: "checkbox", required: false },
+  { name: "is_school", label: "Is school", kind: "checkbox", required: false },
 ] as const;
 
 // givefood/forms.py:26-29 FOODBANK_LOCATION_FIELD_ORDER, minus `foodbank`
 // (a HiddenInput in Django, fixed by the URL's :slug rather than rendered
 // as a field here -- routes/admin/foodbankLocation.ts sets it directly).
+// Labels below are Django's actual rendered labels, not a style choice:
+// FoodbankLocation/FoodbankDonationPoint declare no explicit `verbose_name`
+// on most fields, so Django's ModelForm falls back to
+// capfirst(pretty_name(field_name)) -- underscores to spaces, then ONLY the
+// first character capitalised ("is_donation_point" -> "Is donation point",
+// not "Is Donation Point"). `lat_lng`, `place_id` and (on the donation
+// point) `url` are the exceptions: those three DO set an explicit
+// verbose_name (base.py:73,76; foodbank.py:1018) and keep their Title/
+// acronym form here for that reason -- this is the same capfirst check
+// already applied to FOODBANK_FIELDS.
 export const FOODBANK_LOCATION_FIELDS: readonly AdminFieldSpec[] = [
   { name: "name", label: "Name", kind: "text", required: true },
   { name: "address", label: "Address", kind: "textarea", required: false },
   { name: "postcode", label: "Postcode", kind: "text", required: false },
-  { name: "is_donation_point", label: "Is Donation Point", kind: "checkbox", required: false },
-  { name: "is_mobile", label: "Is Mobile", kind: "checkbox", required: false },
+  { name: "is_donation_point", label: "Is donation point", kind: "checkbox", required: false },
+  { name: "is_mobile", label: "Is mobile", kind: "checkbox", required: false },
   { name: "lat_lng", label: "Latitude, Longitude", kind: "text", required: true },
-  { name: "boundary_geojson", label: "Boundary GeoJSON", kind: "textarea", required: false },
+  { name: "boundary_geojson", label: "Boundary geojson", kind: "textarea", required: false },
   { name: "place_id", label: "Place ID", kind: "text", required: false },
-  { name: "phone_number", label: "Phone Number", kind: "text", required: false, helpText: "If different to the main location" },
+  { name: "phone_number", label: "Phone number", kind: "text", required: false, helpText: "If different to the main location" },
   { name: "email", label: "Email", kind: "email", required: false, helpText: "If different to the main location" },
 ] as const;
 
 // givefood/forms.py:31-35 FOODBANK_DONATION_POINT_FIELD_ORDER, minus
 // `foodbank` (same HiddenInput reasoning as the location fields above).
+// See FOODBANK_LOCATION_FIELDS' comment above for why most labels here are
+// sentence case rather than Title Case: it's Django's own capfirst()
+// default for fields with no explicit verbose_name. `url` is the one
+// exception on this model too (foodbank.py:1018 sets verbose_name="URL").
 export const FOODBANK_DONATION_POINT_FIELDS: readonly AdminFieldSpec[] = [
   { name: "name", label: "Name", kind: "text", required: true },
   { name: "address", label: "Address", kind: "textarea", required: true },
   { name: "postcode", label: "Postcode", kind: "text", required: true },
-  { name: "phone_number", label: "Phone Number", kind: "text", required: false },
-  { name: "opening_hours", label: "Opening Hours", kind: "textarea", required: false },
-  { name: "wheelchair_accessible", label: "Wheelchair Accessible", kind: "tristate", required: false },
+  { name: "phone_number", label: "Phone number", kind: "text", required: false },
+  { name: "opening_hours", label: "Opening hours", kind: "textarea", required: false },
+  { name: "wheelchair_accessible", label: "Wheelchair accessible", kind: "tristate", required: false },
   { name: "url", label: "URL", kind: "url", required: false },
-  { name: "in_store_only", label: "In Store Only", kind: "checkbox", required: false },
+  { name: "in_store_only", label: "In store only", kind: "checkbox", required: false },
   // foodbank.py:1021 `choices=DONATION_POINT_COMPANIES_CHOICES` -- a
   // Select in Django, and admin.js:210-219's initCompanyAutoSelect()
   // iterates `#id_company`'s `.options` to auto-pick the company out of a
@@ -149,7 +174,7 @@ export const FOODBANK_DONATION_POINT_FIELDS: readonly AdminFieldSpec[] = [
   // matters: Foodbank.notes (foodbank.py:73) is private scratch with no
   // help_text, while THIS notes field is published on the public donation
   // point page, and that line was the only thing saying so.
-  { name: "store_id", label: "Store ID", kind: "text", required: false, helpText: "The company's store ID" },
+  { name: "store_id", label: "Store id", kind: "text", required: false, helpText: "The company's store ID" },
   { name: "notes", label: "Notes", kind: "textarea", required: false, helpText: "These notes are public" },
   { name: "lat_lng", label: "Latitude, Longitude", kind: "text", required: true },
   { name: "place_id", label: "Place ID", kind: "text", required: false },

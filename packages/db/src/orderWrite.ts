@@ -385,11 +385,10 @@ export interface OrderEmailLineRow {
 // Order.lines() is `OrderLine.objects.filter(order=self).order_by("-weight")`
 // (models/orders.py:227-228) -- heaviest first, which is the order both the
 // admin order page's table and the notification email's item list are
-// meant to show. orderAdmin.ts's getOrderLines currently sorts by `id`
-// instead; this is the faithful ordering, used by the email builders here.
+// meant to show. orderAdmin.ts's getOrderLines uses the identical
+// `ORDER BY weight DESC, id`, so the detail page and the email agree.
 // `id` is a stable tiebreak so two equal weights don't reorder between
-// renders. (The detail page's own getOrderLines should get the same fix --
-// flagged rather than changed, since that function is shared.)
+// renders.
 export async function getOrderLinesByWeight(session: Session, orderRowId: number): Promise<OrderEmailLineRow[]> {
   const result = await session
     .prepare("SELECT name, quantity, weight FROM orderline WHERE order_id = ? ORDER BY weight DESC, id")

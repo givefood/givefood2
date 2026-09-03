@@ -1,5 +1,23 @@
-{# WP 6.8: htmx hx-trigger="every 2s" poll fragment -- foodbank_check.njk's own job-status div re-fetches this. Still queued/running: same shell, poll continues. Done/failed: the route sets HX-Redirect instead of rendering this, so this template only ever needs the two in-progress states. #}
-<div id="job-status" hx-get="/admin/job/{{ job.id }}/" hx-trigger="every 2s" hx-swap="outerHTML">
-  <div class="loading"><span class="loader"></span></div>
-  <p>{{ job.status }}&hellip;</p>
-</div>
+{# WP 6.8: htmx hx-trigger="every 2s" poll fragment -- routes/admin/foodbankCheck.ts's
+   adminJobStatus is the single polling target for every admin_job kind (checked by
+   its `job.kind`, not by which page is polling), so this fragment's markup must
+   match each caller's OWN initial "queued/running" render byte-for-byte -- an
+   outerHTML swap that changes styling every 2 seconds is a jarring, self-inflicted
+   bug no Django page has an equivalent for. Still queued/running: same shell, poll
+   continues. Done/failed: the route sets HX-Redirect instead of rendering this, so
+   this template only ever needs the two in-progress states. #}
+{% if job.kind == "order-lines" %}
+  {# Same element order.njk:21-23 itself renders for this state (classes and
+     all) -- the outerHTML swap must reproduce it flat, not nested inside
+     another div, or the "notification" background/padding shifts on the
+     first poll. #}
+  <div class="notification is-info is-light" id="job-status" hx-get="/admin/job/{{ job.id }}/" hx-trigger="every 2s" hx-swap="outerHTML">
+    Parsing the items text into order lines&hellip;
+  </div>
+{% else %}
+  {# Same element foodbank_check.njk:45-48 itself renders for this state. #}
+  <div id="job-status" hx-get="/admin/job/{{ job.id }}/" hx-trigger="every 2s" hx-swap="outerHTML">
+    <div class="loading"><span class="loader"></span></div>
+    <p>{{ job.status }}&hellip;</p>
+  </div>
+{% endif %}

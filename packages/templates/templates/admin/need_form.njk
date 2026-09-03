@@ -1,35 +1,82 @@
+{# gfadmin/templates/admin/form.html rendered with a NeedForm (givefood/
+   forms.py:231-236) -- the edit half of Django's one need_form view.
+   admin/need_new.njk in this same directory is the create half; field
+   NAMES, ids and labels are kept identical between the two (see that
+   file's own header comment for the WP 6.8 note on merging them).
+
+   FIXES admin/form.html:8-10's column-is-half bug (defect class already
+   named in generic_form.njk's own header comment): Bulma's
+   `.column.is-half` is a hard 50% whether or not a sibling column exists,
+   so pinning it drew every need with no matching preview (most needs --
+   see the `show_proxy` gate below) as a half-width strip with an empty
+   right half. Two bare `.column`s still split 50/50, so the preview case
+   is unchanged. #}
 {% extends "admin/page.njk" %}
 
 {% block title %}Edit Need{% endblock %}
 
 {% block body %}
 <div class="columns">
-  <div class="column is-half">
+  <div class="column">
     <h1 class="title">Edit Need</h1>
     <p><a href="/admin/need/{{ need.need_id }}/">&larr; Back</a></p>
 
-    <form method="post">
+    {# Django shows per-field errors inline (`{{ form|bulma }}`); this port
+       validates in the route and surfaces the first failure as one banner,
+       matching admin/need_new.njk:35-37 and generic_form.njk:27. #}
+    {% if error %}<div class="notification is-danger is-light">{{ error }}</div>{% endif %}
+
+    <form method="post" class="form-edit-need">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 
+      {# givefood/forms.py:232 -- `foodbank = ModelChoiceField(queryset=
+         Foodbank.objects.filter().order_by('name'))`, i.e. a <select> the
+         admin picks by NAME. Still a text input rather than Django's
+         <select> -- that queryset is unscoped (~1,000+ options, open and
+         closed alike) -- but backed by a datalist of name -> slug pairs,
+         same substitution and same reasoning as admin/need_new.njk:42-54.
+         OPEN food banks only (getOpenFoodbankOptions); a closed one is
+         still reachable by typing its slug, which is exactly why this
+         stays free text and not a <select>. #}
       <div class="field">
-        <label class="label">Food Bank Slug</label>
+        <label class="label" for="id_foodbank">Food Bank Slug</label>
         <div class="control">
-          <input class="input" type="text" name="foodbank_slug" value="{{ foodbank_slug }}" placeholder="(none)">
+          <input class="input" type="text" id="id_foodbank" name="foodbank_slug" value="{{ foodbank_slug }}" placeholder="(none)" list="foodbank_slugs" autocomplete="off">
+          <datalist id="foodbank_slugs">
+            {% for option in foodbank_options %}
+            <option value="{{ option.slug }}">{{ option.name }}</option>
+            {% endfor %}
+          </datalist>
         </div>
-        <p class="help">Leave blank to leave this need unassigned to any food bank.</p>
+        <p class="help">Start typing a food bank&rsquo;s name to pick it from the list. Leave blank to leave this need unassigned to any food bank. A need cannot be published without one.</p>
+      </div>
+
+      {# Labels are the model's explicit verbose_names (givefood/models/needs.py:64
+         "Shopping List" and :67 "Excess Items"), matching admin/need_new.njk:68-70.
+
+         The two ids are load-bearing, not cosmetic: static/js/admin.js:103-104
+         selects these textareas as `#id_change_text` / `#id_excess_change_text`
+         and initChangeTextButtons() (admin.js:408-409) returns at its first
+         line when the first is missing, so without them the "Make Titlecase",
+         "CSV to Lines" and "Find & Replace" buttons are never injected on
+         THIS form either -- the same defect need_new.njk already fixed on
+         the create half.
+
+         `required` matches needs.py:64: change_text has no blank=True, so
+         NeedForm builds a required field. Server-side check in needs.ts's
+         adminNeedEditForm. #}
+      <div class="field">
+        <label class="label" for="id_change_text">Shopping List</label>
+        <div class="control">
+          <textarea class="textarea" id="id_change_text" name="change_text" rows="6" required>{{ need.change_text }}</textarea>
+        </div>
+        <p class="help">One item per line.</p>
       </div>
 
       <div class="field">
-        <label class="label">Needs</label>
+        <label class="label" for="id_excess_change_text">Excess Items</label>
         <div class="control">
-          <textarea class="textarea" name="change_text" rows="6">{{ need.change_text }}</textarea>
-        </div>
-      </div>
-
-      <div class="field">
-        <label class="label">Excess</label>
-        <div class="control">
-          <textarea class="textarea" name="excess_change_text" rows="6">{{ need.excess_change_text }}</textarea>
+          <textarea class="textarea" id="id_excess_change_text" name="excess_change_text" rows="6">{{ need.excess_change_text }}</textarea>
         </div>
       </div>
 
@@ -39,12 +86,29 @@
         </div>
       </div>
 
+      {# admin/form.html:14/31's `onclick="this.form.submit();this.disabled = true;"`
+         double-submit guard, on every Django admin submit button -- this
+         one had been dropped. Without it, a slow save re-entered by a
+         second click/Enter can race two writes (and, once published, two
+         translate-job batches) against the same need. #}
       <div class="field">
         <div class="control">
-          <button type="submit" class="button is-link is-light">Save</button>
+          <button type="submit" class="button is-link is-light" onclick="this.form.submit();this.disabled = true;">Submit</button>
         </div>
       </div>
     </form>
   </div>
+
+  {# admin/form.html:23-29's `{% if need %}{% if need.uri %}...{% endif %}{% endif %}`
+     preview column -- the page the shopping list was extracted from, not
+     necessarily the food bank's current site. See needs.ts's
+     computeNeedProxySrc for the field-based-proxy substitution (Django's
+     raw `?url=` was the SSRF WP 6.3 already fixed everywhere else). #}
+  {% if show_proxy %}
+  <div class="column">
+    <h3>Preview</h3>
+    <iframe class="preview-frame" src="{{ proxy_src }}" style="width:100%;height:1000px;border:none;" loading="lazy"></iframe>
+  </div>
+  {% endif %}
 </div>
 {% endblock %}

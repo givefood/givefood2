@@ -1,3 +1,12 @@
+{# gfadmin/templates/admin/form.html rendered with a FoodbankForm
+   (givefood/forms.py:58-70) -- the 30-field Foodbank edit/create form.
+
+   FIXES admin/form.html:8-10's column-is-half bug (defect class named in
+   generic_form.njk's own header comment): Bulma's `.column.is-half` is a
+   hard 50% whether or not a sibling column exists, so pinning it drew New
+   Food Bank (`show_proxy` is always false there, foodbank.ts:117) as a
+   half-width form with an empty right half. Two bare `.column`s still
+   split 50/50, so the Edit case (which does have a preview) is unchanged. #}
 {% extends "admin/page.njk" %}
 {% from "admin/includes/formfields.njk" import fieldset %}
 
@@ -5,38 +14,54 @@
 
 {% block body %}
 <div class="columns">
-  <div class="column is-half">
+  <div class="column">
     <h1 class="title">{{ title }}</h1>
     <p class="subtitle">{{ foodbank.name }}{% if foodbank.slug %} -- <a href="/admin/foodbank/{{ foodbank.slug }}/">View</a>{% endif %}</p>
+
+    {# A bound Django form re-renders with its errors inline (bulma/forms/
+       field.html's `<span class="help is-danger">`); foodbank.ts's
+       renderFoodbankForm/renderForm already pass `error` on a failed
+       save (duplicate name, phone clash, bad postcode...) -- this was the
+       one thing missing to actually show it, matching the same banner
+       generic_form.njk:27 and admin/need_new.njk:35-37 use. #}
+    {% if error %}<div class="notification is-danger is-light">{{ error }}</div>{% endif %}
 
     {# See generic_form.njk on why the class name matters to admin.js. #}
     <form method="post" class="form-{{ title | slugify }}">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       {{ fieldset(fields, foodbank) }}
+      {# admin/form.html:14's `onclick="this.form.submit();this.disabled = true;"`
+         double-submit guard, on every Django admin submit button -- this
+         one had been dropped. Without it, a slow save (this form posts all
+         30 fields, including a geocode/decache-triggering save) re-entered
+         by a second click/Enter can race two writes against the same row. #}
       <div class="field">
         <div class="control">
-          <button type="submit" class="button is-link is-light">Save</button>
+          <button type="submit" class="button is-link is-light" onclick="this.form.submit();this.disabled = true;">Submit</button>
         </div>
       </div>
     </form>
 
-    {% if foodbank.slug %}
-      <div class="buttons">
-        <a href="/admin/foodbank/{{ foodbank.slug }}/location/new/" class="button is-light is-small">New Location</a>
-        <a href="/admin/foodbank/{{ foodbank.slug }}/donationpoint/new/" class="button is-light is-small">New Donation Point</a>
-      </div>
-
-      {% if show_delete %}
+    {# Delete Foodbank matches generic_form.njk's own `delete_url` block --
+       an accepted addition to the edit form across this port's admin, not
+       Django's (its own Delete lives only on the detail page). "New
+       Location" / "New Donation Point", previously duplicated here too,
+       were removed: Django's form.html has neither, both already exist on
+       the detail page (foodbank_detail.njk, matching foodbank.html:304/538)
+       which every save redirects to, and the duplicate set here had
+       silently dropped "New Location Area" (foodbank.html:305) that the
+       detail page carries -- a sign this was leftover scaffolding, not a
+       maintained addition. #}
+    {% if foodbank.slug and show_delete %}
       <form method="post" action="/admin/foodbank/{{ foodbank.slug }}/delete/" onsubmit="return confirm('Are you sure you want to DELETE this food bank and everything under it? This cannot be undone.')">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <button type="submit" class="button is-danger is-light">Delete Foodbank</button>
       </form>
-      {% endif %}
     {% endif %}
   </div>
 
   {% if show_proxy %}
-  <div class="column is-half">
+  <div class="column">
     <h3>Preview</h3>
     <iframe class="preview-frame" src="/admin/proxy/?foodbank={{ foodbank.slug }}&amp;field=url" style="width:100%;height:1000px;border:none;" loading="lazy"></iframe>
   </div>
