@@ -31,7 +31,18 @@
     {% elif spec.kind == "select" %}
       <div class="select">
         <select id="id_{{ spec.name }}" name="{{ spec.name }}"{% if spec.required %} required{% endif %}>
-          {% if not spec.required %}<option value="">-- none --</option>{% endif %}
+          {# Blank option on required selects too, matching Django's
+             Field.get_choices(include_blank=True): a choices field with no
+             default opens UNSET. Suppressing it made New Food Bank open on
+             Country = England (the first option), so an admin who tabbed
+             past the field silently filed a Scottish or Welsh food bank as
+             English -- which then picks the charity register, the bank
+             holiday table and the flag. It also makes the `required`
+             attribute above do anything: Django's own
+             Select.use_required_attribute() only emits it when the first
+             option is empty, because a browser cannot block a submit when
+             every option has a value. #}
+          <option value=""{% if not value %} selected{% endif %}>-- none --</option>
           {% for opt in spec.options %}
           <option value="{{ opt }}"{% if opt == value %} selected{% endif %}>{{ opt }}</option>
           {% endfor %}

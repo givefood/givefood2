@@ -4,16 +4,56 @@ import { render } from "@givefood/templates";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
 import { verifyCsrf } from "../../lib/csrf";
+import type { AdminFieldSpec, AdminFieldValue } from "../../lib/adminFormFields";
 import { FOODBANK_FIELDS, FOODBANK_PARTIAL_FORMS, fieldsByName, parseAdminFields } from "../../lib/adminFormFields";
 import { adminPageContext } from "./pageContext";
 
+// givefood/models/foodbank.py:148-151 Foodbank.clean() -- a model-level
+// validation ModelForm._post_clean() runs on every admin save, so Django
+// refuses the save with this message rather than publishing the same
+// number twice. Gated on BOTH fields being on the form being submitted:
+// Django compares against the instance for fields a partial form
+// excludes, which would block an unrelated Address/Email edit whenever
+// legacy data already holds a duplicate pair; the Phone partial form
+// (adminFormFields.ts:153) and the two full forms post both, which is
+// every form that can actually create the problem.
+// Note the values compared here are already space-stripped by
+// parseAdminFields (foodbank.py:649-652 does that in save(), i.e. after
+// clean()), so "01234 567890" and "01234567890" are caught as the
+// duplicate they are about to become on disk.
+function phoneClashError(specs: readonly AdminFieldSpec[], values: Record<string, AdminFieldValue>): string | null {
+  const hasBoth = specs.some((s) => s.name === "phone_number") && specs.some((s) => s.name === "secondary_phone_number");
+  if (!hasBoth) return null;
+  if (values.phone_number && values.phone_number === values.secondary_phone_number) {
+    return "Phone number and secondary phone number can not be the same";
+  }
+  return null;
+}
+
 async function renderFoodbankForm(
   c: Context<AppEnv>,
-  opts: { title: string; fieldSpecs: typeof FOODBANK_FIELDS; slug: string; stampEdited: boolean; redirectSuffix?: string; showDelete?: boolean },
+  opts: { title: string; fieldSpecs: typeof FOODBANK_FIELDS; slug: string; stampEdited: boolean; showDelete?: boolean },
 ): Promise<Response> {
   const db = dbSession(c);
   const foodbank = await getFoodbankBySlug(db, opts.slug);
   if (!foodbank) return c.notFound();
+
+  // gfadmin/views.py:825-856 -- the `if request.POST:` branch has no
+  // else, so an invalid form falls through to the same render() with the
+  // BOUND form: every value the admin typed is still on the page, with
+  // the error beside it. A bare text/plain 400 threw all 30 away.
+  const renderForm = async (data: Record<string, unknown>, error: string | null) => {
+    const html = await render("admin/foodbank_form.njk", {
+      ...(await adminPageContext(c, "foodbanks")),
+      title: opts.title,
+      fields: opts.fieldSpecs,
+      foodbank: data,
+      show_proxy: true,
+      show_delete: opts.showDelete ?? false,
+      error,
+    });
+    return c.html(html, error ? 400 : 200);
+  };
 
   if (c.req.method === "POST") {
     const body = await c.req.parseBody();
@@ -21,9 +61,10 @@ async function renderFoodbankForm(
     if (!(await verifyCsrf(c, c.env.CSRF_SECRET, csrfToken))) return c.text("Forbidden", 403);
 
     const parsed = parseAdminFields(opts.fieldSpecs, body as Record<string, unknown>);
-    if (!parsed.ok) return c.text(parsed.error, 400);
+    const error = parsed.ok ? phoneClashError(opts.fieldSpecs, parsed.values) : parsed.error;
+    if (error) return renderForm({ ...foodbank, ...parsed.values }, error);
 
-    await updateFoodbankFields(db, foodbank.id, parsed.values, opts.stampEdited);
+    const newSlug = await updateFoodbankFields(db, foodbank.id, parsed.values, opts.stampEdited);
 
     // gfadmin/views.py:817-838 foodbank_form's ?discrepancy=<id> handling
     // -- the discrepancy page's embedded FoodbankForm posts back here with
@@ -37,18 +78,14 @@ async function renderFoodbankForm(
       return c.redirect("/admin/", 302);
     }
 
-    return c.redirect(`/admin/foodbank/${foodbank.slug}/${opts.redirectSuffix ?? ""}`, 302);
+    // views.py:836 `redirect("admin:foodbank", slug = foodbank.slug)` --
+    // the POST-SAVE slug. Foodbank.save() re-slugifies the name
+    // (foodbank.py:634), so a rename moves the record to a new URL and
+    // `foodbank.slug` read before the write is already stale.
+    return c.redirect(`/admin/foodbank/${newSlug ?? foodbank.slug}/`, 302);
   }
 
-  const html = await render("admin/foodbank_form.njk", {
-    ...(await adminPageContext(c, "foodbanks")),
-    title: opts.title,
-    fields: opts.fieldSpecs,
-    foodbank,
-    show_proxy: true,
-    show_delete: opts.showDelete ?? false,
-  });
-  return c.html(html);
+  return renderForm(foodbank as unknown as Record<string, unknown>, null);
 }
 
 // givefood/forms.py:58-70 FoodbankForm -- the full 30-field edit form.
@@ -64,19 +101,42 @@ export async function adminFoodbankEdit(c: Context<AppEnv>): Promise<Response> {
 export async function adminFoodbankNew(c: Context<AppEnv>): Promise<Response> {
   const db = dbSession(c);
 
+  // views.py:822 `page_title = "New Food Bank"`. The exact string is
+  // load-bearing, not cosmetic: admin/form.html:14 renders
+  // `class="form-{{ page_title|slugify }}"` and static/js/admin.js:105
+  // selects `.form-new-food-bank #id_name` to attach the live "'X' food
+  // bank already exists" duplicate check. "New Foodbank" slugified to
+  // `form-new-foodbank` and the checker never ran.
+  const title = "New Food Bank";
+  const renderForm = async (data: Record<string, unknown>, error: string | null) => {
+    const html = await render("admin/foodbank_form.njk", {
+      ...(await adminPageContext(c, "foodbanks")),
+      title,
+      fields: FOODBANK_FIELDS,
+      foodbank: data,
+      show_proxy: false,
+      error,
+    });
+    return c.html(html, error ? 400 : 200);
+  };
+
   if (c.req.method === "POST") {
     const body = await c.req.parseBody();
     const csrfToken = typeof body.csrf_token === "string" ? body.csrf_token : undefined;
     if (!(await verifyCsrf(c, c.env.CSRF_SECRET, csrfToken))) return c.text("Forbidden", 403);
 
     const parsed = parseAdminFields(FOODBANK_FIELDS, body as Record<string, unknown>);
-    if (!parsed.ok) return c.text(parsed.error, 400);
+    const error = parsed.ok ? phoneClashError(FOODBANK_FIELDS, parsed.values) : parsed.error;
+    if (error) return renderForm({ ...parsed.values }, error);
 
     let created: { id: number; slug: string };
     try {
       created = await insertFoodbank(db, parsed.values);
     } catch (err) {
-      return c.text(`Could not create food bank -- a food bank with this name may already exist (${err instanceof Error ? err.message : String(err)})`, 400);
+      return renderForm(
+        { ...parsed.values },
+        `Could not create food bank -- a food bank with this name may already exist (${err instanceof Error ? err.message : String(err)})`,
+      );
     }
     // gfadmin/views.py:817-858 foodbank_form redirects to `admin:foodbank`
     // (the detail page, WP 6.7) on success for both create and edit.
@@ -89,14 +149,7 @@ export async function adminFoodbankNew(c: Context<AppEnv>): Promise<Response> {
     if (value) initial[key] = value;
   }
 
-  const html = await render("admin/foodbank_form.njk", {
-    ...(await adminPageContext(c, "foodbanks")),
-    title: "New Foodbank",
-    fields: FOODBANK_FIELDS,
-    foodbank: initial,
-    show_proxy: false,
-  });
-  return c.html(html);
+  return renderForm(initial, null);
 }
 
 // gfadmin/views.py:1364 foodbank_delete, @require_POST.
@@ -120,13 +173,14 @@ export async function adminFoodbankDelete(c: Context<AppEnv>): Promise<Response>
 // real difference: no save() override, so `edited` is NOT stamped --
 // preserved verbatim per the maintainer's explicit decision (WP 6.5),
 // not "fixed" the way WP 6.3/6.4 fixed other Django defects this phase.
+// views.py:1383 redirects to `admin:foodbank` on success exactly like the
+// other six Foodbank form variants -- it does NOT re-open itself.
 export async function adminFoodbankPoliticsEdit(c: Context<AppEnv>): Promise<Response> {
   return renderFoodbankForm(c, {
     title: "Edit Foodbank Politics",
     fieldSpecs: FOODBANK_FIELDS,
     slug: c.req.param("slug")!,
     stampEdited: false,
-    redirectSuffix: "politics/edit/",
   });
 }
 

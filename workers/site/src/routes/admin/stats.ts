@@ -39,7 +39,23 @@ interface StatRow {
 // (order.ts:34, lists.ts:363). The underlying numbers are unchanged.
 const money = (pence: number) => `£${intcomma((pence / 100).toFixed(2))}`;
 const kg = (grams: number) => `${intcomma((grams / 1000).toFixed(2))} kg`;
-const decimal = (value: number) => intcomma(value.toFixed(2));
+
+// The Order Stats page is different, and must NOT be given the same fixed
+// 2dp: Django hands stats.html:21 bare Python floats there and |intcomma
+// with USE_L10N=True (settings.py:212) routes them through
+// number_format(force_grouping=True) -> numberformat.format with
+// decimal_pos=None, which is str(value) with the integer part grouped.
+// views.py:2433 `total_weight = total_weight / 1000` and :2437
+// `total_cost = float(total_cost) / 100` are unrounded true division, so
+// Django prints "200,123.456" and "12,345.6" where a .toFixed(2) prints
+// "200,123.46" (third decimal silently gone) and "12,345.60". JS String()
+// and Python repr() both emit the shortest round-tripping decimal, so they
+// produce the same digits for the same double.
+const pythonFloat = (value: number) => intcomma(String(value));
+
+// views.py:2434-2435 -- the one figure on that page Django DOES round
+// before str()ing it, so its trailing zeros drop too ("236,145.6").
+const roundedTo2dp = (value: number) => Number(value.toFixed(2));
 
 // lib/isoWeek.ts's parseD1Timestamp() appends a "Z" unconditionally, so a
 // value that already ends in "Z" becomes "...ZZ" -> Invalid Date -> a
@@ -175,12 +191,12 @@ export async function adminOrderStats(c: Context<AppEnv>): Promise<Response> {
   // pounds, and neither the label nor the value says so. Left exactly as
   // the maintainer wrote them rather than quietly relabelled.
   const rows: StatRow[] = [
-    { label: "Total Weight", value: decimal(weightKg), raw: true },
+    { label: "Total Weight", value: pythonFloat(weightKg), raw: true },
     { label: "Total Calories", value: stats.calories },
     { label: "Total Items", value: stats.items },
     { label: "Total Orders", value: stats.totalOrders },
-    { label: "Total Cost", value: decimal(stats.costPence / 100), raw: true },
-    { label: "Total Weight (inc. packaging)", value: decimal(weightKg * PACKAGING_WEIGHT_PC), raw: true }, // views.py:2434-2435
+    { label: "Total Cost", value: pythonFloat(stats.costPence / 100), raw: true },
+    { label: "Total Weight (inc. packaging)", value: pythonFloat(roundedTo2dp(weightKg * PACKAGING_WEIGHT_PC)), raw: true }, // views.py:2434-2435
   ];
 
   const html = await render("admin/stats.njk", {

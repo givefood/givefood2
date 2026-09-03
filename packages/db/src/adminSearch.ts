@@ -42,25 +42,63 @@ export const ADMIN_SEARCH_MIN_QUERY_LENGTH = 2;
 // character is several bytes on its own.
 const MAX_PATTERN_BYTES = 50;
 
+// The cap is real; REFUSING the search over it was not the right answer to
+// it. Django puts no length limit on `q` at all, and seven of the twelve
+// columns views.py:117-129 searches are URLs -- plus
+// WebPushSubscription.endpoint at views.py:206-207 -- i.e. fields whose
+// values are long BY CONSTRUCTION. Pasting a food bank's shopping-list URL
+// (55 characters) or a push endpoint (always well past the 48-character
+// ceiling the two `%` wrappers leave) is an ordinary thing to do on this
+// page, and it used to answer "That search is too long, try something
+// shorter" for a query Django searches fine.
+//
+// So an over-cap query switches from LIKE to instr(), which has NO pattern
+// length limit and is exactly equivalent here: SQLite's LIKE folds ASCII
+// case on both sides, which is precisely what instr() over lower() does,
+// and instr() takes its needle literally so `%`/`_`/`\` need no escaping.
+// LIKE is kept for the common short query rather than replaced outright,
+// because instr(lower(col), ...) materialises a lower() copy of every value
+// it scans and foodbankchange is 29.4 MB over 33,931 rows (PLAN.md §7.1).
+type MatchMode = "like" | "instr";
+
+// Nothing in D1 needs this -- instr() has no pattern limit. It exists so a
+// pathological paste (a whole document into the search box) still lands on
+// the page's existing "too long" message instead of being scanned for, and
+// it sits far beyond any real value: the longest thing anyone legitimately
+// searches here is a push endpoint, ~190 characters.
+const MAX_QUERY_LENGTH = 500;
+
 // Django's BaseDatabaseOperations.prep_for_like_query, which is what
 // `__icontains` runs its parameter through before handing it to the
-// database. Sibling of aac.ts's ftsPhrase(). Returns null when the escaped
-// pattern would exceed D1's byte cap, so the caller can decline to query
-// rather than let D1 throw.
+// database. Sibling of aac.ts's ftsPhrase(). LIKE mode only: instr() has no
+// pattern syntax to escape.
 function escapeLike(q: string): string {
   return q.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
 }
 
-function containsPattern(q: string): string | null {
-  const pattern = `%${escapeLike(q)}%`;
-  if (new TextEncoder().encode(pattern).length > MAX_PATTERN_BYTES) return null;
-  return pattern;
+// SQLite's lower() is ASCII-only, and so is the case folding its LIKE does.
+// A JS toLowerCase() needle would fold "Ä" to "ä" and then fail to find the
+// "Ä" that LIKE would have matched, so instr mode folds the same ASCII
+// range the database does and nothing else.
+function asciiLower(q: string): string {
+  return q.replace(/[A-Z]/g, (character) => character.toLowerCase());
 }
 
-// `col LIKE ?1 ESCAPE '\'` for each column, OR'd -- the shape a Django
+// `?1` is the substring test in both modes: a `%...%` pattern for LIKE, the
+// bare needle for instr.
+function containsSql(column: string, mode: MatchMode): string {
+  return mode === "like" ? `${column} LIKE ?1 ESCAPE '\\'` : `instr(lower(${column}), ?1) > 0`;
+}
+
+// One test per column, OR'd -- the shape a Django
 // `Q(a__icontains=q) | Q(b__icontains=q)` chain produces.
-function likeAnyOf(columns: readonly string[]): string {
-  return columns.map((column) => `${column} LIKE ?1 ESCAPE '\\'`).join(" OR ");
+function containsAnyOf(columns: readonly string[], mode: MatchMode): string {
+  return columns.map((column) => containsSql(column, mode)).join(" OR ");
+}
+
+// `?3`, the food bank ranking's prefix test. Same two modes.
+function startsWithSql(column: string, mode: MatchMode): string {
+  return mode === "like" ? `${column} LIKE ?3 ESCAPE '\\'` : `instr(lower(${column}), ?3) = 1`;
 }
 
 // gfadmin/views.py:118-129's twelve fields, in source order, plus alt_name.
@@ -204,19 +242,26 @@ function mapSubscriptions(
 }
 
 // Returns null when the query is unusable -- shorter than MIN_QUERY_LENGTH,
-// or over D1's LIKE-pattern byte cap -- so the route can render the guard
-// state without touching D1 at all.
+// or past MAX_QUERY_LENGTH -- so the route can render the guard state
+// without touching D1 at all. An over-50-byte pattern is NOT unusable: it
+// runs in instr mode.
 export async function searchAdmin(session: Session, rawQuery: string): Promise<AdminSearchResults | null> {
   const query = rawQuery.trim();
   if (query.length < ADMIN_SEARCH_MIN_QUERY_LENGTH) return null;
-  const like = containsPattern(query);
-  if (like === null) return null;
+  if (query.length > MAX_QUERY_LENGTH) return null;
+
+  const likePattern = `%${escapeLike(query)}%`;
+  const mode: MatchMode = new TextEncoder().encode(likePattern).length > MAX_PATTERN_BYTES ? "instr" : "like";
+  const needle = asciiLower(query);
+
   // ?2/?3 feed the food bank relevance ranking only. slug is lowercase by
   // construction (Foodbank.slug is slugify(name), foodbank.py:634), and
   // SQLite's lower() is ASCII-only, which is the same folding its LIKE
-  // already does.
+  // already does. ?3's LIKE pattern is one byte SHORTER than ?1's, so it
+  // can never overflow the cap on its own.
+  const contains = mode === "like" ? likePattern : needle;
   const exact = query.toLowerCase();
-  const prefix = `${escapeLike(query)}%`;
+  const prefix = mode === "like" ? `${escapeLike(query)}%` : needle;
 
   // One round trip for all eight statements -- the established read pattern
   // (foodbankDetail.ts:18-26). Every one of these is a full table scan by
@@ -232,14 +277,14 @@ export async function searchAdmin(session: Session, rawQuery: string): Promise<A
       .prepare(
         `SELECT name, slug, is_closed,
                 CASE WHEN slug = ?2 OR lower(name) = ?2 THEN 0
-                     WHEN slug LIKE ?3 ESCAPE '\\' OR name LIKE ?3 ESCAPE '\\' THEN 1
+                     WHEN ${startsWithSql("slug", mode)} OR ${startsWithSql("name", mode)} THEN 1
                      ELSE 2 END AS match_rank
          FROM foodbank
-         WHERE ${likeAnyOf(FOODBANK_SEARCH_COLUMNS)}
+         WHERE ${containsAnyOf(FOODBANK_SEARCH_COLUMNS, mode)}
          ORDER BY match_rank, is_closed, name
          LIMIT ${RESULT_LIMIT}`,
       )
-      .bind(like, exact, prefix),
+      .bind(contains, exact, prefix),
 
     // 2. LOCATIONS -- gfadmin/views.py:132-137. No is_closed filter (closed
     // rows DO appear, same as Django); the denormalised foodbank_name/
@@ -248,22 +293,22 @@ export async function searchAdmin(session: Session, rawQuery: string): Promise<A
       .prepare(
         `SELECT name, slug, foodbank_name, foodbank_slug, is_closed
          FROM foodbanklocation
-         WHERE ${likeAnyOf(LOCATION_SEARCH_COLUMNS)}
+         WHERE ${containsAnyOf(LOCATION_SEARCH_COLUMNS, mode)}
          ORDER BY is_closed, foodbank_name, name
          LIMIT ${RESULT_LIMIT}`,
       )
-      .bind(like),
+      .bind(contains),
 
     // 3. DONATION POINTS -- gfadmin/views.py:139-143.
     session
       .prepare(
         `SELECT name, slug, foodbank_name, foodbank_slug, is_closed
          FROM foodbankdonationpoint
-         WHERE ${likeAnyOf(DONATION_POINT_SEARCH_COLUMNS)}
+         WHERE ${containsAnyOf(DONATION_POINT_SEARCH_COLUMNS, mode)}
          ORDER BY is_closed, foodbank_name, name
          LIMIT ${RESULT_LIMIT}`,
       )
-      .bind(like),
+      .bind(contains),
 
     // 4. CONSTITUENCIES -- gfadmin/views.py:145-148. F9: explicit column
     // list, never SELECT * -- boundary_geojson runs to 1,568 kB per row
@@ -274,11 +319,11 @@ export async function searchAdmin(session: Session, rawQuery: string): Promise<A
       .prepare(
         `SELECT name, slug
          FROM parliamentaryconstituency
-         WHERE ${likeAnyOf(CONSTITUENCY_SEARCH_COLUMNS)}
+         WHERE ${containsAnyOf(CONSTITUENCY_SEARCH_COLUMNS, mode)}
          ORDER BY (name IS NULL), name
          LIMIT ${RESULT_LIMIT}`,
       )
-      .bind(like),
+      .bind(contains),
 
     // 5. NEEDS -- gfadmin/views.py:150-153. The only group Django orders,
     // and it orders by -created while the template displays `modified`;
@@ -290,11 +335,11 @@ export async function searchAdmin(session: Session, rawQuery: string): Promise<A
       .prepare(
         `SELECT need_id, foodbank_name, modified
          FROM foodbankchange
-         WHERE ${likeAnyOf(NEED_SEARCH_COLUMNS)}
+         WHERE ${containsAnyOf(NEED_SEARCH_COLUMNS, mode)}
          ORDER BY created DESC
          LIMIT ${RESULT_LIMIT}`,
       )
-      .bind(like),
+      .bind(contains),
 
     // 6. EMAIL SUBSCRIPTIONS -- gfadmin/views.py:159-172, confirmed only.
     // F7: the food bank slug comes from a JOIN, not from
@@ -306,11 +351,11 @@ export async function searchAdmin(session: Session, rawQuery: string): Promise<A
       .prepare(
         `SELECT s.email AS identifier, f.name AS foodbank_name, f.slug AS foodbank_slug
          FROM foodbanksubscriber s JOIN foodbank f ON f.id = s.foodbank_id
-         WHERE s.confirmed = 1 AND s.email LIKE ?1 ESCAPE '\\'
+         WHERE s.confirmed = 1 AND ${containsSql("s.email", mode)}
          ORDER BY s.created DESC
          LIMIT ${RESULT_LIMIT}`,
       )
-      .bind(like),
+      .bind(contains),
 
     // 7. MOBILE SUBSCRIPTIONS -- gfadmin/views.py:190-203. SQLite's
     // length()/substr() count CHARACTERS, matching Python's len()/[:20] at
@@ -325,11 +370,11 @@ export async function searchAdmin(session: Session, rawQuery: string): Promise<A
                  CASE WHEN length(s.device_id) > 20 THEN substr(s.device_id, 1, 20) || '...' ELSE s.device_id END) AS identifier,
                 f.name AS foodbank_name, f.slug AS foodbank_slug
          FROM mobilesubscriber s JOIN foodbank f ON f.id = s.foodbank_id
-         WHERE s.device_id LIKE ?1 ESCAPE '\\'
+         WHERE ${containsSql("s.device_id", mode)}
          ORDER BY s.created DESC
          LIMIT ${RESULT_LIMIT}`,
       )
-      .bind(like),
+      .bind(contains),
 
     // 8. WEBPUSH SUBSCRIPTIONS -- gfadmin/views.py:206-219. `sub.browser or
     // 'Unknown'` (views.py:215) is Python truthiness, so an EMPTY STRING is
@@ -340,11 +385,11 @@ export async function searchAdmin(session: Session, rawQuery: string): Promise<A
                  CASE WHEN length(s.endpoint) > 30 THEN substr(s.endpoint, 1, 30) || '...' ELSE s.endpoint END) AS identifier,
                 f.name AS foodbank_name, f.slug AS foodbank_slug
          FROM webpushsubscription s JOIN foodbank f ON f.id = s.foodbank_id
-         WHERE s.endpoint LIKE ?1 ESCAPE '\\'
+         WHERE ${containsSql("s.endpoint", mode)}
          ORDER BY s.created DESC
          LIMIT ${RESULT_LIMIT}`,
       )
-      .bind(like),
+      .bind(contains),
 
     // gfadmin/views.py:175-187's WhatsappSubscriber branch is NOT built: no
     // `whatsappsubscriber` table exists in D1 -- the same gap
@@ -352,7 +397,7 @@ export async function searchAdmin(session: Session, rawQuery: string): Promise<A
     // table ever lands, add
     //   SELECT s.phone_number AS identifier, f.name AS foodbank_name, f.slug AS foodbank_slug
     //   FROM whatsappsubscriber s JOIN foodbank f ON f.id = s.foodbank_id
-    //   WHERE s.phone_number LIKE ?1 ESCAPE '\' ORDER BY s.created DESC LIMIT 100
+    //   WHERE ${containsSql("s.phone_number", mode)} ORDER BY s.created DESC LIMIT 100
     // and splice it into `subscriptions` between email and mobile, matching
     // Django's own append order.
   ]);

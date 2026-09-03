@@ -30,6 +30,15 @@ import { adminPageContext } from "./pageContext";
 const PAGE_SIZE = 100;
 const PACKAGING_WEIGHT_PC = 1.18; // givefood/const/general.py:136 -- same constant as order.ts/lists.ts
 
+// givefood/models/orders.py:316 `name = models.CharField(max_length=100)`,
+// which OrderGroupForm rejects past with "Ensure this value has at most 100
+// characters". Nothing else in this port constrains it -- parseAdminFields
+// has no length rule and 0015_ordergroup.sql is a bare `name TEXT NOT NULL`
+// -- and the name is re-slugified into the donor-facing
+// /donate/managed/<slug>-<key>/ URL on every save. Same guard, and the same
+// reason for it, as items.ts's NAME_MAX_LENGTH.
+const NAME_MAX_LENGTH = 100;
+
 // Duplicated from routes/admin/lists.ts (module-private there, and that
 // file is shared with other work in flight) -- three small pure helpers,
 // not worth a new shared module.
@@ -138,6 +147,9 @@ export async function adminOrderGroupsList(c: Context<AppEnv>): Promise<Response
     })),
     row_actions: true,
     new_url: "/admin/order-groups/new/",
+    // order_groups.html:10 names the thing being created; list.njk falls back
+    // to a bare "New" only when a caller supplies no label.
+    new_label: "New Order Group",
   });
   return c.html(html);
 }
@@ -198,6 +210,9 @@ export async function adminOrderGroupForm(c: Context<AppEnv>): Promise<Response>
     const parsed = parseAdminFields(ORDER_GROUP_FIELDS, body as Record<string, unknown>);
     if (!parsed.ok) return c.text(parsed.error, 400);
 
+    const name = String(parsed.values.name);
+    if (name.length > NAME_MAX_LENGTH) return c.text(`Name must be ${NAME_MAX_LENGTH} characters or fewer`, 400);
+
     const isPublic = Number(parsed.values.public);
     let key = parsed.values.key === null ? null : String(parsed.values.key);
     if (key !== null && !KEY_RE.test(key)) return c.text("Key must be 1-8 letters or digits, with no hyphens or underscores", 400);
@@ -212,7 +227,7 @@ export async function adminOrderGroupForm(c: Context<AppEnv>): Promise<Response>
     // all gets one, rather than a public URL that cannot be built.
     if (isPublic === 1 && !key) key = generateKey();
 
-    const result = await upsertOrderGroup(db, { name: String(parsed.values.name), public: isPublic, key }, existing?.id);
+    const result = await upsertOrderGroup(db, { name, public: isPublic, key }, existing?.id);
     if (!result.ok) return c.text(result.error, 400);
 
     return c.redirect("/admin/order-groups/", 302); // views.py:2823 redirect("admin:order_groups")

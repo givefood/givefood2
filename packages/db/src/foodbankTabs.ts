@@ -14,6 +14,31 @@ export function parseD1Timestamp(value: string): number {
   return new Date(`${value.replace(/Z$/, "")}Z`).getTime();
 }
 
+// Python's str(timedelta) -- what Django actually prints for
+// CrawlSet.time_taken() (givefood/models/analytics.py:43-47, which already
+// rounds to whole seconds) in BOTH templates
+// (admin/crawl_sets.html:57, admin/crawl_set.html:30) and in the JSON the
+// detail page polls (gfadmin/views.py:3317
+// `"time_taken": str(crawl_set.time_taken())`). That is "0:04:32" /
+// "2:14:07" / "1 day, 2:03:04", never raw fractional seconds -- a
+// multi-hour `need` crawl printed as "8047.219 s" made the admin do the
+// conversion in their head. One helper for all three call sites so the SSR
+// row and the poll that overwrites it can never disagree.
+//
+// Math.floor is Python's floor division, so a negative duration borrows a
+// day the way timedelta does ("-1 day, 23:59:59") instead of printing
+// "-0:00:01". Math.round is half-up where Python's round() is half-to-even;
+// they differ only on an exact .5 of a second.
+export function formatTimedelta(milliseconds: number): string {
+  const totalSeconds = Math.round(milliseconds / 1000);
+  const days = Math.floor(totalSeconds / 86400);
+  const rest = totalSeconds - days * 86400;
+  const clock = `${Math.floor(rest / 3600)}:${String(Math.floor((rest % 3600) / 60)).padStart(2, "0")}:${String(rest % 60).padStart(2, "0")}`;
+  if (days === 0) return clock;
+  // timedelta uses the singular for exactly one day, either sign.
+  return `${days} day${Math.abs(days) === 1 ? "" : "s"}, ${clock}`;
+}
+
 // WP 6.7: the foodbank detail page's lazy tabs (gfadmin/views.py's
 // foodbank_needsorders_tab/foodbank_articles_tab/foodbank_subscribers_tab/
 // foodbank_crawls_tab data-builders, plus the crawl-set JSON polling
@@ -101,8 +126,8 @@ export interface SubscribersTabData {
   all_subscriptions: AllSubscriptionRow[];
 }
 
-const DEVICE_ID_TRUNCATE_LENGTH = 8;
-const ENDPOINT_TRUNCATE_LENGTH = 40;
+const DEVICE_ID_TRUNCATE_LENGTH = 20; // gfadmin/views.py:42
+const ENDPOINT_TRUNCATE_LENGTH = 30; // gfadmin/views.py:43
 
 function truncateWithEllipsis(value: string, length: number): string {
   return value.length > length ? `${value.slice(0, length)}...` : value;
@@ -187,6 +212,16 @@ export async function getCrawlItemsForFoodbankTab(session: Session, foodbankId: 
 // already collapses Django's generic FK to FoodbankChange down to a plain
 // column (0008_needcheck.sql's own comment), so "object_id" here is just
 // need_id.
+//
+// The `(ci.need_id IS NULL)` leading key emulates Postgres, NOT a
+// re-ordering. Django runs on Postgres (givefood/settings.py:141), where an
+// ASC sort puts NULLs LAST, so views.py:3273's order_by("object_id",
+// "-start") floats the crawl items that actually produced a need to the TOP
+// of the table and leaves the (far more numerous) items that found nothing
+// below them. SQLite sorts NULLs FIRST, which buried the only interesting
+// rows on a several-hundred-row `need` crawl past the end of the first
+// screenful -- in the SSR table and, identically, in the poll that
+// re-renders it.
 export interface CrawlSetJson {
   crawl_type: string;
   start: string;
@@ -217,7 +252,7 @@ export async function getCrawlSetJson(session: Session, crawlSetId: number): Pro
        JOIN foodbank f ON f.id = ci.foodbank_id
        LEFT JOIN foodbankchange fc ON fc.id = ci.need_id
        WHERE ci.crawl_set_id = ?
-       ORDER BY ci.need_id, ci.start DESC`,
+       ORDER BY (ci.need_id IS NULL), ci.need_id, ci.start DESC`,
     )
     .bind(crawlSetId)
     .all<{
@@ -263,7 +298,10 @@ export async function getCrawlSetJson(session: Session, crawlSetId: number): Pro
   // produced a linked object (a need), not merely items that finished
   // running; `item_count` is every item regardless of outcome.
   const objectCount = items.results.filter((i) => i.need_id !== null).length;
-  const timeTaken = crawlSet.finish ? String((parseD1Timestamp(crawlSet.finish) - parseD1Timestamp(crawlSet.start)) / 1000) : null;
+  // views.py:3317 -- str(timedelta), the SAME string the two templates
+  // render, so the value the poll writes into the Time Taken row is
+  // indistinguishable from a server-rendered one.
+  const timeTaken = crawlSet.finish ? formatTimedelta(parseD1Timestamp(crawlSet.finish) - parseD1Timestamp(crawlSet.start)) : null;
 
   return {
     crawl_type: crawlSet.crawl_type,

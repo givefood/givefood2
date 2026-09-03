@@ -15,9 +15,14 @@
     with no server-side dedupe; the insert now uses ON CONFLICT DO NOTHING,
     so a double submit is harmless.
   - A results report, which Django cannot have: it 302s on success
-    (views.py:1609), so it can never tell you what happened.
+    (views.py:1609), so it can never tell you what happened. Its four
+    numbers are exhaustive: added + already subscribed + repeated + rejected
+    is the number of non-blank lines pasted, so the operator can check the
+    total. `repeated` is only rendered when it is non-zero.
   - An explicit consent warning, because confirmed=True (views.py:1606)
-    bypasses the double opt-in the public sign-up form enforces.
+    bypasses the double opt-in the public sign-up form enforces. That is
+    the intended manual escape hatch there, not an accident -- the warning
+    on the page says what it means for the operator without citing this.
 #}
 
 {% block title %}Add Subscribers{% endblock %}
@@ -33,6 +38,10 @@
     <div class="notification is-light" style="margin-top:16px">
       <strong>{{ results.added }} added</strong>,
       {{ results.already }} already subscribed,
+      {# routes/admin/foodbankAddSub.ts drops an address repeated within one paste before
+         it ever reaches the insert, so without this clause those lines land in no bucket
+         and the four numbers no longer account for every line submitted. #}
+      {% if results.duplicates %}{{ results.duplicates }} repeated in your paste,{% endif %}
       {{ results.invalid_total }} rejected.
       {% if results.invalid.length %}
       <ul style="margin-top:8px">
@@ -62,8 +71,7 @@
       <div class="notification is-warning is-light is-size-7">
         These subscribers are created <strong>already confirmed</strong> &mdash; they skip the
         double opt-in the public sign-up form requires. Only paste addresses you have consent
-        for. (<code>gfadmin/views.py:1606</code> sets <code>confirmed = True</code>; this is the
-        intended manual escape hatch, not an accident.)
+        for.
       </div>
 
       <div class="field">

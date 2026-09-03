@@ -1,11 +1,18 @@
 {# gfadmin/templates/admin/items.html -- the OrderItem list.
 
    Its own template rather than admin/list.njk + renderList(): Django's page
-   labels its button "New Item" (not list.njk's generic "New"), titles the
-   page "Items" with no row count, and has no CSV/filter controls at all, so
-   it fits none of list.njk's variable bits and would have meant bending the
-   shared template for one caller. The pagination block and table classes
-   below are copied from list.njk so the two pages still look identical.
+   labels its button "New Item" (not list.njk's generic "New") and has no
+   CSV/filter controls at all, so it fits none of list.njk's variable bits
+   and would have meant bending the shared template for one caller. The
+   pagination block and table classes below are copied from list.njk so the
+   two pages still look identical.
+
+   The row count in the h1, the "None" row and the pagination nav are the
+   port's standard list-page additions -- see admin/list.njk, whose
+   `{{ title }} ({{ total }})` shape this deliberately mirrors, and
+   slug_redirects.njk:7-9, which says the same. Django's heading is a bare
+   `<h2>Items</h2>` (items.html:8) with no count, because its table is
+   unpaginated.
 
    Django's items.html `{% load humanize %}` is loaded but NEVER applied --
    neither cell goes through |intcomma -- so calories renders raw here too.

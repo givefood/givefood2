@@ -36,7 +36,9 @@ export async function adminSearch(c: Context<AppEnv>): Promise<Response> {
     q: query,
     searched: query.length > 0,
     // searchAdmin() returns null for either query it declines to run --
-    // under two characters, or a LIKE pattern over D1's 50-byte cap (F3/F4).
+    // under two characters, or longer than adminSearch.ts's 500-character
+    // sanity cap. An over-50-byte LIKE pattern is NOT refused any more -- it
+    // runs in instr() mode, so URL and push-endpoint searches work here too.
     // The two get different messages, so the short case is recognised here
     // and anything else null must be the over-length one; the byte
     // measurement itself stays in packages/db next to the patterns it

@@ -11,7 +11,10 @@
       <form action="/admin/search/" method="get" role="search" aria-label="Search">
         <div class="field has-addons">
           <div class="control">
-            <input class="input" type="text" name="q" value="{{ q }}" aria-label="Search query" autofocus>
+            {# No autofocus: search.html:12 has none, and adding one puts the caret in this
+               box on every results page, fighting the browser's own scroll/focus
+               restoration when you come back from a result. #}
+            <input class="input" type="text" name="q" value="{{ q }}" aria-label="Search query">
           </div>
           <div class="control">
             <button class="button is-info is-light">Search</button>
@@ -34,8 +37,10 @@
     {% elif too_short %}
       <div class="column"><p>Search for at least {{ min_query_length }} characters.</p></div>
     {% elif too_long %}
-      {# D1 caps LIKE patterns at 50 bytes (PLAN.md line 10198) -- an
-         over-long query would throw rather than return nothing. #}
+      {# Only a pathological paste reaches this now (500+ characters): an
+         over-50-byte LIKE pattern runs in instr() mode instead (see
+         packages/db/src/adminSearch.ts), so the URL and push-endpoint searches
+         Django supports are no longer rejected. #}
       <div class="column"><p>That search is too long, try something shorter.</p></div>
     {% elif results.total == 0 %}
       {# search.html:26-30, copied verbatim. #}

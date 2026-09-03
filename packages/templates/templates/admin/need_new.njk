@@ -39,26 +39,57 @@
     <form method="post" action="">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 
+      {# givefood/forms.py:232 -- `foodbank = ModelChoiceField(queryset=
+         Foodbank.objects.filter().order_by('name'))`, i.e. a <select> the
+         admin picks by NAME. A bare slug box meant anyone arriving here
+         without a `?foodbank=` seed had to already know the exact slug, and
+         a typo only surfaced as an error after submitting. Still a text
+         input rather than Django's <select> -- that queryset is unscoped
+         (~1,000+ options, open and closed alike) and a `?foodbank=` seed has
+         to survive even for a food bank the list does not carry -- but now
+         backed by a datalist of name -> slug pairs, so the food bank is once
+         again selectable by the name the caller gives on the phone. The list
+         holds OPEN food banks only (getOpenFoodbankOptions); a closed one is
+         still reachable by typing its slug, which is exactly why this stays
+         free text and not a <select>. #}
       <div class="field">
-        <label class="label">Food Bank Slug</label>
+        <label class="label" for="id_foodbank">Food Bank Slug</label>
         <div class="control">
-          <input class="input" type="text" name="foodbank_slug" value="{{ form.foodbank_slug }}" placeholder="(none)">
+          <input class="input" type="text" id="id_foodbank" name="foodbank_slug" value="{{ form.foodbank_slug }}" placeholder="(none)" list="foodbank_slugs" autocomplete="off">
+          <datalist id="foodbank_slugs">
+            {% for option in foodbank_options %}
+            <option value="{{ option.slug }}">{{ option.name }}</option>
+            {% endfor %}
+          </datalist>
         </div>
-        <p class="help">Leave blank to leave this need unassigned to any food bank. A need cannot be published without one.</p>
+        <p class="help">Start typing a food bank&rsquo;s name to pick it from the list. Leave blank to leave this need unassigned to any food bank. A need cannot be published without one.</p>
       </div>
 
+      {# Labels are the model's explicit verbose_names (givefood/models/needs.py:64
+         "Shopping List" and :67 "Excess Items"), which is what bulma/forms/
+         field.html renders as `{{ field.label }}`.
+
+         The two ids are load-bearing, not cosmetic: static/js/admin.js:103-104
+         selects these textareas as `#id_change_text` / `#id_excess_change_text`
+         and initChangeTextButtons() (admin.js:408-409) returns at its first
+         line when the first is missing, so without them the "Make Titlecase",
+         "CSV to Lines" and "Find & Replace" buttons are never injected. Same
+         rule as includes/formfields.njk:5-14.
+
+         `required` matches needs.py:64: change_text has no blank=True, so
+         NeedForm builds a required field. Server-side check in needNew.ts. #}
       <div class="field">
-        <label class="label">Needs</label>
+        <label class="label" for="id_change_text">Shopping List</label>
         <div class="control">
-          <textarea class="textarea" name="change_text" rows="6">{{ form.change_text }}</textarea>
+          <textarea class="textarea" id="id_change_text" name="change_text" rows="6" required>{{ form.change_text }}</textarea>
         </div>
         <p class="help">One item per line.</p>
       </div>
 
       <div class="field">
-        <label class="label">Excess</label>
+        <label class="label" for="id_excess_change_text">Excess Items</label>
         <div class="control">
-          <textarea class="textarea" name="excess_change_text" rows="6">{{ form.excess_change_text }}</textarea>
+          <textarea class="textarea" id="id_excess_change_text" name="excess_change_text" rows="6">{{ form.excess_change_text }}</textarea>
         </div>
       </div>
 

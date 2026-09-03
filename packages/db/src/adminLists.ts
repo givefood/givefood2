@@ -32,24 +32,35 @@ function totalPages(total: number, pageSize: number): number {
 }
 
 // gfadmin/views.py:234-314 foodbanks() -- `exclude(is_closed=True)`
-// matches Django's default view exactly. Sort allowlist trimmed from
-// Django's 20 options to the ones an admin actually triages by; anything
-// outside this list falls back to `edited` rather than Django's 403 --
-// an unrecognised `?sort=` shouldn't break the page.
+// matches Django's default view exactly.
+//
+// Django's own sort_options (views.py:236-257) is 20 entries: 10 fields,
+// each in BOTH directions ("name" and "-name"), applied raw by
+// `.order_by(sort)` at views.py:303. So Django's default, `edited`, is
+// ASCENDING -- least-recently-edited food bank first. That is the point
+// of the page: it is the triage queue foodbanks_next (views.py:361-366,
+// `.order_by("edited").first()`) and the dashboard's oldest-edit panel
+// both point into, and showing it newest-first would bury exactly the
+// rows an admin came for. Direction is carried as its own argument here
+// (see getFoodbanksPage) instead of being folded into the key, so this
+// list is Django's 10 fields in Django's order, plus postcode/country/
+// network, which this port's column headers also sort by. Anything
+// outside it falls back to `edited` rather than Django's 403 -- an
+// unrecognised `?sort=` shouldn't break the page.
 export const FOODBANK_LIST_SORTS = [
   "name",
+  "last_order",
+  "last_need",
+  "created",
+  "modified",
+  "edited",
+  "no_locations",
+  "no_donation_points",
+  "last_need_check",
+  "hits_last_28_days",
   "postcode",
   "country",
   "network",
-  "edited",
-  "created",
-  "modified",
-  "no_locations",
-  "no_donation_points",
-  "last_order",
-  "last_need",
-  "last_need_check",
-  "hits_last_28_days",
 ] as const;
 export type FoodbankListSort = (typeof FOODBANK_LIST_SORTS)[number];
 
@@ -61,7 +72,13 @@ export interface FoodbankListRow extends FoodbankRow {
 // correlated subquery, same shape as Django's own (a join would double-
 // count once summed), coalesced to 0 so a food bank with zero recent hits
 // still sorts/displays as 0, not NULL.
-export async function getFoodbanksPage(session: Session, sort: FoodbankListSort, page: number, pageSize: number): Promise<PageResult<FoodbankListRow>> {
+export async function getFoodbanksPage(
+  session: Session,
+  sort: FoodbankListSort,
+  direction: "asc" | "desc",
+  page: number,
+  pageSize: number,
+): Promise<PageResult<FoodbankListRow>> {
   const offset = (page - 1) * pageSize;
   const cutoff = new Date(Date.now() - 28 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
   const [countRow, result] = await Promise.all([
@@ -74,7 +91,7 @@ export async function getFoodbanksPage(session: Session, sort: FoodbankListSort,
         // the source table -- a `f.` prefix would work for the former but
         // is invalid SQL for the latter (it isn't a column on `f`).
         `SELECT f.*, COALESCE((SELECT SUM(hits) FROM foodbankhit WHERE foodbank_id = f.id AND day >= ?1), 0) AS hits_last_28_days
-         FROM foodbank f WHERE f.is_closed = 0 ORDER BY ${sort} DESC LIMIT ?2 OFFSET ?3`,
+         FROM foodbank f WHERE f.is_closed = 0 ORDER BY ${sort} ${direction === "desc" ? "DESC" : "ASC"} LIMIT ?2 OFFSET ?3`,
       )
       .bind(cutoff, pageSize, offset)
       .all(),
@@ -99,22 +116,37 @@ export async function getAllFoodbanksForCsv(session: Session): Promise<FoodbankR
 }
 
 // gfadmin/views.py:2138-2220 locations()/donationpoints() -- no filter,
-// full table in Django; sort allowlist trimmed the same way as foodbanks.
+// full table in Django.
 // gfadmin/views.py:2138-2150's own sort_options list, verbatim --
 // "parliamentary_constituency" is the sort key Django exposes but the
 // column actually sorted/displayed is parliamentary_constituency_name
 // (Django's model field is a differently-named FK; this schema only ever
 // kept the denormalised name column, so that's what both sorts and
 // displays here).
+//
+// Neither view's sort_options carries a "-" variant and both apply the
+// raw key with `.order_by(sort)` (views.py:2150, :2231), so every sort
+// Django exposes on these two pages is ASCENDING: locations open A->Z by
+// food bank name, donation points A->Z by name. Direction is still a
+// parameter here so the column headers can offer the reverse.
 export const LOCATION_LIST_SORTS = ["foodbank_name", "name", "parliamentary_constituency", "edited"] as const;
 export type LocationListSort = (typeof LOCATION_LIST_SORTS)[number];
 
-export async function getLocationsPage(session: Session, sort: LocationListSort, page: number, pageSize: number): Promise<PageResult<FoodbankLocationRow>> {
+export async function getLocationsPage(
+  session: Session,
+  sort: LocationListSort,
+  direction: "asc" | "desc",
+  page: number,
+  pageSize: number,
+): Promise<PageResult<FoodbankLocationRow>> {
   const offset = (page - 1) * pageSize;
   const sortColumn = sort === "parliamentary_constituency" ? "parliamentary_constituency_name" : sort;
   const [countRow, result] = await Promise.all([
     session.prepare("SELECT COUNT(*) AS n FROM foodbanklocation").first<{ n: number }>(),
-    session.prepare(`SELECT * FROM foodbanklocation ORDER BY ${sortColumn} DESC LIMIT ? OFFSET ?`).bind(pageSize, offset).all(),
+    session
+      .prepare(`SELECT * FROM foodbanklocation ORDER BY ${sortColumn} ${direction === "desc" ? "DESC" : "ASC"} LIMIT ? OFFSET ?`)
+      .bind(pageSize, offset)
+      .all(),
   ]);
   const total = countRow?.n ?? 0;
   return { rows: result.results.map((r) => mapLocationRow(r as Record<string, unknown>)), total, page, pageSize, hasNext: offset + pageSize < total };
@@ -123,11 +155,20 @@ export async function getLocationsPage(session: Session, sort: LocationListSort,
 export const DONATION_POINT_LIST_SORTS = ["name", "foodbank_name", "edited"] as const;
 export type DonationPointListSort = (typeof DONATION_POINT_LIST_SORTS)[number];
 
-export async function getDonationPointsPage(session: Session, sort: DonationPointListSort, page: number, pageSize: number): Promise<PageResult<DonationPointRow>> {
+export async function getDonationPointsPage(
+  session: Session,
+  sort: DonationPointListSort,
+  direction: "asc" | "desc",
+  page: number,
+  pageSize: number,
+): Promise<PageResult<DonationPointRow>> {
   const offset = (page - 1) * pageSize;
   const [countRow, result] = await Promise.all([
     session.prepare("SELECT COUNT(*) AS n FROM foodbankdonationpoint").first<{ n: number }>(),
-    session.prepare(`SELECT * FROM foodbankdonationpoint ORDER BY ${sort} DESC LIMIT ? OFFSET ?`).bind(pageSize, offset).all(),
+    session
+      .prepare(`SELECT * FROM foodbankdonationpoint ORDER BY ${sort} ${direction === "desc" ? "DESC" : "ASC"} LIMIT ? OFFSET ?`)
+      .bind(pageSize, offset)
+      .all(),
   ]);
   const total = countRow?.n ?? 0;
   return { rows: result.results.map((r) => mapDonationPointRow(r as Record<string, unknown>)), total, page, pageSize, hasNext: offset + pageSize < total };
@@ -212,10 +253,12 @@ export interface OrderListRow {
   actual_cost: number | null;
 }
 
-// gfadmin/views.py:371-386's own sort_options list, verbatim -- always
-// applied descending (Django prepends "-" unconditionally), matching this
-// list's own established convention of always-descending sort (same as
-// foodbanks/locations/donationpoints above).
+// gfadmin/views.py:371-386's own sort_options list, verbatim -- and this
+// is the ONE list Django always sorts descending: views.py:382-383 does
+// `sort_string = sort` then `sort = "-%s" % (sort)`, so whichever option
+// the admin picks is applied with a "-" in front of it. No direction
+// argument here for that reason (unlike foodbanks/locations/
+// donationpoints above, whose views apply the raw key ascending).
 export const ORDER_LIST_SORTS = ["delivery_datetime", "created", "no_items", "weight", "calories", "cost"] as const;
 export type OrderListSort = (typeof ORDER_LIST_SORTS)[number];
 
@@ -293,14 +336,17 @@ export async function toggleArticleFeatured(session: Session, articleId: number)
 // row page is "load them all" with extra steps); real LIMIT/OFFSET here.
 // `place` (migrations/0009_aac.sql) was deliberately trimmed to read-only
 // columns per §4.8.7 (WP 6.5b's own note on why PlaceForm is deferred),
-// but `name`/`county`/`population` -- the 3 sortable fields -- all
-// survived the trim, so a read-only paginated list needs nothing new.
+// but that trim kept `lat_lng` alongside `name`/`county`/`population`
+// (0009_aac.sql:16), so 4 of the 5 data cells places.html:37-41 renders
+// are available here. Only Django's `type` column (Place.type,
+// givefood/models/geo.py:27) has no D1 counterpart.
 export const PLACE_LIST_SORTS = ["name", "county", "population"] as const;
 export type PlaceListSort = (typeof PLACE_LIST_SORTS)[number];
 
 export interface PlaceListRow {
   id: number;
   name: string | null;
+  lat_lng: string | null;
   county: string | null;
   population: number | null;
 }
@@ -310,7 +356,7 @@ export async function getPlacesPage(session: Session, sort: PlaceListSort, direc
   const [countRow, result] = await Promise.all([
     session.prepare("SELECT COUNT(*) AS n FROM place").first<{ n: number }>(),
     session
-      .prepare(`SELECT id, name, county, population FROM place ORDER BY ${sort} ${direction === "desc" ? "DESC" : "ASC"} LIMIT ? OFFSET ?`)
+      .prepare(`SELECT id, name, lat_lng, county, population FROM place ORDER BY ${sort} ${direction === "desc" ? "DESC" : "ASC"} LIMIT ? OFFSET ?`)
       .bind(pageSize, offset)
       .all<PlaceListRow>(),
   ]);
@@ -348,15 +394,32 @@ function subscriptionUnionSql(subType: SubscriptionType): string {
        FROM foodbanksubscriber s JOIN foodbank f ON f.id = s.foodbank_id WHERE s.confirmed = 1`,
     );
   }
+  // The identifier strings are Django's exactly, same as adminSearch.ts's
+  // copies of them: views.py:2940/:2960 append "..." only when the value
+  // was actually cut (DEVICE_ID_TRUNCATE_LENGTH = 20,
+  // ENDPOINT_TRUNCATE_LENGTH = 30 at views.py:42-43), and SQLite's
+  // length()/substr() count characters, matching Python's len()/[:20].
+  // Without the conditional a clipped endpoint reads as if it were the
+  // whole value, on the page whose job is identifying a row before
+  // deleting it.
   if (subType === "all" || subType === "mobile") {
     branches.push(
-      `SELECT 'mobile' AS type, (s.platform || ' - ' || substr(s.device_id, 1, 20)) AS identifier, f.name AS foodbank_name, f.slug AS foodbank_slug, s.created AS created, CAST(s.id AS TEXT) AS row_id
+      `SELECT 'mobile' AS type,
+              (s.platform || ' - ' ||
+               CASE WHEN length(s.device_id) > 20 THEN substr(s.device_id, 1, 20) || '...' ELSE s.device_id END) AS identifier,
+              f.name AS foodbank_name, f.slug AS foodbank_slug, s.created AS created, CAST(s.id AS TEXT) AS row_id
        FROM mobilesubscriber s JOIN foodbank f ON f.id = s.foodbank_id`,
     );
   }
   if (subType === "all" || subType === "webpush") {
+    // `sub.browser or 'Unknown'` (views.py:2964) is Python truthiness, so
+    // an EMPTY STRING is 'Unknown' too -- a bare COALESCE would not be,
+    // hence the CASE (adminSearch.ts's webpush branch says the same).
     branches.push(
-      `SELECT 'webpush' AS type, (COALESCE(s.browser, 'Unknown') || ' - ' || substr(s.endpoint, 1, 30)) AS identifier, f.name AS foodbank_name, f.slug AS foodbank_slug, s.created AS created, CAST(s.id AS TEXT) AS row_id
+      `SELECT 'webpush' AS type,
+              (CASE WHEN s.browser IS NULL OR s.browser = '' THEN 'Unknown' ELSE s.browser END || ' - ' ||
+               CASE WHEN length(s.endpoint) > 30 THEN substr(s.endpoint, 1, 30) || '...' ELSE s.endpoint END) AS identifier,
+              f.name AS foodbank_name, f.slug AS foodbank_slug, s.created AS created, CAST(s.id AS TEXT) AS row_id
        FROM webpushsubscription s JOIN foodbank f ON f.id = s.foodbank_id`,
     );
   }

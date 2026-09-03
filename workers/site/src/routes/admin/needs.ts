@@ -248,13 +248,32 @@ export async function adminNeedCategorise(c: Context<AppEnv>): Promise<Response>
     if (!(await verifyCsrf(c, c.env.CSRF_SECRET, csrfToken))) return c.text("Forbidden", 403);
     if (need.foodbank_id === null) return c.text("Cannot categorise a need with no food bank set", 400);
 
+    // Driven off `orig_item_N` -- the hidden field holding the text the row
+    // was RENDERED with. That is Django's lookup key: views.py:2071-2074
+    // binds NeedLineForm with `prefix=line` and
+    // `instance=existing_need_lines.get(line)`, both keyed on the original
+    // change_text line. `item_N` is now the editable box beside it
+    // (need_categorise.njk; NeedLineForm leaves `item` a plain TextInput) and
+    // may carry a correction. Falling back to `item_N` keeps a page served
+    // before `orig_item_N` existed from breaking out at i=0 and categorising
+    // nothing.
     for (let i = 0; ; i++) {
-      const item = body[`item_${i}`];
-      if (item === undefined) break;
+      const origItem = body[`orig_item_${i}`] ?? body[`item_${i}`];
+      if (origItem === undefined) break;
+      const edited = body[`item_${i}`];
       const type = body[`type_${i}`];
       const category = body[`category_${i}`];
-      if (typeof item !== "string" || typeof type !== "string" || typeof category !== "string" || !category) continue;
+      if (typeof origItem !== "string" || typeof type !== "string" || typeof category !== "string" || !category) continue;
       if (type !== "need" && type !== "excess") continue;
+      // A cleared box is not a rename -- keep what was rendered.
+      const item = typeof edited === "string" && edited !== "" ? edited : origItem;
+      // KNOWN GAP until upsertNeedLine takes the original as its lookup key
+      // (packages/db/src/needLines.ts, in the WP wiring notes): it matches on
+      // `item`, so re-categorising a need AND correcting a line's text inserts
+      // a second row rather than renaming the existing one in place, which is
+      // what `instance=need_line` does. First-time categorisation -- the
+      // common case, and every case where the text is left alone -- is
+      // unaffected.
       await upsertNeedLine(db, { needId: need.id, foodbankId: need.foodbank_id, needCreated: need.created, item, type, category });
     }
     await setNeedCategorised(db, need.need_id);

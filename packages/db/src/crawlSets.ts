@@ -1,5 +1,5 @@
 import type { Session } from "./types";
-import { parseD1Timestamp } from "./foodbankTabs";
+import { formatTimedelta, parseD1Timestamp } from "./foodbankTabs";
 
 // gfadmin/views.py:3228-3280 crawl_sets() / crawl_set() -- the two HTML
 // pages behind the admin navbar's "Crawls" item. The JSON endpoint they poll
@@ -24,7 +24,7 @@ export interface CrawlSetListRow {
   crawl_type: string;
   start: string;
   finish: string | null;
-  time_taken_seconds: number | null;
+  time_taken: string | null;
   item_count: number;
   object_count: number;
 }
@@ -50,13 +50,14 @@ export async function getCrawlSets(session: Session, crawlType: CrawlTypeOption 
   const result = await session
     .prepare(`${CRAWL_SET_LIST_SQL} ${where} ORDER BY cs.start DESC LIMIT ?`)
     .bind(...binds)
-    .all<Omit<CrawlSetListRow, "time_taken_seconds">>();
+    .all<Omit<CrawlSetListRow, "time_taken">>();
   return result.results.map((r) => ({
     ...r,
-    // CrawlSet.time_taken() is a timedelta Django renders as its str() --
-    // seconds here, formatted at the template edge, same as the JSON
-    // endpoint's own `time_taken`.
-    time_taken_seconds: r.finish ? (parseD1Timestamp(r.finish) - parseD1Timestamp(r.start)) / 1000 : null,
+    // CrawlSet.time_taken() is a timedelta Django renders as its str()
+    // ("0:04:32"), so it is formatted here rather than handed to the route
+    // as a number -- one helper shared with the JSON endpoint's own
+    // `time_taken`, which is the same string in Django too.
+    time_taken: r.finish ? formatTimedelta(parseD1Timestamp(r.finish) - parseD1Timestamp(r.start)) : null,
   }));
 }
 

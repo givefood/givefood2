@@ -10,7 +10,9 @@
 
     <dl>
       <dt>Crawl Type</dt>
-      <dd>{{ crawl_set.crawl_type_icon | safe }} {{ crawl_set.crawl_type }}</dd>
+      {# crawl_set.html:16 is the bare type, no icon -- the crawl-type glyph
+         belongs to the LIST page only (crawl_sets.html:43). #}
+      <dd>{{ crawl_set.crawl_type }}</dd>
       <dt>Start</dt>
       <dd>{{ crawl_set.start|date("N j, Y, P") }}</dd>
       <dt>Finish</dt>
@@ -147,12 +149,17 @@
               objLink.href = item.object.url;
               objLink.textContent = item.object.need_id_short;
               tdObject.appendChild(objLink);
+              // crawl_set.html:178-192 -- exactly ONE <br> after the link,
+              // then both flags on that second line. Emitting a <br> per
+              // flag instead (and none at all with no flags) made rows
+              // reflow every time the poll ticked, then snap back to this
+              // shape on the next full page load. The trailing space is
+              // what the SSR branch above gets from its own newline.
+              tdObject.appendChild(document.createElement("br"));
               if (item.object.nonpertinent) {
-                tdObject.appendChild(document.createElement("br"));
-                tdObject.appendChild(document.createTextNode("Nonpertinent"));
+                tdObject.appendChild(document.createTextNode("Nonpertinent "));
               }
               if (item.object.published) {
-                tdObject.appendChild(document.createElement("br"));
                 var pub = document.createElement("span");
                 pub.style.color = "darkgreen";
                 pub.textContent = "✓ Published";

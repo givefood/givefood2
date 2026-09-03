@@ -1,3 +1,9 @@
+{# The shared admin list page: one table, one sort control, one paginator,
+   used by every gfadmin list template (foodbanks.html, orders.html,
+   locations.html, donationpoints.html, politics.html, places.html,
+   subscriptions.html, needs.html, foodbanks_without_need.html,
+   order_groups.html). Callers supply `columns`/`rows`; see
+   workers/site/src/routes/admin/lists.ts's renderList(). #}
 {% extends "admin/page.njk" %}
 
 {% block title %}{{ title }}{% endblock %}
@@ -8,7 +14,12 @@
     <h1 class="title">{{ title }} ({{ total }})</h1>
 
     <div class="buttons">
-      {% if new_url %}<a href="{{ new_url }}" class="button is-link is-light">New</a>{% endif %}
+      {# Django names the thing being created on each page's button --
+         "New Foodbank" (foodbanks.html:14), "New ParlCon"
+         (politics.html:14), "New Order Group" (order_groups.html:10) --
+         so a caller that supplies no label is the only one that gets the
+         bare "New". #}
+      {% if new_url %}<a href="{{ new_url }}" class="button is-link is-light">{{ new_label if new_label else "New" }}</a>{% endif %}
       {% if csv_url %}<a href="{{ csv_url }}" class="button is-light">Export CSV</a>{% endif %}
     </div>
 
@@ -26,12 +37,36 @@
     </div>
     {% endif %}
 
-    <table class="table is-fullwidth">
+    {# Django's own sort control, pinned top-right on every sortable list
+       page (foodbanks.html:16-26, orders.html:14-27, locations.html:14-25,
+       donationpoints.html:14-24, places.html:14-24). Its selected <option>
+       is the only place the current sort is spelled out in words; the
+       clickable column headers below are an addition, not a replacement.
+       Like Django's, the option URLs carry no &page=, so changing the sort
+       returns to page 1 of the new ordering. #}
+    {% if sort_options %}
+    <div class="field is-pulled-right">
+      <div class="control">
+        <div class="select">
+          <select onchange="javascript:window.location.href=this.value">
+            {% for opt in sort_options %}
+            <option value="?sort={{ opt.value }}{{ extra_query }}"{% if opt.selected %} selected{% endif %}>{{ opt.label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    <table class="table is-fullwidth is-hoverable">
       <thead>
         <tr>
           {% for col in columns %}
           <th>
-            {% if col.sort %}<a href="?sort={{ col.sort }}&amp;page={{ page }}{{ extra_query }}">{{ col.label }}</a>{% if sort == col.sort %} &darr;{% endif %}{% else %}{{ col.label }}{% endif %}
+            {# col.sort is the NEXT sort (the active column's link flips its
+               direction), so the arrow is driven by col.active/col.desc,
+               never by comparing col.sort with the current one. #}
+            {% if col.sort %}<a href="?sort={{ col.sort }}&amp;page={{ page }}{{ extra_query }}">{{ col.label }}</a>{% if col.active %}{% if col.desc %} &darr;{% else %} &uarr;{% endif %}{% endif %}{% else %}{{ col.label }}{% endif %}
           </th>
           {% endfor %}
           {% if row_actions %}<th></th>{% endif %}
@@ -49,11 +84,35 @@
       </tbody>
     </table>
 
-    <nav class="pagination" role="navigation" aria-label="pagination">
-      {% if page > 1 %}<a class="pagination-previous" href="?page={{ page - 1 }}{% if sort %}&amp;sort={{ sort }}{% endif %}{{ extra_query }}">Previous</a>{% endif %}
-      {% if has_next %}<a class="pagination-next" href="?page={{ page + 1 }}{% if sort %}&amp;sort={{ sort }}{% endif %}{{ extra_query }}">Next page</a>{% endif %}
-      <span class="pagination-list">Page {{ page }} of {{ total_pages }}</span>
+    {# foodbanks.html:89-123's numbered paginator, verbatim apart from the
+       query-string shape: first page, an ellipsis, the current page +/-2,
+       an ellipsis, the last page, plus disabled Previous/Next at the ends.
+       nunjucks's range() stands in for Django's page_obj.paginator
+       .page_range, and the {% if total_pages > 1 %} guard for Django's
+       {% if page_obj.has_other_pages %} -- so a single-page list renders no
+       nav at all, as Django's does not. Without the numbers, reaching the
+       last of ~11 foodbank pages is ten Next clicks. #}
+    {% if total_pages > 1 %}
+    <nav class="pagination is-centered" role="navigation" aria-label="pagination">
+      {% if page > 1 %}<a class="pagination-previous" href="?page={{ page - 1 }}{% if sort %}&amp;sort={{ sort }}{% endif %}{{ extra_query }}">Previous</a>{% else %}<a class="pagination-previous" disabled>Previous</a>{% endif %}
+      {% if has_next %}<a class="pagination-next" href="?page={{ page + 1 }}{% if sort %}&amp;sort={{ sort }}{% endif %}{{ extra_query }}">Next</a>{% else %}<a class="pagination-next" disabled>Next</a>{% endif %}
+      <ul class="pagination-list">
+        {% for num in range(1, total_pages + 1) %}
+          {% if num == page %}
+        <li><a class="pagination-link is-current" aria-label="Page {{ num }}" aria-current="page">{{ num }}</a></li>
+          {% elif num > page - 3 and num < page + 3 %}
+        <li><a class="pagination-link" href="?page={{ num }}{% if sort %}&amp;sort={{ sort }}{% endif %}{{ extra_query }}" aria-label="Go to page {{ num }}">{{ num }}</a></li>
+          {% elif num == 1 %}
+        <li><a class="pagination-link" href="?page={{ num }}{% if sort %}&amp;sort={{ sort }}{% endif %}{{ extra_query }}" aria-label="Go to page {{ num }}">{{ num }}</a></li>
+            {% if page > 4 %}<li><span class="pagination-ellipsis">&hellip;</span></li>{% endif %}
+          {% elif num == total_pages %}
+            {% if page < total_pages - 3 %}<li><span class="pagination-ellipsis">&hellip;</span></li>{% endif %}
+        <li><a class="pagination-link" href="?page={{ num }}{% if sort %}&amp;sort={{ sort }}{% endif %}{{ extra_query }}" aria-label="Go to page {{ num }}">{{ num }}</a></li>
+          {% endif %}
+        {% endfor %}
+      </ul>
     </nav>
+    {% endif %}
   </div>
 </div>
 {% endblock %}

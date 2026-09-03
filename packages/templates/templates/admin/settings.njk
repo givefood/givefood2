@@ -37,6 +37,12 @@
       <li><span class="mdi mdi-email-outline"></span> <a href="/admin/subscriptions/">Subscriptions</a></li>
     </ul>
 
+    {# settings.html:48-53's Geo list is the first three items. "Map" is a fourth,
+       added for the same reason as "Food Banks without a need" below: the page is
+       real (gfadmin/urls/core.py:13 registers admin:map, routes/admin/index.ts ports
+       it) but no Django template links it -- a repo-wide grep for `admin:map` under
+       gfadmin/templates/ returns nothing -- and an unlinked page may as well not
+       exist. #}
     <h3 class="title is-5">Geo</h3>
     <ul class="settings">
       <li><span class="mdi mdi-bullhorn"></span> <a href="/admin/politics/">Parliamentary Constituencies</a></li>
@@ -45,16 +51,23 @@
       <li><span class="mdi mdi-map"></span> <a href="/admin/map/">Map</a></li>
     </ul>
 
-    {# Django also lists "Food Banks without a need" nowhere -- it is a
-       direct-URL-only page there too. Surfaced here because the port has it
-       and an unlinked page may as well not exist. #}
+    {# A section Django's settings page does not have, holding one item of each kind:
+        - "Food Banks without a need" IS a Django page (gfadmin/urls/foodbanks.py:10),
+          just a direct-URL-only one that no template links. Surfaced, not invented.
+        - "Query Console" is port-only: Django has no equivalent view at any URL. See
+          workers/site/src/routes/admin/query.ts and PLAN.md WP 6.10, which specifies
+          it as POST-only, SELECT/EXPLAIN-only and row-capped. #}
     <h3 class="title is-5">Data quality</h3>
     <ul class="settings">
       <li><span class="mdi mdi-basket-off"></span> <a href="/admin/foodbanks/without_need/">Food Banks without a need</a></li>
       <li><span class="mdi mdi-database-search"></span> <a href="/admin/query/">Query Console</a></li>
     </ul>
 
-    <h3 class="title is-5"><span class="mdi mdi-alert"></span> Danger Zone</h3>
+    {# settings.html:56 shouts this one heading -- "DANGER ZONE" -- where every other
+       danger zone in the admin (foodbank.html:290, need.html:142, order.html:102) is
+       sentence case. This is the one whose buttons act on the whole site rather than
+       one record, so the casing is kept. #}
+    <h3 class="title is-5"><span class="mdi mdi-alert"></span> DANGER ZONE</h3>
 
     {# routes/admin/clearCache.ts redirects back here with ?cache=<outcome>.
        The route narrows the querystring to this fixed four-value enum before

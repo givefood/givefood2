@@ -1,5 +1,5 @@
 import type { Context } from "hono";
-import { getFoodbankBySlug, insertAdminNeed } from "@givefood/db";
+import { getFoodbankBySlug, getOpenFoodbankOptions, insertAdminNeed } from "@givefood/db";
 import { render } from "@givefood/templates";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
@@ -34,6 +34,12 @@ import { adminPageContext } from "./pageContext";
 // `foodbank` is a slug text input, not Django's completely unscoped
 // `Foodbank.objects.filter()` <select> of every food bank open or closed
 // (~1,000+ options) -- the same substitution the edit form already made.
+// That substitution dropped Django's name-based selection entirely, which
+// is the wrong half to lose on the phoned-in/emailed-in case the operator
+// has a NAME for and not a slug, so the input now carries a datalist of
+// name -> slug pairs (need_new.njk's `foodbank_options`). Open food banks
+// only, per getOpenFoodbankOptions; a closed one is still reachable by
+// typing its slug, which is why this remains free text.
 
 // needs.ts:33's TRANSLATE_LANGUAGES, duplicated rather than imported: that
 // constant is module-private there, and this app serves 4 languages total
@@ -54,6 +60,9 @@ async function renderForm(c: Context<AppEnv>, form: NeedFormValues, showPreview:
     ...(await adminPageContext(c, "needs")),
     page_title: "New Need",
     form,
+    // Backs the food-bank datalist -- see the module comment. Fetched here
+    // rather than at each call site so an error re-render keeps the list.
+    foodbank_options: await getOpenFoodbankOptions(dbSession(c)),
     show_preview: showPreview,
     error,
   });
@@ -105,6 +114,18 @@ export async function adminNeedNew(c: Context<AppEnv>): Promise<Response> {
       foodbankId = foodbank.id;
       foodbankName = foodbank.name;
       showPreview = !!foodbank.url;
+    }
+
+    // givefood/models/needs.py:64 -- `change_text = models.TextField(
+    // verbose_name="Shopping List")`, with no blank=True, so NeedForm builds
+    // a REQUIRED CharField and views.py:1931-1934's `if form.is_valid()`
+    // hands the page back with "This field is required." instead of saving.
+    // Checked before clean()'s food-bank rule below, matching Django's
+    // field-validation-then-clean order. An empty need is not inert: with a
+    // food bank set it feeds recomputeFoodbankNeedFields, and if Published
+    // is ticked it is translated and reaches /needs/at/<slug>/.
+    if (form.change_text.trim() === "") {
+      return renderForm(c, form, showPreview, "This field is required.");
     }
 
     // FoodbankChange.clean() (givefood/models/needs.py:77-79) declares this

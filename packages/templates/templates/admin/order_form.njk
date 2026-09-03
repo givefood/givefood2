@@ -8,8 +8,16 @@
    macro, because three of these controls are not AdminFieldSpec shapes:
    the food bank and need selects are populated from live querysets, and
    items_text is the free-text paste that the save path parses into order
-   lines. The field ORDER follows the Order model's own field order, which
-   is what `fields = "__all__"` renders.
+   lines.
+
+   The field ORDER follows the Order model's own field order, which is what
+   `fields = "__all__"` renders -- ModelFormMetaclass keeps fields_for_model's
+   model-declaration order, and `fields.update(declared_fields)` re-uses the
+   existing keys' positions, so declaring `foodbank`/`need` on the form does
+   not move them. That order is: foodbank, items_text, need, order_group,
+   source_url, delivery_date, delivery_hour, delivery_provider,
+   delivery_provider_id, actual_cost (givefood/models/orders.py:30-49; the
+   editable=False fields in between are rendered by neither side).
 
    Every control keeps Django's `id_<name>` id -- see
    includes/formfields.njk's header for why static/js/admin.js depends on
@@ -49,6 +57,16 @@
       </div>
 
       <div class="field">
+        {# models/orders.py:31 items_text -- Django's auto verbose name is
+           "Items text". #}
+        <label class="label" for="id_items_text">Items text *</label>
+        <div class="control">
+          <textarea class="textarea" id="id_items_text" name="items_text" rows="12" required>{{ data.items_text }}</textarea>
+        </div>
+        <p class="help">One line per item. Parsed into order lines on save.</p>
+      </div>
+
+      <div class="field">
         <label class="label" for="id_need">Need</label>
         <div class="control">
           <div class="select">
@@ -62,16 +80,37 @@
         </div>
         {# forms.py:199-210 narrows this queryset to the selected food bank's
            own needs; the route does the same, and caps the list. Say so when
-           the cap actually bit, rather than silently truncating. #}
+           the cap actually bit, rather than silently truncating. The order's
+           OWN need is appended by routes/admin/orderForm.ts when the cap or
+           the food-bank filter would otherwise hide it, so saving can never
+           silently clear it. #}
         {% if needs_capped %}<p class="help">Showing the most recent needs only. Save with a food bank selected to narrow this list.</p>{% endif %}
       </div>
 
       <div class="field">
-        <label class="label" for="id_items_text">Items *</label>
+        <label class="label" for="id_order_group">Order group</label>
         <div class="control">
-          <textarea class="textarea" id="id_items_text" name="items_text" rows="12" required>{{ data.items_text }}</textarea>
+          <div class="select">
+            <select id="id_order_group" name="order_group">
+              <option value="">-- none --</option>
+              {% for group in order_groups %}
+              <option value="{{ group.id }}"{% if group.id == data.order_group_id %} selected{% endif %}>{{ group.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
         </div>
-        <p class="help">One line per item. Parsed into order lines on save.</p>
+      </div>
+
+      <div class="field">
+        <label class="label" for="id_source_url">Source URL</label>
+        <div class="control">
+          <input class="input" type="url" id="id_source_url" name="source_url" value="{{ data.source_url or "" }}">
+        </div>
+        {# models/orders.py:37's help_text, verbatim -- bulma/forms/field.html
+           renders it under the input, and it is the only thing on screen that
+           says what belongs in the box. The value is reproduced in both order
+           notification emails. #}
+        <p class="help">Optional URL of a tweet, facebook post etc where the food need came from</p>
       </div>
 
       <div class="field">
@@ -87,6 +126,12 @@
         <div class="control">
           <div class="select">
             <select id="id_delivery_hour" name="delivery_hour" required>
+              {# models/orders.py:40 is blank=False with no default, so
+                 Field.formfield() renders Django's blank choice first and a
+                 submission without a chosen hour fails validation. Without
+                 this option the browser preselects the first real hour and a
+                 new order silently books a 06:00 slot nobody chose. #}
+              <option value=""{% if data.delivery_hour == null %} selected{% endif %}>---------</option>
               {% for hour in delivery_hours %}
               <option value="{{ hour }}"{% if hour == data.delivery_hour %} selected{% endif %}>{{ hour }}:00</option>
               {% endfor %}
@@ -117,37 +162,29 @@
       </div>
 
       <div class="field">
-        <label class="label" for="id_order_group">Order group</label>
-        <div class="control">
-          <div class="select">
-            <select id="id_order_group" name="order_group">
-              <option value="">-- none --</option>
-              {% for group in order_groups %}
-              <option value="{{ group.id }}"{% if group.id == data.order_group_id %} selected{% endif %}>{{ group.name }}</option>
-              {% endfor %}
-            </select>
-          </div>
-        </div>
-      </div>
-
-      <div class="field">
-        <label class="label" for="id_source_url">Source URL</label>
-        <div class="control">
-          <input class="input" type="url" id="id_source_url" name="source_url" value="{{ data.source_url or "" }}">
-        </div>
-      </div>
-
-      <div class="field">
         <label class="label" for="id_actual_cost">Delivered cost (pence)</label>
         <div class="control">
           <input class="input" type="number" id="id_actual_cost" name="actual_cost" value="{{ data.actual_cost if data.actual_cost != null else "" }}" min="0" step="1">
         </div>
-        <p class="help">What the delivery actually cost, once known. Stored in pence, like `cost`.</p>
+        {# models/orders.py:49's help_text is the bare "In pence". #}
+        <p class="help">What the delivery actually cost, once known. In pence.</p>
       </div>
 
       <div class="field">
         <div class="control">
-          <button type="submit" class="button is-link is-light">Save</button>
+          {# gfadmin/templates/admin/form.html:15's double-submit guard, which
+             matters more here than in Django: every successful save enqueues
+             an "order-lines" admin_job (a paid Gemini parse), and an
+             unassigned order cannot hit the unique_together check, so a
+             second press would create a second order. Verbatim from
+             form.html:15 and identical to need_new.njk:104.
+
+             form.submit() skips the browser's own constraint validation, so
+             the `required` attributes above stop firing -- exactly as they do
+             in Django, which carries this same attribute. The real guard is
+             routes/admin/orderForm.ts's POST validation, which re-renders the
+             form with every submitted value and one error banner. #}
+          <button type="submit" class="button is-link is-light" onclick="this.form.submit();this.disabled = true;">Save</button>
         </div>
       </div>
     </form>

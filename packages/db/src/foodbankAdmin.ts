@@ -117,6 +117,22 @@ function slugify(value: string): string {
     .replace(/^[-_]+|[-_]+$/g, "");
 }
 
+// Same helper (and same null-when-not-finite contract) as
+// locationsAdmin.ts:37-42 / donationPointsAdmin.ts -- Foodbank.save()
+// (givefood/models/foodbank.py:636-638) splits `lat_lng` into
+// `latitude`/`longitude` on EVERY save, create and edit alike, and those
+// two columns are what every distance query actually reads
+// (0001_core.sql:55's `foodbank_open_latlng_idx`, feeding
+// getOpenFoodbankCoordinates -> the /needs/ postcode search and every
+// "nearby" API list). Leaving them behind makes a corrected pin silently
+// keep its old position and a brand-new food bank invisible to search.
+function parseLatLng(latLng: string): { latitude: number | null; longitude: number | null } {
+  const [latStr, lngStr] = latLng.split(",");
+  const latitude = latStr ? Number.parseFloat(latStr) : NaN;
+  const longitude = lngStr ? Number.parseFloat(lngStr) : NaN;
+  return { latitude: Number.isFinite(latitude) ? latitude : null, longitude: Number.isFinite(longitude) ? longitude : null };
+}
+
 // gfadmin/views.py:817-858 foodbank_form's create branch (`slug=None`).
 // Every FOODBANK_FIELD_ORDER field is caller-supplied (lib/
 // adminFormFields.ts's FOODBANK_FIELDS already required-validates the
@@ -124,17 +140,21 @@ function slugify(value: string): string {
 // still NOT NULL in D1 (`uuid`, `slug`, `no_locations`,
 // `days_between_needs`, `created`, `modified`) get sane new-row defaults
 // here, matching what Foodbank's own Django defaults/save() would give a
-// freshly created row before any locations/needs exist.
+// freshly created row before any locations/needs exist. `slug`,
+// `latitude` and `longitude` are the three DERIVED columns Foodbank.save()
+// (foodbank.py:634-638) computes rather than defaults -- see parseLatLng
+// above for why the latter two are not optional.
 export async function insertFoodbank(session: Session, fields: Record<string, string | number | null>): Promise<{ id: number; slug: string }> {
   const name = fields.name;
   if (typeof name !== "string" || !name) throw new Error("name is required to create a food bank");
   const slug = slugify(name);
+  const { latitude, longitude } = parseLatLng(typeof fields.lat_lng === "string" ? fields.lat_lng : "");
   const now = new Date().toISOString();
 
   const entries = Object.entries(fields);
-  const columns = ["uuid", "slug", "no_locations", "days_between_needs", "created", "modified", ...entries.map(([k]) => k)];
+  const columns = ["uuid", "slug", "latitude", "longitude", "no_locations", "days_between_needs", "created", "modified", ...entries.map(([k]) => k)];
   const placeholders = columns.map(() => "?").join(", ");
-  const values: (string | number | null)[] = [crypto.randomUUID().replace(/-/g, ""), slug, 0, 0, now, now, ...entries.map(([, v]) => v)];
+  const values: (string | number | null)[] = [crypto.randomUUID().replace(/-/g, ""), slug, latitude, longitude, 0, 0, now, now, ...entries.map(([, v]) => v)];
 
   const result = await session
     .prepare(`INSERT INTO foodbank (${columns.join(", ")}) VALUES (${placeholders}) RETURNING id`)
@@ -160,7 +180,12 @@ const COLUMN_NAME_RE = /^[a-z_]+$/;
 // usual "fix the defect" default. `modified` (TimestampedModel's
 // auto_now) always updates regardless -- that one was never form-gated
 // in Django either.
-export async function updateFoodbankFields(session: Session, id: number, fields: Record<string, string | number | null>, stampEdited: boolean): Promise<void> {
+//
+// Returns the row's slug when this write changed it (i.e. the name was
+// part of `fields`), otherwise null -- callers redirect to
+// `admin:foodbank` with the slug the record now has, exactly as
+// gfadmin/views.py:836 does with the post-save `foodbank.slug`.
+export async function updateFoodbankFields(session: Session, id: number, fields: Record<string, string | number | null>, stampEdited: boolean): Promise<string | null> {
   const entries = Object.entries(fields);
   for (const [name] of entries) {
     if (!COLUMN_NAME_RE.test(name)) throw new Error(`refusing to update unexpected column: ${name}`);
@@ -168,10 +193,35 @@ export async function updateFoodbankFields(session: Session, id: number, fields:
   const now = new Date().toISOString();
   const setSql = entries.map(([name]) => `${name} = ?`).join(", ");
   const values = entries.map(([, v]) => v);
+
+  // givefood/models/foodbank.py:634-638 -- Foodbank.save() re-derives
+  // `slug` from `name` and splits `lat_lng` into `latitude`/`longitude`
+  // on every save, so an edit must too (PLAN.md:3414 records the same
+  // rule: "Sync, in the write function"). Appended to the tail rather
+  // than to `entries` so the COLUMN_NAME_RE guard and the caller
+  // contract -- `fields` is only ever the form's own AdminFieldSpec
+  // names -- stay untouched. The partial forms post a subset, so each
+  // derivation is gated on its own source field actually being present:
+  // the Address form posts lat_lng but no name, the Phone form neither.
+  const derivedSql: string[] = [];
+  const derivedValues: (string | number | null)[] = [];
+  if (typeof fields.lat_lng === "string" && fields.lat_lng) {
+    const { latitude, longitude } = parseLatLng(fields.lat_lng);
+    derivedSql.push("latitude = ?", "longitude = ?");
+    derivedValues.push(latitude, longitude);
+  }
+  let newSlug: string | null = null;
+  if (typeof fields.name === "string" && fields.name) {
+    newSlug = slugify(fields.name);
+    derivedSql.push("slug = ?");
+    derivedValues.push(newSlug);
+  }
+
   const tailSql = stampEdited ? "modified = ?, edited = ?" : "modified = ?";
   const tailValues = stampEdited ? [now, now] : [now];
   await session
-    .prepare(`UPDATE foodbank SET ${setSql}, ${tailSql} WHERE id = ?`)
-    .bind(...values, ...tailValues, id)
+    .prepare(`UPDATE foodbank SET ${[setSql, ...derivedSql, tailSql].filter(Boolean).join(", ")} WHERE id = ?`)
+    .bind(...values, ...derivedValues, ...tailValues, id)
     .run();
+  return newSlug;
 }

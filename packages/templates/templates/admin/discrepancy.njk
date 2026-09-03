@@ -52,7 +52,10 @@
       {{ fieldset(foodbank_fields, foodbank) }}
       <div class="field">
         <div class="control">
-          <button type="submit" class="button is-link is-light">Submit</button>
+          {# discrepancy.html:34's onclick guard, kept. This POST is a full foodbank save
+             plus the discrepancy resolution, and greying the button out is the only
+             in-flight feedback the page gives. Same idiom as need_new.njk:73. #}
+          <button type="submit" class="button is-link is-light" onclick="this.form.submit();this.disabled = true;">Submit</button>
         </div>
       </div>
     </form>

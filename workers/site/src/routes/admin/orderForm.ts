@@ -14,6 +14,7 @@ import {
   slugifyProvider,
   upsertOrder,
   type FoodbankOptionRow,
+  type NeedOptionRow,
   type OrderEditRow,
   type Session,
 } from "@givefood/db";
@@ -167,6 +168,29 @@ async function renderForm(
     if (current) foodbanks = [...openFoodbanks, current];
   }
 
+  // The same hole, one field over. Django's need queryset (forms.py:207-210)
+  // is unbounded, so the order's current need is ALWAYS among the rendered
+  // options and always survives a round trip; getNeedOptionsForFoodbank caps
+  // this port's list at NEED_OPTION_LIMIT and filters it to the selected food
+  // bank. An order whose need is older than that window -- or whose need
+  // belongs to a food bank other than the one now selected -- would render a
+  // <select> with no matching option, the browser would submit the empty one,
+  // and the save would silently NULL need_id, severing the order from the
+  // need it was placed against with nothing on screen to say so. Append the
+  // current selection when it is missing, exactly as the food bank guard
+  // above does. Queried inline rather than through orderWrite.ts because it
+  // is the same one-row lookup as the "Unknown need." check in handlePost.
+  let needOptions: NeedOptionRow[] = needs;
+  if (data.need_id !== null && !needs.some((need) => need.id === data.need_id)) {
+    const currentNeed = await db
+      .prepare("SELECT id, need_id, foodbank_name, created FROM foodbankchange WHERE id = ?")
+      .bind(data.need_id)
+      .first<NeedOptionRow>();
+    // ORDER BY created DESC above, and anything outside the window is older
+    // than everything in it, so the end of the list is the right place.
+    if (currentNeed) needOptions = [...needs, currentNeed];
+  }
+
   // views.py:479-485. Foodbank.__str__ is `self.name`
   // (givefood/models/foodbank.py:142-143).
   const pageTitle = order ? `Edit ${order.order_id}` : preselectedFoodbankName ? `New Order for ${preselectedFoodbankName}` : "New Order";
@@ -180,7 +204,9 @@ async function renderForm(
     error,
     data,
     foodbanks,
-    needs: needs.map((need) => ({ id: need.id, label: needOptionLabel(need) })),
+    needs: needOptions.map((need) => ({ id: need.id, label: needOptionLabel(need) })),
+    // The CAP is what the help text reports, so measure the capped query's
+    // own result -- not needOptions, which may carry one appended extra.
     needs_capped: needs.length >= NEED_OPTION_LIMIT,
     order_groups: orderGroups,
     delivery_hours: DELIVERY_HOURS,
@@ -238,6 +264,11 @@ async function handlePost(c: Context<AppEnv>, db: Session, order: OrderEditRow |
 
   if (itemsText.trim() === "") return fail("Items text is required."); // orders.py:31, no blank=True
   if (!isValidDate(deliveryDate)) return fail("Delivery date is required and must be a real date.");
+  // orders.py:40 is blank=False with no default, so Django renders a blank
+  // choice first and reports "This field is required." when it is submitted.
+  // order_form.njk renders that blank option too -- without it the browser
+  // preselects 6 and a new order books a 06:00 slot nobody chose.
+  if (deliveryHourRaw === "") return fail("Delivery hour is required.");
   if (!DELIVERY_HOURS.includes(Number(deliveryHourRaw))) return fail("Delivery hour must be one of the listed hours.");
   if (deliveryProviderRaw !== "" && !DELIVERY_PROVIDERS.includes(deliveryProviderRaw)) return fail("Unknown delivery provider.");
   if (sourceUrlRaw !== "" && !isValidUrl(sourceUrlRaw)) return fail("Source URL must be a valid http(s) URL.");

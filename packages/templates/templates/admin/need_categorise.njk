@@ -1,29 +1,55 @@
 {% extends "admin/page.njk" %}
 
-{% block title %}Categorise{% endblock %}
+{# need_categorise.html:4 is `{{ need }}`, i.e. FoodbankChange.__str__
+   (givefood/models/needs.py:84-85). A constant "Categorise" titled every
+   need's page identically, so several open in tabs were indistinguishable.
+   Verbatim copy of need.njk:9, including its "Unknown" fallback for a null
+   foodbank_name (__str__ would interpolate the literal "None"). #}
+{% block title %}{{ need.foodbank_name or "Unknown" }} - {{ need.created|date("M d Y H:i:s") }} ({{ need.need_id_short }}){% endblock %}
+
+{# need_categorise.html:6-18's head style. Only `.item` carries over: Django
+   lays the forms out as inline .field blocks, this page uses a table. #}
+{% block head %}
+  <style>
+    .item { width: 400px; }
+  </style>
+{% endblock %}
 
 {% block body %}
 <div class="columns">
   {# need_categorise.html:25 -- one column with NO size class, i.e. full page width (Django's
      head style also flows each .field inline across it). The generic-form `is-half` this page
-     had picked up left the whole item/type/category table in the left half of the page. #}
+     had picked up left the whole item/category table in the left half of the page. #}
   <div class="column">
     {# need_categorise.html:26 -- {{ need.need_id_short }}, the 7-char id (models/needs.py:81-82),
-       as on every other need page. Falls back to the full uuid until adminNeedCategorise passes
-       need_id_short the way adminNeedDetail/adminNeedTranslations already do. #}
+       as on every other need page. adminNeedCategorise supplies it; the full uuid is only a
+       fallback. #}
     <h2 class="title is-4">{{ need.need_id_short or need.need_id }}</h2>
 
     <form action="/admin/need/{{ need.need_id }}/categorise/" method="post">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      {# NeedLineForm (givefood/forms.py:239-247) hides only `type`
+         (`self.fields['type'].widget = HiddenInput()`) and leaves `item` as a
+         plain TextInput with class "item" -- so Django shows NO Type column
+         and one editable 400px box per line, which is how a reviewer fixes a
+         misspelling picked up off a food bank's page while categorising it.
+         The port had item as static text and `type` promoted to a visible
+         column: both wrong way round. `maxlength` is
+         FoodbankChangeLine.item's max_length=250 (models/needs.py:366).
+
+         `orig_item_N` carries the text the row was RENDERED with, which is
+         the key the row is found by (Django's `prefix=line` +
+         `existing_need_lines.get(line)`, views.py:2071-2074); `item_N` is
+         what the reviewer may have edited. Both are posted so needs.ts can
+         tell a rename from a new line. #}
       <table class="table is-fullwidth">
-        <thead><tr><th>Item</th><th>Type</th><th>Category</th></tr></thead>
+        <thead><tr><th>Item</th><th>Category</th></tr></thead>
         <tbody>
           {% for line in lines %}
           <tr>
-            <td>{{ line.item }}</td>
-            <td>{{ line.type }}</td>
+            <td><input type="text" class="input is-small item" name="item_{{ loop.index0 }}" value="{{ line.item }}" maxlength="250"></td>
             <td>
-              <input type="hidden" name="item_{{ loop.index0 }}" value="{{ line.item }}">
+              <input type="hidden" name="orig_item_{{ loop.index0 }}" value="{{ line.item }}">
               <input type="hidden" name="type_{{ loop.index0 }}" value="{{ line.type }}">
               <div class="select is-small">
                 <select name="category_{{ loop.index0 }}">

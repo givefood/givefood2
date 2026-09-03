@@ -20,6 +20,11 @@
   d) Deterministic order (SQL ORDER BY, not Django's unordered set()).
   e) NULL/empty postcodes excluded in SQL -- see dupePostcodes.ts. Django
      lets a NULL location postcode through as a literal "None" row.
+  f) An intro paragraph stating the page's scope. Django's page is an <h2>
+     and a <ul> with no prose at all, so a reader there cannot tell whether
+     closed rows or donation points are in the list without reading
+     views.py:340-358. It describes Django's behaviour, which the port
+     keeps; it does not describe a divergence.
 
   Django's own {% block title %} says "Foodbanks", not what the page is;
   named properly here.
@@ -33,10 +38,13 @@
 
     <h1 class="title">Duplicate Postcodes <span class="tag is-info is-normal is-light">{{ groups.length }}</span></h1>
 
+    {# The scope this paragraph states is Django's, unchanged: views.py:340-358 collects
+       postcodes from get_all_foodbanks() + get_all_locations() only (donation points are
+       never looked at), filters nothing on closed, and compares the raw strings. Kept as
+       operator-facing copy without the citation -- see the header comment for provenance. #}
     <p class="content is-size-7">
       Postcodes shared by more than one food bank or location. Closed food banks and closed
-      locations are included, matching Django. Donation points are not checked &mdash;
-      <code>gfadmin/views.py:340-358</code> never looks at them. Matching is exact, so
+      locations are included. Donation points are not checked. Matching is exact, so
       &ldquo;SW1A 1AA&rdquo; and &ldquo;SW1A1AA&rdquo; count as different postcodes.
     </p>
 

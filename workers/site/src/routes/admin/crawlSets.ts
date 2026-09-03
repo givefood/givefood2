@@ -33,13 +33,10 @@ export async function adminCrawlSetsList(c: Context<AppEnv>): Promise<Response> 
 
   const html = await render("admin/crawl_sets.njk", {
     ...(await adminPageContext(c, "crawl_sets")),
-    crawl_sets: crawlSets.map((cs) => ({
-      ...cs,
-      crawl_type_icon: crawlTypeIcon(cs.crawl_type),
-      // CrawlSet.time_taken() renders a timedelta's str(); seconds is the
-      // honest equivalent and matches the JSON endpoint's own `time_taken`.
-      time_taken: cs.time_taken_seconds === null ? null : `${cs.time_taken_seconds} s`,
-    })),
+    // `time_taken` arrives already formatted as Django's str(timedelta)
+    // (packages/db/src/foodbankTabs.ts formatTimedelta), shared with the
+    // detail page and its polling JSON so all three read identically.
+    crawl_sets: crawlSets.map((cs) => ({ ...cs, crawl_type_icon: crawlTypeIcon(cs.crawl_type) })),
     orphaned_crawl_items: orphaned.map((i) => ({ ...i, crawl_type_icon: crawlTypeIcon(i.crawl_type) })),
     crawl_type_options: CRAWL_TYPE_OPTIONS,
     crawl_type_filter: typeFilter ?? "",
@@ -63,11 +60,16 @@ export async function adminCrawlSetDetail(c: Context<AppEnv>): Promise<Response>
     ...(await adminPageContext(c, "crawl_sets")),
     crawl_set: {
       id,
+      // No crawl_type_icon: Django prefixes the type with its icon on the
+      // crawl-sets LIST (crawl_sets.html:43) but deliberately not in this
+      // page's <dl> (crawl_set.html:16), which is the bare crawl_type text.
       crawl_type: data.crawl_type,
-      crawl_type_icon: crawlTypeIcon(data.crawl_type),
       start: data.start,
       finish: data.finish,
-      time_taken: data.time_taken === null ? null : `${data.time_taken} s`,
+      // Already Django's str(timedelta) -- the JSON endpoint the poll reads
+      // returns this very field, so the row cannot change format when a
+      // running crawl finishes under the admin's eyes.
+      time_taken: data.time_taken,
       item_count: data.item_count,
       object_count: data.object_count,
     },

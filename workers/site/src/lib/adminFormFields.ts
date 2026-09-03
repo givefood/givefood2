@@ -37,6 +37,41 @@ export interface AdminFieldSpec {
 const COUNTRIES = ["England", "Wales", "Scotland", "Northern Ireland", "Isle of Man", "Jersey", "Guernsey"] as const;
 // givefood/const/general.py:37-42.
 const FOODBANK_NETWORKS = ["Trussell", "IFAN", "Independent"] as const;
+// givefood/const/general.py:73-99 DONATION_POINT_COMPANIES, in the source
+// order -- general.py:100 builds DONATION_POINT_COMPANIES_CHOICES straight
+// from this list, so it is also the dropdown's order. Not free text:
+// `company` is slugified into `company_slug` on save
+// (donationPointsAdmin.ts:68), which keys the public
+// /donationpoints/company/<slug>/ grouping and the shipped per-company
+// logo set (static/img/co/<slug>.png), so an off-list spelling silently
+// mints a new company with a broken icon.
+const DONATION_POINT_COMPANIES = [
+  "Aldi",
+  "Asda",
+  "Best-One",
+  "Booths",
+  "Budgens",
+  "Co-op",
+  "Costcutter",
+  "Eurospar",
+  "Farmfoods",
+  "Iceland",
+  "Lidl",
+  "Londis",
+  "Mace",
+  "Marks & Spencer",
+  "McColl's",
+  "Morrisons",
+  "Nisa",
+  "One Stop",
+  "Poundland",
+  "Premier",
+  "Sainsbury's",
+  "Scotmid",
+  "Spar",
+  "Tesco",
+  "Waitrose",
+] as const;
 
 export const FOODBANK_FIELDS: readonly AdminFieldSpec[] = [
   { name: "name", label: "Name", kind: "text", required: true },
@@ -105,9 +140,17 @@ export const FOODBANK_DONATION_POINT_FIELDS: readonly AdminFieldSpec[] = [
   { name: "wheelchair_accessible", label: "Wheelchair Accessible", kind: "tristate", required: false },
   { name: "url", label: "URL", kind: "url", required: false },
   { name: "in_store_only", label: "In Store Only", kind: "checkbox", required: false },
-  { name: "company", label: "Company", kind: "text", required: false },
-  { name: "store_id", label: "Store ID", kind: "text", required: false },
-  { name: "notes", label: "Notes", kind: "textarea", required: false },
+  // foodbank.py:1021 `choices=DONATION_POINT_COMPANIES_CHOICES` -- a
+  // Select in Django, and admin.js:210-219's initCompanyAutoSelect()
+  // iterates `#id_company`'s `.options` to auto-pick the company out of a
+  // typed store name, which only exists on a <select>.
+  { name: "company", label: "Company", kind: "select", required: false, options: DONATION_POINT_COMPANIES },
+  // help_text verbatim from foodbank.py:1023 and :1025. The Notes one
+  // matters: Foodbank.notes (foodbank.py:73) is private scratch with no
+  // help_text, while THIS notes field is published on the public donation
+  // point page, and that line was the only thing saying so.
+  { name: "store_id", label: "Store ID", kind: "text", required: false, helpText: "The company's store ID" },
+  { name: "notes", label: "Notes", kind: "textarea", required: false, helpText: "These notes are public" },
   { name: "lat_lng", label: "Latitude, Longitude", kind: "text", required: true },
   { name: "place_id", label: "Place ID", kind: "text", required: false },
 ] as const;
@@ -116,6 +159,12 @@ export const FOODBANK_DONATION_POINT_FIELDS: readonly AdminFieldSpec[] = [
 // "__all__"`, no custom field_order, minus editable=False fields
 // (slug, mp_display_name, latitude, longitude).
 export const PARLCON_FIELDS: readonly AdminFieldSpec[] = [
+  // Deliberate divergence, stated rather than left silent:
+  // givefood/models/political.py:16 declares `name` as
+  // `null=True, blank=True`, so Django's form accepts a nameless
+  // constituency. Kept required here because `name` is the sole input to
+  // the slug this row is addressed by (parlconAdmin.ts:37), and a blank
+  // name yields a blank slug that collides with every other blank one.
   { name: "name", label: "Name", kind: "text", required: true },
   { name: "country", label: "Country", kind: "select", required: false, options: COUNTRIES },
   { name: "mp", label: "MP", kind: "text", required: false },
@@ -178,8 +227,37 @@ export function isValidEmail(value: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
 
-export function parseAdminFields(specs: readonly AdminFieldSpec[], body: Record<string, unknown>): { ok: true; values: Record<string, AdminFieldValue> } | { ok: false; error: string } {
+// givefood/models/foodbank.py:648-652 (Foodbank.save()), :956-958
+// (FoodbankLocation) and :1288-1290 (FoodbankDonationPoint) all run
+// `phone_number.replace(" ","")` before storing, so a hand-typed
+// "01234 567 890" reaches the database as "01234567890". That is not
+// cosmetic: friendly_phone/full_phone (packages/templates/src/filters.ts:
+// 7-15, a port of utils/text.py:166) re-space the number BY CHARACTER
+// POSITION, so an unstripped value renders back mangled everywhere it
+// appears, admin and public pages alike, with a broken `tel:` href.
+// `.split(" ").join("")` rather than /\s+/g, matching Django's literal
+// single-space replace. `delivery_phone_number` is deliberately absent:
+// foodbank.py:103 declares it and save() never touches it, so stripping
+// it would be a fresh divergence rather than a fix.
+const SPACE_STRIPPED_FIELDS = new Set(["phone_number", "secondary_phone_number"]);
+
+// The failure branch carries `values` too: gfadmin/views.py:825-856's
+// `if request.POST:` has no else, so an invalid form falls through to the
+// same render() with the BOUND form and every submitted value still in
+// place. Callers re-render with these instead of throwing the admin's
+// whole page away for a plain-text 400. Parsing therefore runs to
+// completion and reports the FIRST failure, the way Django surfaces the
+// first error on a field.
+export function parseAdminFields(
+  specs: readonly AdminFieldSpec[],
+  body: Record<string, unknown>,
+): { ok: true; values: Record<string, AdminFieldValue> } | { ok: false; error: string; values: Record<string, AdminFieldValue> } {
   const values: Record<string, AdminFieldValue> = {};
+  let error: string | null = null;
+  const fail = (message: string) => {
+    if (error === null) error = message;
+  };
+
   for (const spec of specs) {
     if (spec.kind === "checkbox") {
       values[spec.name] = body[spec.name] ? 1 : 0;
@@ -192,22 +270,25 @@ export function parseAdminFields(specs: readonly AdminFieldSpec[], body: Record<
     }
     const raw = body[spec.name];
     const trimmed = typeof raw === "string" ? raw.trim() : "";
-    if (spec.required && !trimmed) return { ok: false, error: `${spec.label} is required` };
+    if (spec.required && !trimmed) fail(`${spec.label} is required`);
     if (trimmed) {
       // Format validation Django enforces on every ModelForm save
-      // (givefood/models/base.py:63-69's RegexValidator, EmailField) but
-      // this port's admin forms had none of at all until now -- these are
-      // the only two fields real Django validation ever rejected on.
+      // (givefood/models/base.py:63-69's RegexValidator, EmailField). Not
+      // the whole of Django's validation -- Model.clean() adds cross-field
+      // rules that need the other fields or the parent row to check, so
+      // those live with their routes (see foodbank.ts's phoneClashError
+      // and donationPoint.ts's co-location check).
       // .toUpperCase() before testing: Django's regex is upper-case-only
       // with no clean_postcode()/normalisation found anywhere, so a
       // hand-typed lowercase postcode would genuinely 400 in real Django
       // too -- deliberately not ported here, since every stored postcode
       // in this schema is already upper-case and rejecting a case
       // difference the user almost certainly didn't intend serves no one.
-      if (spec.name === "postcode" && !POSTCODE_REGEX.test(trimmed.toUpperCase())) return { ok: false, error: `${spec.label} is not a valid postcode` };
-      if (spec.kind === "email" && !isValidEmail(trimmed)) return { ok: false, error: `${spec.label} is not a valid email address` };
+      if (spec.name === "postcode" && !POSTCODE_REGEX.test(trimmed.toUpperCase())) fail(`${spec.label} is not a valid postcode`);
+      if (spec.kind === "email" && !isValidEmail(trimmed)) fail(`${spec.label} is not a valid email address`);
     }
-    values[spec.name] = trimmed === "" ? null : trimmed;
+    const normalised = SPACE_STRIPPED_FIELDS.has(spec.name) ? trimmed.split(" ").join("") : trimmed;
+    values[spec.name] = normalised === "" ? null : normalised;
   }
-  return { ok: true, values };
+  return error === null ? { ok: true, values } : { ok: false, error, values };
 }

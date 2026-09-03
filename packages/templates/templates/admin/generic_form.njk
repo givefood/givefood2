@@ -4,10 +4,27 @@
 {% block title %}{{ title }}{% endblock %}
 
 {% block body %}
+{# admin/form.html:8-10 wraps the fields in a BARE `<div class="column">`,
+   and only adds a second column when there is a preview to show
+   (form.html:31-37). Bulma's `.column.is-half` is a hard 50% whether or
+   not a sibling exists, so pinning it drew every preview-less page --
+   New/Edit Parliamentary Constituency, Slug Redirect, Order Group -- as a
+   half-width strip with an empty right half. Two bare columns still split
+   50/50, so the preview case is unchanged. #}
 <div class="columns">
-  <div class="column is-half">
+  <div class="column">
     <h1 class="title">{{ title }}</h1>
+    {# The food bank a donation point belongs to goes here rather than in
+       the title, because the title is slugified into the form's class name
+       below and admin.js matches those class names exactly. #}
+    {% if subtitle %}<p class="subtitle">{{ subtitle }}</p>{% endif %}
     {% if back_url %}<p><a href="{{ back_url }}">&larr; Back</a></p>{% endif %}
+
+    {# A bound Django form re-renders with its errors inline (bulma/forms/
+       field.html's `<span class="help is-danger">`); this port surfaces the
+       first failure as one banner and preserves every submitted value
+       below -- the same recovery order_form.njk:26-29 already settled on. #}
+    {% if error %}<div class="notification is-danger is-light">{{ error }}</div>{% endif %}
 
     {# class="form-<slugified title>" matches Django admin/form.html:14's
        `class="form-{{ page_title|slugify }}"`. static/js/admin.js selects on

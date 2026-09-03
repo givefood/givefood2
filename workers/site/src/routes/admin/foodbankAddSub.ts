@@ -28,6 +28,14 @@ const RESULTS_INVALID_DISPLAY_LIMIT = 50;
 interface AddSubResults {
   added: number;
   already: number;
+  /**
+   * Lines dropped because the same address appeared earlier in the SAME
+   * paste. Counted separately so that added + already + duplicates +
+   * invalid_total equals the number of non-blank lines submitted -- these
+   * rows never reach the insert, so they belong to none of the other three
+   * buckets and would otherwise vanish from the report without explanation.
+   */
+  duplicates: number;
   invalid: string[];
   invalid_total: number;
 }
@@ -69,6 +77,7 @@ export async function adminFoodbankAddSub(c: Context<AppEnv>): Promise<Response>
     const valid: string[] = [];
     const invalid: string[] = [];
     const seen = new Set<string>();
+    let duplicates = 0;
     for (const line of lines) {
       // givefood/models/subscribers.py:41 lowercases in save(), before the
       // unique_together constraint ever sees the value -- so the dedupe
@@ -84,7 +93,13 @@ export async function adminFoodbankAddSub(c: Context<AppEnv>): Promise<Response>
         invalid.push(line);
         continue;
       }
-      if (seen.has(email)) continue; // the same address twice in one paste
+      if (seen.has(email)) {
+        // The same address twice in one paste. Reported rather than silently
+        // dropped: it is neither "added" nor "already subscribed", and the
+        // banner's numbers have to account for every line pasted.
+        duplicates++;
+        continue;
+      }
       seen.add(email);
       valid.push(email);
     }
@@ -102,7 +117,12 @@ export async function adminFoodbankAddSub(c: Context<AppEnv>): Promise<Response>
 
     results = {
       added,
+      // `valid` has already had the intra-paste repeats removed, so this is
+      // strictly "was in the DB before this submission" -- the rows the
+      // ON CONFLICT above swallowed. The repeats are reported as their own
+      // number, not folded in here, because they are a different fact.
       already: valid.length - added,
+      duplicates,
       invalid: invalid.slice(0, RESULTS_INVALID_DISPLAY_LIMIT),
       invalid_total: invalid.length,
     };

@@ -30,7 +30,7 @@ import {
   type PageResult,
 } from "@givefood/db";
 import { formatCsvRow } from "@givefood/serialise";
-import { djangoDate, render } from "@givefood/templates";
+import { djangoDate, intcomma, render } from "@givefood/templates";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
 import { verifyCsrf } from "../../lib/csrf";
@@ -53,7 +53,75 @@ function csvResponse(filename: string, header: readonly string[], rows: unknown[
 
 interface ListColumn {
   label: string;
+  // The `?sort=` value this header links to -- the NEXT sort, not the
+  // current one (clicking the column the list is already sorted by flips
+  // its direction), so it must not be compared against `sort` to decide
+  // whether the column is the active one. `active`/`desc` say that.
   sort?: string;
+  active?: boolean;
+  desc?: boolean;
+}
+
+// One option of the sort <select> every sortable Django list page carries
+// top-right (foodbanks.html:16-26, orders.html:14-27, locations.html:14-25,
+// donationpoints.html:14-24, places.html:14-24). `value` is the raw
+// `?sort=` key, signed with a leading "-" for descending on the pages
+// whose Django view applies the key raw.
+interface ListSortOption {
+  value: string;
+  label: string;
+}
+
+// gfadmin/views.py:236-257 / :3030-3037 -- Django's sort keys on foodbanks
+// and places are signed strings ("name" ascending, "-name" descending),
+// applied raw by `.order_by(sort)`, so every field is reachable both ways.
+// Split one back into field + direction here. Django 403s an unrecognised
+// key (views.py:259-260); this falls back to the page's own default
+// instead, matching the allowlist comments in adminLists.ts.
+function parseSort<T extends string>(c: Context<AppEnv>, allowed: readonly T[], fallback: T): { sort: T; direction: "asc" | "desc"; signed: string } {
+  const raw = c.req.query("sort") ?? "";
+  const wantsDesc = raw.startsWith("-");
+  const field = wantsDesc ? raw.slice(1) : raw;
+  const sort: T = (allowed as readonly string[]).includes(field) ? (field as T) : fallback;
+  const direction: "asc" | "desc" = field === sort && wantsDesc ? "desc" : "asc";
+  return { sort, direction, signed: direction === "desc" ? `-${sort}` : sort };
+}
+
+// A sortable column header on one of those pages: the link target is the
+// next sort (the active column flips, a fresh one starts ascending -- the
+// two halves of Django's "Name" / "Name (Desc)" select options), while
+// active/desc drive the arrow showing the order the list is actually in.
+function sortableColumn(label: string, field: string, current: { sort: string; direction: "asc" | "desc" }): ListColumn {
+  const active = field === current.sort;
+  const desc = active && current.direction === "desc";
+  return { label, sort: active && !desc ? `-${field}` : field, active, desc };
+}
+
+// A sortable header on the one list Django always sorts descending
+// (orders(), views.py:382-383 `sort = "-%s" % (sort)`): the link carries
+// the bare field name, the same value orders.html's own <select> offers,
+// and the arrow is always down because there is no ascending order to
+// reach.
+function descOnlyColumn(label: string, field: string, currentSort: string): ListColumn {
+  return { label, sort: field, active: field === currentSort, desc: true };
+}
+
+// gfadmin/views.py:261-270's display_sort_options rule: "_" -> " ", Python
+// str.title(), and a " (Desc)" suffix on the "-" half of each pair.
+function djangoSortLabel(option: string): string {
+  const desc = option.startsWith("-");
+  const words = (desc ? option.slice(1) : option).replace(/_/g, " ").replace(/\b[a-z]/g, (ch) => ch.toUpperCase());
+  return desc ? `${words} (Desc)` : words;
+}
+
+// Django builds both directions of every field into the select
+// (views.py:236-257 for foodbanks, :3030-3037 for places); same here, from
+// the port's own allowlist.
+function bothDirectionSortOptions(fields: readonly string[]): ListSortOption[] {
+  return fields.flatMap((field) => [
+    { value: field, label: djangoSortLabel(field) },
+    { value: `-${field}`, label: djangoSortLabel(`-${field}`) },
+  ]);
 }
 
 async function renderList<T>(
@@ -63,6 +131,7 @@ async function renderList<T>(
     section: string;
     page: PageResult<T>;
     sort?: string;
+    sortOptions?: ListSortOption[];
     columns: ListColumn[];
     rowCells: (row: T) => string[];
     // Takes the same CSRF token the page itself renders with -- built
@@ -74,6 +143,11 @@ async function renderList<T>(
     // keeps).
     rowActions?: (row: T, csrfToken: string) => string;
     newUrl?: string;
+    // Django names the thing being created on every list page's button
+    // ("New Foodbank", foodbanks.html:14; "New ParlCon", politics.html:14;
+    // "New Order Group", order_groups.html:10); the template falls back to
+    // a bare "New" only when a caller supplies none.
+    newLabel?: string;
     csvUrl?: string;
     extra?: Record<string, unknown>;
   },
@@ -89,10 +163,12 @@ async function renderList<T>(
     total_pages: totalPages(opts.page.total, opts.page.pageSize),
     has_next: opts.page.hasNext,
     sort: opts.sort,
+    sort_options: opts.sortOptions?.map((opt) => ({ ...opt, selected: opt.value === opts.sort })),
     columns: opts.columns,
     rows: opts.page.rows.map((row) => ({ cells: opts.rowCells(row), actions: opts.rowActions ? opts.rowActions(row, csrfToken) : "" })),
     row_actions: !!opts.rowActions,
     new_url: opts.newUrl,
+    new_label: opts.newLabel,
     csv_url: opts.csvUrl,
   });
   return c.html(html);
@@ -128,30 +204,34 @@ function plainDateCell(value: string | null): string {
 export async function adminFoodbanksList(c: Context<AppEnv>): Promise<Response> {
   const db = dbSession(c);
   const now = new Date();
-  const sortParam = c.req.query("sort");
-  const sort: FoodbankListSort = (FOODBANK_LIST_SORTS as readonly string[]).includes(sortParam ?? "") ? (sortParam as FoodbankListSort) : "edited";
-  const page = await getFoodbanksPage(db, sort, parsePage(c), PAGE_SIZE);
+  // views.py:258 `sort = request.GET.get("sort", "edited")` + :303
+  // `.order_by(sort)` -- the raw key, so the default is `edited`
+  // ASCENDING. See getFoodbanksPage's own comment: this page is the triage
+  // queue, opened least-recently-edited first.
+  const current = parseSort(c, FOODBANK_LIST_SORTS, "edited" as FoodbankListSort);
+  const page = await getFoodbanksPage(db, current.sort, current.direction, parsePage(c), PAGE_SIZE);
 
   return renderList(c, {
     title: "Foodbanks",
     section: "foodbanks",
     page,
-    sort,
+    sort: current.signed,
+    sortOptions: bothDirectionSortOptions(FOODBANK_LIST_SORTS),
     columns: [
-      { label: "Name", sort: "name" },
-      { label: "Postcode", sort: "postcode" },
-      { label: "Country", sort: "country" },
+      sortableColumn("Name", "name", current),
+      sortableColumn("Postcode", "postcode", current),
+      sortableColumn("Country", "country", current),
       { label: "Closed" },
-      { label: "Locations", sort: "no_locations" },
-      { label: "Donation Points", sort: "no_donation_points" },
-      { label: "Network", sort: "network" },
-      { label: "28d Hits", sort: "hits_last_28_days" },
-      { label: "Last Order", sort: "last_order" },
-      { label: "Last Need", sort: "last_need" },
-      { label: "Last Need Check", sort: "last_need_check" },
-      { label: "Created", sort: "created" },
-      { label: "Modified", sort: "modified" },
-      { label: "Edited", sort: "edited" },
+      sortableColumn("Locations", "no_locations", current),
+      sortableColumn("Donation Points", "no_donation_points", current),
+      sortableColumn("Network", "network", current),
+      sortableColumn("28d Hits", "hits_last_28_days", current),
+      sortableColumn("Last Order", "last_order", current),
+      sortableColumn("Last Need", "last_need", current),
+      sortableColumn("Last Need Check", "last_need_check", current),
+      sortableColumn("Created", "created", current),
+      sortableColumn("Modified", "modified", current),
+      sortableColumn("Edited", "edited", current),
     ],
     rowCells: (fb) => [
       `<a href="/admin/foodbank/${fb.slug}/">${escapeHtml(fb.name)}</a>`,
@@ -161,7 +241,7 @@ export async function adminFoodbanksList(c: Context<AppEnv>): Promise<Response> 
       String(fb.no_locations),
       String(fb.no_donation_points ?? 0),
       fb.network ? escapeHtml(fb.network) : "",
-      String(fb.hits_last_28_days),
+      intcomma(fb.hits_last_28_days), // foodbanks.html:56 `{{ foodbank.hits_last_28_days|intcomma }}`
       dateCell(fb.last_order, now),
       dateCell(fb.last_need, now),
       dateCell(fb.last_need_check, now),
@@ -170,6 +250,7 @@ export async function adminFoodbanksList(c: Context<AppEnv>): Promise<Response> 
       dateCell(fb.edited, now),
     ],
     newUrl: "/admin/foodbank/new/",
+    newLabel: "New Foodbank", // foodbanks.html:14
     csvUrl: "/admin/foodbanks/csv/",
   });
 }
@@ -201,27 +282,40 @@ export async function adminFoodbanksNext(c: Context<AppEnv>): Promise<Response> 
 // adminLists.ts's own comment for why.
 export async function adminLocationsList(c: Context<AppEnv>): Promise<Response> {
   const db = dbSession(c);
-  const sortParam = c.req.query("sort");
-  const sort: LocationListSort = (LOCATION_LIST_SORTS as readonly string[]).includes(sortParam ?? "") ? (sortParam as LocationListSort) : "foodbank_name";
-  const page = await getLocationsPage(db, sort, parsePage(c), PAGE_SIZE);
+  // views.py:2146-2150 -- default `foodbank_name`, applied raw, so the page
+  // opens A->Z by food bank name.
+  const current = parseSort(c, LOCATION_LIST_SORTS, "foodbank_name" as LocationListSort);
+  const page = await getLocationsPage(db, current.sort, current.direction, parsePage(c), PAGE_SIZE);
 
   return renderList(c, {
     title: "Locations",
     section: "locations",
     page,
-    sort,
+    sort: current.signed,
+    // locations.html:18-21's own hardcoded option labels, plus the
+    // descending half the column headers now reach.
+    sortOptions: [
+      { value: "foodbank_name", label: "Food Bank" },
+      { value: "-foodbank_name", label: "Food Bank (Desc)" },
+      { value: "name", label: "Name" },
+      { value: "-name", label: "Name (Desc)" },
+      { value: "parliamentary_constituency", label: "Parliamentary Constituency" },
+      { value: "-parliamentary_constituency", label: "Parliamentary Constituency (Desc)" },
+      { value: "edited", label: "Edited" },
+      { value: "-edited", label: "Edited (Desc)" },
+    ],
     columns: [
-      { label: "Foodbank", sort: "foodbank_name" },
-      { label: "Location", sort: "name" },
+      sortableColumn("Foodbank", "foodbank_name", current),
+      sortableColumn("Location", "name", current),
       { label: "Address" },
-      { label: "Parliamentary Constituency", sort: "parliamentary_constituency" },
+      sortableColumn("Parliamentary Constituency", "parliamentary_constituency", current),
       { label: "MP" },
       { label: "MP ID" },
       { label: "Network" },
       { label: "Country" },
       { label: "Closed" },
       { label: "Modified" },
-      { label: "Edited", sort: "edited" },
+      sortableColumn("Edited", "edited", current),
     ],
     rowCells: (loc) => [
       `<a href="/admin/foodbank/${loc.foodbank_slug}/">${escapeHtml(loc.foodbank_name)}</a>`,
@@ -232,7 +326,10 @@ export async function adminLocationsList(c: Context<AppEnv>): Promise<Response> 
       loc.mp_parl_id !== null ? String(loc.mp_parl_id) : "",
       escapeHtml(loc.foodbank_network),
       loc.country ? escapeHtml(loc.country) : "",
-      loc.is_closed ? "Yes" : "No",
+      // locations.html:51's bare `{{ location.is_closed }}` on a
+      // BooleanField (givefood/models/foodbank.py:769) -- Django
+      // stringifies the Python bool, so this column reads True/False.
+      loc.is_closed ? "True" : "False",
       plainDateCell(loc.modified),
       plainDateCell(loc.edited),
     ],
@@ -241,18 +338,29 @@ export async function adminLocationsList(c: Context<AppEnv>): Promise<Response> 
 
 export async function adminDonationPointsList(c: Context<AppEnv>): Promise<Response> {
   const db = dbSession(c);
-  const sortParam = c.req.query("sort");
-  const sort: DonationPointListSort = (DONATION_POINT_LIST_SORTS as readonly string[]).includes(sortParam ?? "") ? (sortParam as DonationPointListSort) : "name";
-  const page = await getDonationPointsPage(db, sort, parsePage(c), PAGE_SIZE);
+  // views.py:2227-2231 -- default `name`, applied raw, so the page opens
+  // A->Z by donation point name.
+  const current = parseSort(c, DONATION_POINT_LIST_SORTS, "name" as DonationPointListSort);
+  const page = await getDonationPointsPage(db, current.sort, current.direction, parsePage(c), PAGE_SIZE);
 
   return renderList(c, {
     title: "Donation Points",
     section: "donationpoints",
     page,
-    sort,
+    sort: current.signed,
+    // donationpoints.html:18-20's own hardcoded option labels, plus the
+    // descending half the column headers now reach.
+    sortOptions: [
+      { value: "name", label: "Name" },
+      { value: "-name", label: "Name (Desc)" },
+      { value: "foodbank_name", label: "Food Bank" },
+      { value: "-foodbank_name", label: "Food Bank (Desc)" },
+      { value: "edited", label: "Edited" },
+      { value: "-edited", label: "Edited (Desc)" },
+    ],
     columns: [
-      { label: "Foodbank", sort: "foodbank_name" },
-      { label: "Location", sort: "name" },
+      sortableColumn("Foodbank", "foodbank_name", current),
+      sortableColumn("Location", "name", current),
       { label: "Address" },
       { label: "Company" },
       { label: "Store ID" },
@@ -260,7 +368,7 @@ export async function adminDonationPointsList(c: Context<AppEnv>): Promise<Respo
       { label: "Country" },
       { label: "Closed" },
       { label: "Modified" },
-      { label: "Edited", sort: "edited" },
+      sortableColumn("Edited", "edited", current),
     ],
     rowCells: (dp) => [
       `<a href="/admin/foodbank/${dp.foodbank_slug}/">${escapeHtml(dp.foodbank_name)}</a>`,
@@ -270,7 +378,10 @@ export async function adminDonationPointsList(c: Context<AppEnv>): Promise<Respo
       dp.store_id ? escapeHtml(dp.store_id) : "",
       escapeHtml(dp.foodbank_network),
       dp.country ? escapeHtml(dp.country) : "",
-      dp.is_closed ? "Yes" : "No",
+      // donationpoints.html:56's bare `{{ donation_point.is_closed }}` on a
+      // BooleanField (givefood/models/foodbank.py:1011) -- True/False, as
+      // Django renders it.
+      dp.is_closed ? "True" : "False",
       plainDateCell(dp.modified),
       plainDateCell(dp.edited),
     ],
@@ -308,6 +419,7 @@ export async function adminParlconsList(c: Context<AppEnv>): Promise<Response> {
     ],
     rowActions: (pc) => `<a href="/admin/parlcon/${pc.slug}/edit/" class="button is-small is-light">Edit</a>`,
     newUrl: "/admin/parlcon/new/",
+    newLabel: "New ParlCon", // politics.html:14
     csvUrl: "/admin/politics/csv/",
   });
 }
@@ -340,18 +452,29 @@ export async function adminOrdersList(c: Context<AppEnv>): Promise<Response> {
     section: "orders",
     page,
     sort,
+    // orders.html:18-23's own hardcoded option labels. One direction only:
+    // views.py:382-383 prepends "-" to whichever key is picked, so every
+    // option on this page is descending and the headers below say so.
+    sortOptions: [
+      { value: "delivery_datetime", label: "Delivery Date" },
+      { value: "created", label: "Created" },
+      { value: "no_items", label: "Items" },
+      { value: "weight", label: "Weight" },
+      { value: "calories", label: "Calories" },
+      { value: "cost", label: "Cost" },
+    ],
     columns: [
       { label: "ID" },
       { label: "Foodbank" },
       { label: "Del. Prov. ID" },
       { label: "Country" },
-      { label: "Delivery", sort: "delivery_datetime" },
-      { label: "Items", sort: "no_items" },
-      { label: "Weight (kg)", sort: "weight" },
-      { label: "Calories", sort: "calories" },
-      { label: "Cost", sort: "cost" },
+      descOnlyColumn("Delivery", "delivery_datetime", sort),
+      descOnlyColumn("Items", "no_items", sort),
+      descOnlyColumn("Weight (kg)", "weight", sort),
+      descOnlyColumn("Calories", "calories", sort),
+      descOnlyColumn("Cost", "cost", sort),
       { label: "Delivered Cost" },
-      { label: "Created", sort: "created" },
+      descOnlyColumn("Created", "created", sort),
     ],
     rowCells: (o) => [
       `<a href="/admin/order/${encodeURIComponent(o.order_id)}/">${escapeHtml(o.order_id)}</a>`,
@@ -360,8 +483,14 @@ export async function adminOrdersList(c: Context<AppEnv>): Promise<Response> {
       escapeHtml(o.country),
       plainDateCell(o.delivery_datetime),
       String(o.no_items),
-      ((o.weight / 1000) * ORDER_PACKAGING_WEIGHT_PC).toFixed(2),
-      String(o.calories),
+      // orders.html:57 chains `|intcomma|floatformat:2`; once intcomma has
+      // inserted a separator floatformat can parse neither
+      // Decimal("1,180.00") nor float("1,180.00") and returns "", so Django
+      // blanks the Weight cell of any order of 1000 kg or more. toFixed(2)
+      // then intcomma -- the order order_group.njk:8-15 already blessed for
+      // this exact value, so the same order reads the same on both pages.
+      intcomma(((o.weight / 1000) * ORDER_PACKAGING_WEIGHT_PC).toFixed(2)),
+      intcomma(o.calories), // orders.html:58 `{{ order.calories|intcomma }}`
       `£${(o.cost / 100).toFixed(2)}`,
       o.actual_cost ? `£${(o.actual_cost / 100).toFixed(2)}` : "",
       plainDateCell(o.created),
@@ -392,25 +521,36 @@ export async function adminNeedsCsv(c: Context<AppEnv>): Promise<Response> {
 
 // WP 6.9: gfadmin/views.py:3028-3062 places() -- real LIMIT/OFFSET instead
 // of Django's 20,000-row "page".
+//
+// Two deliberate differences from places.html:28-33/37-44's six columns,
+// so neither reads as an accident: Django's "Type" cell (`Place.type`,
+// givefood/models/geo.py:27) has no D1 column after the §4.8.7 trim, and
+// there is no per-row Edit button because PlaceForm is deferred (PLAN.md
+// WP 6.5b) -- the /admin/place/<pk>/edit/ route it pointed at does not
+// exist. The other four cells are Django's.
 export async function adminPlacesList(c: Context<AppEnv>): Promise<Response> {
   const db = dbSession(c);
-  const sortParam = c.req.query("sort") ?? "name";
-  const direction = sortParam.startsWith("-") ? "desc" : "asc";
-  const field = (sortParam.startsWith("-") ? sortParam.slice(1) : sortParam) as PlaceListSort;
-  const sort: PlaceListSort = (PLACE_LIST_SORTS as readonly string[]).includes(field) ? field : "name";
-  const page = await getPlacesPage(db, sort, direction, parsePage(c), PAGE_SIZE);
+  const current = parseSort(c, PLACE_LIST_SORTS, "name" as PlaceListSort);
+  const page = await getPlacesPage(db, current.sort, current.direction, parsePage(c), PAGE_SIZE);
 
   return renderList(c, {
     title: "Places",
     section: "settings",
     page,
-    sort: sortParam,
+    sort: current.signed,
+    sortOptions: bothDirectionSortOptions(PLACE_LIST_SORTS), // views.py:3030-3037's own six options
     columns: [
-      { label: "Name", sort: direction === "asc" && sort === "name" ? "-name" : "name" },
-      { label: "County", sort: direction === "asc" && sort === "county" ? "-county" : "county" },
-      { label: "Population", sort: direction === "asc" && sort === "population" ? "-population" : "population" },
+      sortableColumn("Name", "name", current),
+      { label: "Lat,Lng" }, // places.html:30 -- not one of the view's sort_options
+      sortableColumn("County", "county", current),
+      sortableColumn("Population", "population", current),
     ],
-    rowCells: (p) => [p.name ? escapeHtml(p.name) : "", p.county ? escapeHtml(p.county) : "", p.population !== null ? String(p.population) : ""],
+    rowCells: (p) => [
+      p.name ? escapeHtml(p.name) : "",
+      p.lat_lng ? escapeHtml(p.lat_lng) : "",
+      p.county ? escapeHtml(p.county) : "",
+      p.population !== null ? intcomma(p.population) : "", // places.html:41 `{{ place.population|intcomma }}`
+    ],
   });
 }
 
@@ -420,11 +560,18 @@ export async function adminPlacesList(c: Context<AppEnv>): Promise<Response> {
 // no whatsappsubscriber D1 table exists yet (same gap WP 6.4 disclosed).
 const SUBSCRIPTION_TYPES: readonly SubscriptionType[] = ["all", "email", "mobile", "webpush"];
 
-// gfadmin/views.py's per-type emoji, matching the dashboard/foodbank-tab
-// subscriber lists' own icon choices (mdi there vs a plain emoji here --
-// Django's subscriptions.html literally uses emoji for this one page, mdi
-// icons everywhere else it shows subscription type, both ported as-is).
-const SUBSCRIPTION_TYPE_EMOJI: Record<string, string> = { email: "\u{1F4E7}", mobile: "\u{1F4F1}", webpush: "\u{1F514}" };
+// gfadmin/views.py:2904/2943/2963 set 'type_emoji' to an mdi span --
+// '<span class="mdi mdi-email"></span>', mdi-cellphone, mdi-bell -- and
+// subscriptions.html:37 renders it with |safe, so the Type cell shows the
+// same monochrome glyphs as every other admin surface (and as the port's
+// own foodbankTabs.ts:126-135). The emoji in that template are only the
+// filter <select> labels at :18-21, which SUBSCRIPTION_FILTER_OPTIONS
+// below matches. mdi CSS is already loaded by admin/page.njk:7.
+const SUBSCRIPTION_TYPE_ICON: Record<string, string> = {
+  email: '<span class="mdi mdi-email"></span>',
+  mobile: '<span class="mdi mdi-cellphone"></span>',
+  webpush: '<span class="mdi mdi-bell"></span>',
+};
 const SUBSCRIPTION_FILTER_OPTIONS: { value: SubscriptionType; label: string }[] = [
   { value: "all", label: "All" },
   { value: "email", label: "\u{1F4E7} Email" },
@@ -442,15 +589,25 @@ export async function adminSubscriptionsList(c: Context<AppEnv>): Promise<Respon
     title: "Subscriptions",
     section: "settings",
     page,
-    columns: [{ label: "Type" }, { label: "Foodbank" }, { label: "Subscriber" }, { label: "Created" }],
+    // subscriptions.html:29-34's own header row and cell order -- the
+    // identifier sits immediately beside the type, which is what an admin
+    // is on this page to read.
+    columns: [{ label: "Type" }, { label: "Identifier" }, { label: "Foodbank" }, { label: "Created" }],
     rowCells: (s) => [
-      `${SUBSCRIPTION_TYPE_EMOJI[s.type] ?? ""} ${s.type.charAt(0).toUpperCase()}${s.type.slice(1)}`,
-      `<a href="/admin/foodbank/${s.foodbank_slug}/">${escapeHtml(s.foodbank_name)}</a>`,
+      `${SUBSCRIPTION_TYPE_ICON[s.type] ?? ""} ${s.type.charAt(0).toUpperCase()}${s.type.slice(1)}`,
       escapeHtml(s.identifier),
+      `<a href="/admin/foodbank/${s.foodbank_slug}/">${escapeHtml(s.foodbank_name)}</a>`,
       plainDateCell(s.created),
     ],
+    // subscriptions.html:50 names the row in the confirm ("Delete
+    // {{ subscription.identifier }}?"), the only thing distinguishing one
+    // identical-looking Delete button from another. data-identifier +
+    // this.dataset.identifier, never the value interpolated into the JS
+    // string literal -- an identifier containing an apostrophe would
+    // otherwise terminate it.
     rowActions: (s, csrfToken) =>
-      `<form method="post" action="/admin/subscriptions/delete/" onsubmit="return confirm('Delete this subscription?')">` +
+      `<form method="post" action="/admin/subscriptions/delete/" data-identifier="${escapeHtml(s.identifier)}"` +
+      ` onsubmit="return confirm('Delete ' + this.dataset.identifier + '?')">` +
       `<input type="hidden" name="csrf_token" value="${csrfToken}">` +
       `<input type="hidden" name="type" value="${s.type}">` +
       `<input type="hidden" name="row_id" value="${escapeHtml(s.row_id)}">` +
@@ -486,10 +643,16 @@ export async function adminFoodbanksWithoutNeedList(c: Context<AppEnv>): Promise
     title: "Foodbanks without a need",
     section: "settings",
     page,
-    columns: [{ label: "Foodbank" }, { label: "Latest published need" }],
+    columns: [{ label: "Foodbank" }, { label: "Need" }],
     rowCells: (f) => [
       `<a href="/admin/foodbank/${f.slug}/">${escapeHtml(f.name)}</a>`,
-      f.latest_need_id && f.latest_need_created ? `<a href="/admin/need/${f.latest_need_id}/">${escapeHtml(djangoDate(f.latest_need_created, "N j, Y, P"))}</a>` : "Never",
+      // foodbanks_without_need.html:17,22 -- header "Need", cell
+      // `{{ foodbank.need.need_id_short }}` (needs.py:81-82,
+      // `str(self.need_id)[:7]`), which is what an admin scans this column
+      // for and what /admin/needs/ shows in its own ID column. Empty for a
+      // food bank with no published need, because `None.need_id_short`
+      // falls through to Django's unset string_if_invalid of "".
+      f.latest_need_id ? `<a href="/admin/need/${f.latest_need_id}/">${escapeHtml(f.latest_need_id.slice(0, 7))}</a>` : "",
     ],
   });
 }

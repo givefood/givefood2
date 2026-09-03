@@ -1,6 +1,11 @@
 {% extends "admin/page.njk" %}
 
-{% block title %}Translations{% endblock %}
+{# need_translations.html:3 is `{{ need }}`, i.e. FoodbankChange.__str__
+   (givefood/models/needs.py:84-85). A constant "Translations" titled every
+   need's page identically, so several open in tabs were indistinguishable.
+   Verbatim copy of need.njk:9, including its "Unknown" fallback for a null
+   foodbank_name (__str__ would interpolate the literal "None"). #}
+{% block title %}{{ need.foodbank_name or "Unknown" }} - {{ need.created|date("M d Y H:i:s") }} ({{ need.need_id_short }}){% endblock %}
 
 {% block body %}
 <div class="columns">
@@ -12,10 +17,16 @@
       <dd>{% if foodbank_slug %}<a href="/admin/foodbank/{{ foodbank_slug }}/">{{ need.foodbank_name }}</a>{% else %}{{ need.foodbank_name or "Unknown" }}{% endif %}</dd>
       <dt>Input Method</dt>
       <dd>{{ need.input_method_emoji | safe }} {{ need.input_method_human }}</dd>
+      {# need_translations.html:31,33 -- the bare `{{ need.created }}` in
+         `title` localises through USE_L10N to DATETIME_FORMAT, so the hover
+         reads "Sept. 2, 2026, 7:39 p.m."; passing the raw D1 column showed a
+         machine timestamp instead. Same treatment as need.njk:23,25. The
+         `datetime` attributes stay raw ISO on purpose -- that is the port's
+         convention on need.njk, order.njk and discrepancy.njk alike. #}
       <dt>Created</dt>
-      <dd><time datetime="{{ need.created }}" title="{{ need.created }}">{{ need.created_timesince }}</time></dd>
+      <dd><time datetime="{{ need.created }}" title="{{ need.created|date("N j, Y, P") }}">{{ need.created_timesince }}</time></dd>
       <dt>Modified</dt>
-      <dd><time datetime="{{ need.modified }}" title="{{ need.modified }}">{{ need.modified_timesince }}</time></dd>
+      <dd><time datetime="{{ need.modified }}" title="{{ need.modified|date("N j, Y, P") }}">{{ need.modified_timesince }}</time></dd>
     </dl>
   </div>
 
