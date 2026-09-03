@@ -13,9 +13,9 @@ const DELIVERY_PROVIDER_ORDER_URL: Record<string, (id: string) => string> = {
   "Sainsbury's": (id) => `https://www.sainsburys.co.uk/gol-ui/my-account/orders/${id}`,
 };
 
-// gfadmin/views.py:445-452 order() -- see orderAdmin.ts's own comment for
-// exactly what's deliberately left out (edit/delete/send-notification/
-// order-group).
+// gfadmin/views.py:445-452 order() -- the read-only detail page. Django's
+// view passes the Order object alone and lets the template walk its
+// relations; the equivalent joins live in orderAdmin.ts's getOrderDetail.
 export async function adminOrderDetail(c: Context<AppEnv>): Promise<Response> {
   const db = dbSession(c);
   const orderId = c.req.param("orderId")!;
@@ -30,7 +30,13 @@ export async function adminOrderDetail(c: Context<AppEnv>): Promise<Response> {
 
   const html = await render("admin/order.njk", {
     ...(await adminPageContext(c, "orders")),
-    order,
+    order: {
+      ...order,
+      // admin/order.html:75 renders FoodbankChange.need_id_short() =
+      // str(need_id)[:7] (givefood/models/needs.py:81-82) as the heading's
+      // link text; the href keeps the full id.
+      need_id_short: order.need_id_str ? order.need_id_str.slice(0, 7) : null,
+    },
     lines,
     weight_kg: weightKg.toFixed(2),
     weight_kg_pkg: (weightKg * PACKAGING_WEIGHT_PC).toFixed(2),

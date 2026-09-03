@@ -32,7 +32,7 @@
       <dd>{{ order.order_id }}</dd>
       <dt>Foodbank</dt>
       <dd>{% if order.foodbank_slug %}<a href="/admin/foodbank/{{ order.foodbank_slug }}/">{{ order.foodbank_name }}</a>{% else %}<em>Unassigned</em>{% endif %}</dd>
-      <dt>Delivery</dt>
+      <dt>Delivery hour</dt>
       <dd>{{ order.delivery_date|date("D") }}, {{ order.delivery_date|date("N j, Y") }}, {{ order.delivery_hour }}:00</dd>
       <dt>Items</dt>
       <dd>{{ order.no_items }}</dd>
@@ -43,12 +43,18 @@
       <dt>Total weight (pkging)</dt>
       <dd>{{ weight_kg_pkg }} kg</dd>
       <dt>Calories</dt>
-      <dd>{{ order.calories }}</dd>
+      <dd>{{ order.calories|intcomma }}</dd>
       <dt>Cost</dt>
       <dd>&pound;{{ cost }}</dd>
       {% if actual_cost %}
       <dt>Delivered cost</dt>
       <dd>&pound;{{ actual_cost }}</dd>
+      {% endif %}
+      {# order.html:45-48 -- {{ order.order_group }} is OrderGroup.__str__,
+         i.e. its name (models/orders.py:329-330). #}
+      {% if order.order_group_slug %}
+      <dt>Order group</dt>
+      <dd><a href="/admin/order-group/{{ order.order_group_slug }}/">{{ order.order_group_name }}</a></dd>
       {% endif %}
       {% if order.source_url %}
       <dt>Source URL</dt>
@@ -69,7 +75,9 @@
     </dl>
 
     {% if order.need_id %}
-    <h2 class="title is-5">Need <a href="/admin/need/{{ order.need_id_str }}/">{{ order.need_id_str }}</a></h2>
+    {# order.html:75 -- the link text is need_id_short, the first 7 chars
+       (models/needs.py:81-82); the href keeps the full id. #}
+    <h2 class="title is-5">Need <a href="/admin/need/{{ order.need_id_str }}/">{{ order.need_id_short }}</a></h2>
     <p>{{ order.need_change_text | linebreaksbr | safe }}</p>
     <dl>
       <dt>Found</dt>
@@ -121,8 +129,13 @@
         <tr>
           <td>{{ line.name }}</td>
           <td>{{ line.quantity }}</td>
-          <td>{{ line.weight or 0 }}g</td>
-          <td>{{ line.calories or 0 }}</td>
+          <td>{{ (line.weight or 0)|intcomma }}g</td>
+          {# order.html:124-132 -- a 0-calorie line means no OrderItem row
+             exists for that name, so Django offers a one-click Add. Django
+             gets the pre-fill by POSTing a deliberately invalid form to
+             item_new; routes/admin/items.ts:74-81 replaces that with
+             GET ?name=, so this is a plain link. #}
+          <td>{{ (line.calories or 0)|intcomma }}{% if not line.calories %} <a href="/admin/item/new/?name={{ line.name|urlencode }}" target="_blank" rel="noopener" class="button is-small is-light">Add</a>{% endif %}</td>
         </tr>
         {% else %}
         <tr><td colspan="4">None</td></tr>

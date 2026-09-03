@@ -14,9 +14,16 @@
   - The confirm text says REFRESH, not delete, because that is what the
     action does. photo_delete leaves the photo re-fetchable: see
     routes/admin/photoDelete.ts's comment and givefood/utils/geo.py:107-141.
-  The `#generallocations` / `#donationpoints` anchors from Django's markup
-  become this port's panel ids (generallocations-panel /
-  donationpoints-panel, foodbank_detail.njk:19-21).
+  The `#generallocations` / `#donationpoints` anchors are kept verbatim
+  from Django (foodbank.html:687/690/693). They are CLASS hooks, not ids:
+  static/js/tabber.js's changetab() resolves the hash with
+  document.querySelector("." + section) and returns false on a miss, so
+  pointing them at the panel ids (generallocations-panel /
+  donationpoints-panel) leaves the panel hidden, strips is-active off the
+  whole tab strip, and never dispatches the `showtab` event that fires the
+  donation points panel's hx-get. The matching classes are on
+  foodbank_detail.njk:29/160/181 (generallocations, three sibling columns
+  that un-hide together) and :207 (donationpoints).
 #}
 {% if photos.length %}
 <table class="table is-fullwidth is-hoverable">
@@ -33,13 +40,13 @@
     <tr id="photo-row-{{ p.photo_id }}">
       <td>
         {% if p.place_type == "foodbank" %}
-        <a href="#generallocations-panel">{{ p.place_name }}</a><br>
+        <a href="#generallocations">{{ p.place_name }}</a><br>
         <span class="tag is-danger is-light">{{ p.place_type }}</span>
         {% elif p.place_type == "location" %}
-        <a href="#generallocations-panel">{{ p.place_name }}</a><br>
+        <a href="#generallocations">{{ p.place_name }}</a><br>
         <span class="tag is-warning is-light">{{ p.place_type }}</span>
         {% elif p.place_type == "donationpoint" %}
-        <a href="#donationpoints-panel">{{ p.place_name }}</a><br>
+        <a href="#donationpoints">{{ p.place_name }}</a><br>
         <span class="tag is-info is-light">{{ p.place_type }}</span>
         {% endif %}
       </td>

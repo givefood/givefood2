@@ -2,6 +2,15 @@
 
 {% block title %}{{ foodbank.name }}{% endblock %}
 
+{# gfadmin/templates/admin/foodbank.html:93-145 -- every URL row there is TWO
+   anchors, not one: a newwindow.svg icon that opens in a new tab, then a
+   plain same-tab anchor carrying the visible text. Clicking the URL text in
+   Django navigates in place; only the icon opens a new tab. `.newwindow img`
+   is already styled in static/css/admin.css:136-140 (byte-identical to
+   Django's copy). Macro rather than eight copies -- admin/query.njk already
+   defines a top-level macro in a template that {% extends %}. #}
+{% macro extlink(href, text) %}<a href="{{ href }}" target="_blank" rel="noopener" class="newwindow"><img src="/static/img/newwindow.svg" alt="New window"></a> <a href="{{ href }}">{{ text }}</a>{% endmacro %}
+
 {% block body %}
 <h1 class="title">{{ foodbank.name }}</h1>
 
@@ -14,8 +23,14 @@
     <li role="presentation"><a data-tab="donationpoints" role="tab" aria-selected="false" aria-controls="donationpoints-panel" id="donationpoints-tab"><span class="icon"><i class="mdi mdi-store"></i></span><span>Donation Points <span class="tag is-info is-normal is-light">{{ counts.donation_points }}</span></span></a></li>
     {% if counts.articles %}<li role="presentation"><a data-tab="articles" role="tab" aria-selected="false" aria-controls="articles-panel" id="articles-tab"><span class="icon"><i class="mdi mdi-newspaper-variant-multiple-outline"></i></span><span>Articles <span class="tag is-info is-normal is-light">{{ counts.articles }}</span></span></a></li>{% endif %}
     <li role="presentation"><a data-tab="subscribers" role="tab" aria-selected="false" aria-controls="subscribers-panel" id="subscribers-tab"><span class="icon"><i class="mdi mdi-bell"></i></span><span>Subscribers <span class="tag is-info is-normal is-light">{{ counts.subscribers }}</span></span></a></li>
-    {% if counts.photos %}<li role="presentation"><a data-tab="photos" role="tab" aria-selected="false" aria-controls="photos-panel" id="photos-tab"><span class="icon"><i class="mdi mdi-image"></i></span><span>Photos <span class="tag is-info is-normal is-light">{{ counts.photos }}</span></span></a></li>{% endif %}
+    {# foodbank.html:45-58 and views.py:617-622's lazy_tabs order -- the
+       unconditional Crawls tab comes BEFORE the conditional Photos tab, which
+       is always last. The photos count tag carries id="photos-count" because
+       foodbank_tabs/photos.njk:57 fires decrementPhotoCount() at it (defined
+       in the script block at the foot of this file, per foodbank.html:55 and
+       :444-451). #}
     <li role="presentation"><a data-tab="crawls" role="tab" aria-selected="false" aria-controls="crawls-panel" id="crawls-tab"><span class="icon"><i class="mdi mdi-robot"></i></span><span>Crawls <span class="tag is-info is-normal is-light">{{ counts.crawls }}</span></span></a></li>
+    {% if counts.photos %}<li role="presentation"><a data-tab="photos" role="tab" aria-selected="false" aria-controls="photos-panel" id="photos-tab"><span class="icon"><i class="mdi mdi-image"></i></span><span>Photos <span class="tag is-info is-normal is-light" id="photos-count">{{ counts.photos }}</span></span></a></li>{% endif %}
   </ul>
 </div>
 
@@ -39,26 +54,34 @@
       <button type="submit" class="button is-link is-light" hx-post="/admin/foodbank/{{ foodbank.slug }}/touch/" hx-vals='{"csrf_token": "{{ csrf_token }}"}' hx-swap="outerHTML">Touch</button>
     </form>
 
+    {# foodbank.html:82-84 -- shortcut shown only while the food bank has no
+       orders at all; ?foodbank=<slug> preselects it (orderForm.ts:117-119).
+       Without this the /admin/order/new/ route has no link into it anywhere
+       in the admin. #}
+    {% if not counts.orders %}
+    <a href="/admin/order/new/?foodbank={{ foodbank.slug }}" class="button is-link is-light" style="margin-top:10px">New Order</a>
+    {% endif %}
+
     {% if foodbank.notes %}<div class="box" style="margin-top:20px;">{{ foodbank.notes | linebreaksbr | safe }}</div>{% endif %}
 
     <h3 class="title is-5">URLs</h3>
     <a href="/admin/foodbank/{{ foodbank.slug }}/edit/urls/" class="button is-link is-small is-pulled-right is-light">Edit</a>
     <dl>
       <dt>Website</dt>
-      <dd><a href="{{ foodbank.url }}" target="_blank" rel="noopener">{{ foodbank.url | friendly_url }}</a></dd>
+      <dd>{{ extlink(foodbank.url, foodbank.url | friendly_url) }}</dd>
       <dt>Shopping List URL</dt>
-      <dd><a href="{{ foodbank.shopping_list_url }}" target="_blank" rel="noopener">{{ foodbank.shopping_list_url | friendly_url }}</a></dd>
-      {% if foodbank.rss_url %}<dt>RSS</dt><dd><a href="{{ foodbank.rss_url }}" target="_blank" rel="noopener">{{ foodbank.rss_url | friendly_url }}</a></dd>{% endif %}
-      {% if foodbank.news_url %}<dt>News URL</dt><dd><a href="{{ foodbank.news_url }}" target="_blank" rel="noopener">{{ foodbank.news_url | friendly_url }}</a></dd>{% endif %}
-      {% if foodbank.locations_url %}<dt>Locations URL</dt><dd><a href="{{ foodbank.locations_url }}" target="_blank" rel="noopener">{{ foodbank.locations_url | friendly_url }}</a></dd>{% endif %}
-      {% if foodbank.donation_points_url %}<dt>Donation Points URL</dt><dd><a href="{{ foodbank.donation_points_url }}" target="_blank" rel="noopener">{{ foodbank.donation_points_url | friendly_url }}</a></dd>{% endif %}
-      {% if foodbank.contacts_url %}<dt>Contacts URL</dt><dd><a href="{{ foodbank.contacts_url }}" target="_blank" rel="noopener">{{ foodbank.contacts_url | friendly_url }}</a></dd>{% endif %}
+      <dd>{{ extlink(foodbank.shopping_list_url, foodbank.shopping_list_url | friendly_url) }}</dd>
+      {% if foodbank.rss_url %}<dt>RSS</dt><dd>{{ extlink(foodbank.rss_url, foodbank.rss_url | friendly_url) }}</dd>{% endif %}
+      {% if foodbank.news_url %}<dt>News URL</dt><dd>{{ extlink(foodbank.news_url, foodbank.news_url | friendly_url) }}</dd>{% endif %}
+      {% if foodbank.locations_url %}<dt>Locations URL</dt><dd>{{ extlink(foodbank.locations_url, foodbank.locations_url | friendly_url) }}</dd>{% endif %}
+      {% if foodbank.donation_points_url %}<dt>Donation Points URL</dt><dd>{{ extlink(foodbank.donation_points_url, foodbank.donation_points_url | friendly_url) }}</dd>{% endif %}
+      {% if foodbank.contacts_url %}<dt>Contacts URL</dt><dd>{{ extlink(foodbank.contacts_url, foodbank.contacts_url | friendly_url) }}</dd>{% endif %}
     </dl>
 
     <h3 class="title is-5">Info</h3>
     <dl>
       <dt>GF Info</dt>
-      <dd><a href="/needs/at/{{ foodbank.slug }}/" target="_blank" rel="noopener">{{ foodbank.slug }}</a></dd>
+      <dd>{{ extlink("/needs/at/" + foodbank.slug + "/", foodbank.slug) }}</dd>
       {% if foodbank.facebook_page %}<dt>Facebook</dt><dd><a href="https://www.facebook.com/{{ foodbank.facebook_page }}" target="_blank" rel="noopener">{{ foodbank.facebook_page }}</a></dd>{% endif %}
       {% if foodbank.bankuet_slug %}<dt>Bankuet</dt><dd><a href="https://www.bankuet.co.uk/{{ foodbank.bankuet_slug }}/" target="_blank" rel="noopener">{{ foodbank.bankuet_slug }}</a></dd>{% endif %}
       {% if charity_register_url %}
@@ -108,10 +131,14 @@
       <dt>Subscribers</dt><dd>{{ number_subscribers }}</dd>
       <dt>Days Between Needs</dt><dd>{{ foodbank.days_between_needs }}</dd>
       <dt>Orders</dt><dd>{{ no_orders }}</dd>
-      <dt>Total weight</dt><dd>{{ total_weight_kg }} kg</dd>
-      <dt>Total weight (pkging)</dt><dd>{{ total_weight_kg_pkg }} kg</dd>
-      <dt>Total items</dt><dd>{{ total_items }}</dd>
-      <dt>Total cost</dt><dd>&pound;{{ total_cost }}</dd>
+      {# foodbank.html:241-248 -- these four, and only these four, carry
+         |intcomma ({% load humanize %} at :2 exists solely for them). No
+         floatformat: Django applies intcomma alone here, unlike
+         admin/order_group.njk where Django itself chains floatformat first. #}
+      <dt>Total weight</dt><dd>{{ total_weight_kg|intcomma }} kg</dd>
+      <dt>Total weight (pkging)</dt><dd>{{ total_weight_kg_pkg|intcomma }} kg</dd>
+      <dt>Total items</dt><dd>{{ total_items|intcomma }}</dd>
+      <dt>Total cost</dt><dd>&pound;{{ total_cost|intcomma }}</dd>
       <dt>Locations</dt><dd>{{ counts.locations }}</dd>
       <dt>Donation Points</dt><dd>{{ counts.donation_points }}</dd>
     </dl>
@@ -163,17 +190,72 @@
     <a href="/admin/foodbank/{{ foodbank.slug }}/location/new/area/" class="button is-link is-light">New Location Area</a>
 
     <h3 class="title is-5">Locations ({{ locations.length }})</h3>
-    <table class="table is-fullwidth">
-      <tbody>
-        {% for loc in locations %}
-        <tr>
-          <td><a href="/admin/foodbank/{{ foodbank.slug }}/location/{{ loc.slug }}/edit/">{{ loc.name }}</a></td>
-          <td>{{ loc.postcode or "" }}</td>
-        </tr>
-        {% else %}
-        <tr><td>None</td></tr>
-        {% endfor %}
-      </tbody>
+    {# foodbank.html:307-388 -- a THREE-cell table: label, detail, controls.
+       Row 1 is the food bank's OWN main address (the only link into
+       /admin/foodbank/<slug>/edit/address/ from this page), row 2 the
+       delivery address when there is one, then one row per location. The
+       `locationtable` class is what static/css/admin.css:103-107 styles.
+       Every field below is already on FoodbankRow / FoodbankLocationRow --
+       getLocationsByFoodbankId is a SELECT *, so no query change is needed. #}
+    <table class="table is-fullwidth locationtable">
+      <tr>
+        <td>Main</td>
+        <td>
+          {{ foodbank.address | linebreaksbr | safe }}<br>{{ foodbank.postcode }}
+          <dl class="is-size-7">
+            <dt>Lat Lng</dt>
+            <dd><a href="https://www.google.co.uk/maps/?q={{ foodbank.lat_lng }}">{{ foodbank.lat_lng }}</a></dd>
+            <dt>Place ID</dt>
+            <dd>{% if foodbank.place_id %}{{ foodbank.place_id | truncatechars(25) }}{% else %}None{% endif %}</dd>
+            {% if foodbank.address_is_administrative %}<dt>Just administrative location</dt><dd>&#9989; Yes</dd>{% endif %}
+            {% if foodbank.place_has_photo %}<dt>Place ID has photo</dt><dd>&#9989; Yes</dd>{% endif %}
+          </dl>
+        </td>
+        <td><a href="/admin/foodbank/{{ foodbank.slug }}/edit/address/" class="button is-link is-small is-pulled-right is-light">Edit</a></td>
+      </tr>
+      {% if foodbank.delivery_address %}
+      <tr>
+        <td>Delivery</td>
+        <td>
+          {{ foodbank.delivery_address | linebreaksbr | safe }}
+          <dl class="is-size-7">
+            <dt>Lat Lng</dt>
+            <dd><a href="https://www.google.co.uk/maps/?q={{ foodbank.delivery_lat_lng }}">{{ foodbank.delivery_lat_lng }}</a></dd>
+          </dl>
+        </td>
+        <td><a href="/admin/foodbank/{{ foodbank.slug }}/edit/#id_delivery_address" class="button is-link is-small is-pulled-right is-light">Edit</a></td>
+      </tr>
+      {% endif %}
+      {% for loc in locations %}
+      <tr>
+        <td>{{ loc.name }}</td>
+        <td>
+          {% if loc.address %}{{ loc.address | linebreaksbr | safe }}{% endif %}{% if loc.address and loc.postcode %}<br>{% endif %}{% if loc.postcode %}{{ loc.postcode }}{% endif %}
+          <dl class="is-size-7">
+            {% if loc.phone_number %}<dt>Phone</dt><dd>{{ loc.phone_number }}</dd>{% endif %}
+            {% if loc.email %}<dt>Email</dt><dd>{{ loc.email }}</dd>{% endif %}
+            <dt>Lat Lng</dt>
+            <dd><a href="https://www.google.co.uk/maps/?q={{ loc.lat_lng }}">{{ loc.lat_lng }}</a></dd>
+            <dt>Place ID</dt>
+            <dd>{% if loc.place_id %}{{ loc.place_id | truncatechars(25) }}{% else %}None{% endif %}</dd>
+            {% if loc.place_has_photo %}<dt>Place ID has photo</dt><dd>&#9989; Yes</dd>{% endif %}
+            {% if loc.is_donation_point %}<dt>Donation Point</dt><dd>&#9989; Yes</dd>{% endif %}
+            {% if loc.boundary_geojson %}<dt>Is Service Area</dt><dd>&#9989; Yes</dd>{% endif %}
+          </dl>
+        </td>
+        <td>
+          <a href="/admin/foodbank/{{ foodbank.slug }}/location/{{ loc.slug }}/edit/" class="button is-link is-small is-pulled-right is-light">Edit</a>
+          {# data-name + this.dataset.name, never the value interpolated into
+             the JS string -- a location name with an apostrophe would break
+             the confirm() otherwise. Same pattern as the food bank delete
+             form in the Really Dangerous Zone above. #}
+          <form action="/admin/foodbank/{{ foodbank.slug }}/location/{{ loc.slug }}/delete/" method="post" data-name="{{ loc.name }}" onsubmit="return confirm('Delete ' + this.dataset.name + '?');">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="button is-small is-danger is-pulled-right is-light">Delete</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
     </table>
   </div>
 
@@ -193,9 +275,27 @@
         <strong><a href="/admin/need/{{ foodbank.latestNeed.need_id }}/">{{ foodbank.latestNeed.need_id_short }}</a></strong>
         {{ foodbank.latestNeed.created_timesince }}
       </p>
-      <div class="box"><p>{{ foodbank.latestNeed.change_text | linebreaksbr | safe }}</p></div>
+      {# foodbank.html:404-417 -- a two-column .columns NESTED inside this
+         third generallocations column, giving a side-by-side Need / Excess
+         pair. Not a single box: excess_change_text is a real field
+         (packages/db/src/needs.ts:16) and Django prints it here. The <h4>s
+         are bare in Django too -- static/css/admin.css (byte-identical to
+         Django's) styles h1/h2/h3 only. No {% if %} around Excess: Django
+         renders an empty <p> when excess_change_text is null. #}
+      <div class="columns">
+        <div class="column">
+          <h4>Need</h4>
+          <p>{{ foodbank.latestNeed.change_text | linebreaksbr | safe }}</p>
+        </div>
+        <div class="column">
+          <h4>Excess</h4>
+          <p>{{ foodbank.latestNeed.excess_change_text | linebreaksbr | safe }}</p>
+        </div>
+      </div>
     {% else %}
-      <p>No published need yet.</p>
+      {# foodbank.html:420 -- wording and margin match Django, and match this
+         port's own foodbank_tabs/needsorders.njk empty state. #}
+      <p style="margin-top:20px;">No needs yet</p>
     {% endif %}
   </div>
 
@@ -221,20 +321,36 @@
     <div class="loading"><span class="loader"></span></div>
   </div>
 
+  {# Panel order follows views.py:617-622's lazy_tabs: crawls, then photos
+     last -- kept in step with the tab strip above. #}
+  <div class="column tabcontent crawls is-hidden" id="crawls-panel" role="tabpanel" aria-labelledby="crawls-tab"
+       hx-get="/admin/foodbank/{{ foodbank.slug }}/tab/crawls/" hx-trigger="showtab once" hx-swap="innerHTML swap:0.06s">
+    <div class="loading"><span class="loader"></span></div>
+  </div>
+
   {% if counts.photos %}
   <div class="column tabcontent photos is-hidden" id="photos-panel" role="tabpanel" aria-labelledby="photos-tab"
        hx-get="/admin/foodbank/{{ foodbank.slug }}/tab/photos/" hx-trigger="showtab once" hx-swap="innerHTML swap:0.06s">
     <div class="loading"><span class="loader"></span></div>
   </div>
   {% endif %}
-
-  <div class="column tabcontent crawls is-hidden" id="crawls-panel" role="tabpanel" aria-labelledby="crawls-tab"
-       hx-get="/admin/foodbank/{{ foodbank.slug }}/tab/crawls/" hx-trigger="showtab once" hx-swap="innerHTML swap:0.06s">
-    <div class="loading"><span class="loader"></span></div>
-  </div>
 </div>
 {% endblock %}
 
 {% block script %}
 <script src="/static/js/tabber.js?v={{ version }}" defer></script>
+<script>
+  // gfadmin/templates/admin/foodbank.html:444-451 -- foodbank_tabs/photos.njk:57
+  // calls this from hx-on::after:request so the Photos tab badge tracks deletes
+  // without a page reload. Must stay a plain global function declaration: htmx
+  // evaluates the hx-on body through the Function constructor, which resolves
+  // names against globalThis.
+  function decrementPhotoCount() {
+    const countEl = document.getElementById('photos-count');
+    if (countEl) {
+      const currentCount = parseInt(countEl.textContent, 10);
+      countEl.textContent = currentCount - 1;
+    }
+  }
+</script>
 {% endblock %}

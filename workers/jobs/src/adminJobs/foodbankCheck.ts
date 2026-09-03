@@ -1,7 +1,7 @@
 import type { Env } from "../../worker-configuration";
 import { getFoodbankBySlug, getLocationsByFoodbankId, getDonationPointsByFoodbankId, markAdminJobRunning, markAdminJobDone, markAdminJobFailed } from "@givefood/db";
 import { geminiJsonCall } from "../lib/gemini";
-import { buildCheckPrompt, FOODBANK_CHECK_RESPONSE_SCHEMA, type FoodbankCheckAiResponse } from "./checkPrompt";
+import { buildCheckPrompt, FOODBANK_CHECK_RESPONSE_SCHEMA, CHECK_USE_AI_FIELDS, type FoodbankCheckAiResponse } from "./checkPrompt";
 
 const BOT_USER_AGENT = "Mozilla/5.0 (compatible; GiveFoodBot/1.0; +https://www.givefood.org.uk/bot/)";
 
@@ -56,6 +56,18 @@ function normalisePostcode(value: string | null | undefined): string {
 function normaliseAiString(value: string | undefined): string {
   const v = (value ?? "").trim();
   return ["none", "null", "nothing"].includes(v.toLowerCase()) ? "" : v;
+}
+
+// gfadmin/views.py:1195 -- phone_number is the one detail field Django
+// normalises before comparing: it strips spaces from BOTH sides (the model's
+// save() strips them too, givefood/models/foodbank.py:649-650), so
+// "01234 567890" held against "01234567890" found is not a change. Every
+// other field in detail_changes is a plain string compare. All whitespace is
+// stripped here rather than Django's literal spaces only, so the comparison
+// agrees with the port's own write path (routes/admin/useAi.ts:41, which
+// strips /\s+/ before storing).
+function normaliseForCompare(field: string, value: string): string {
+  return field === "phone_number" ? value.replace(/\s+/g, "") : value;
 }
 
 export async function handleFoodbankCheckJob(env: Env, jobId: string, foodbankSlug: string): Promise<void> {
@@ -148,19 +160,40 @@ export async function handleFoodbankCheckJob(env: Env, jobId: string, foodbankSl
       responseSchema: FOODBANK_CHECK_RESPONSE_SCHEMA,
     })) as FoodbankCheckAiResponse;
 
-    const detailChanges: Record<string, boolean> = {};
-    for (const [field, foundValue] of Object.entries(aiResponse.details)) {
-      if (field === "name" || field === "address" || field === "postcode" || field === "country") continue;
-      const ours = (foodbank as unknown as Record<string, string | null>)[field];
-      detailChanges[field] = normaliseAiString(foundValue as string) !== (ours ?? "").trim() && normaliseAiString(foundValue as string) !== "";
+    // gfadmin/views.py:1186-1188 -- Django rewrites check_result["details"]
+    // IN PLACE with the nullish-normalised values, before both the
+    // comparison and the render. That matters twice over: a field the model
+    // answered "none" for shows as empty in the Found column, and check.html
+    // suppresses its "Use" button on the same truthiness test, so the button
+    // can never offer to write the literal string "none" into the field.
+    for (const key of Object.keys(aiResponse.details) as (keyof typeof aiResponse.details)[]) {
+      aiResponse.details[key] = normaliseAiString(aiResponse.details[key]);
     }
-    // gfadmin/views.py:1190-1194 -- "address" in Django's detail_changes is
+
+    // gfadmin/views.py:1195-1204 -- detail_changes is a plain inequality per
+    // field over a FIXED key list, so "we hold a value the AI did not find"
+    // IS a change and the row highlights, warning the reviewer that what we
+    // hold may now be stale. The "Use" button is gated separately in the
+    // template on the found value being non-empty (check.html:80 et seq,
+    // `{% if detail_changes.x and check_result.details.x %}`) -- that test
+    // belongs there, not folded in here. The key list is Django's dict keys
+    // minus "address" (computed below); note Django has no `network` entry,
+    // and iterating the AI response instead would silently skip any field
+    // the model omitted from its JSON.
+    const detailChanges: Record<string, boolean> = {};
+    for (const field of CHECK_USE_AI_FIELDS) {
+      const ours = ((foodbank as unknown as Record<string, string | null>)[field] ?? "").trim();
+      const found = aiResponse.details[field] ?? "";
+      detailChanges[field] = normaliseForCompare(field, ours) !== normaliseForCompare(field, found);
+    }
+    // gfadmin/views.py:1192-1194 -- "address" in Django's detail_changes is
     // address+postcode combined (joined by a newline) and compared as a
-    // plain string, not run through the AI-nullish/empty-string handling
-    // the other 10 fields get above. Previously skipped here entirely
-    // (never computed at all), which is why the Details table's Address
-    // row never highlighted on a real change and postcode was silently
-    // dropped from the comparison.
+    // plain trimmed string, with none of phone_number's space stripping.
+    // The nullish normalisation above already applies to both halves
+    // (views.py:1186-1188 rewrites every key). Previously skipped here
+    // entirely (never computed at all), which is why the Details table's
+    // Address row never highlighted on a real change and postcode was
+    // silently dropped from the comparison.
     const oursAddress = `${foodbank.address ?? ""}\n${foodbank.postcode ?? ""}`.trim();
     const foundAddress = `${aiResponse.details.address ?? ""}\n${aiResponse.details.postcode ?? ""}`.trim();
     detailChanges.address = oursAddress !== foundAddress;
@@ -186,9 +219,16 @@ export async function handleFoodbankCheckJob(env: Env, jobId: string, foodbankSl
         discrepancy: !ourLocationPostcodes.has(normalisePostcode(l.postcode)) && !ourAddressPostcodes.has(normalisePostcode(l.postcode)),
       })),
       ourDonationPoints: donationPoints.map((d) => ({ slug: d.slug, name: d.name, address: d.address, postcode: d.postcode, discrepancy: !foundDonationPointPostcodes.has(normalisePostcode(d.postcode)) })),
+      // gfadmin/views.py:1176-1180 -- the donation-points loop's second
+      // exclusion set is foodbank_json["locations"] (our locations'
+      // postcodes), NOT the food bank's own address postcode: that is the
+      // locations loop's rule at views.py:1173. Getting these the same way
+      // round badges a found donation point sitting at one of our existing
+      // locations as "new" with an Add button -- a duplicate waiting to be
+      // created -- and suppresses one at the food bank's own postcode.
       foundDonationPoints: aiResponse.donation_points.map((d) => ({
         ...d,
-        discrepancy: !ourDonationPointPostcodes.has(normalisePostcode(d.postcode)) && !ourAddressPostcodes.has(normalisePostcode(d.postcode)),
+        discrepancy: !ourDonationPointPostcodes.has(normalisePostcode(d.postcode)) && !ourLocationPostcodes.has(normalisePostcode(d.postcode)),
       })),
     };
 

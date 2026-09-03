@@ -29,19 +29,32 @@ export interface OrderTabRow {
   delivery_provider: string | null;
   no_items: number;
   cost: number;
-  actual_cost: number | null;
   notification_email_sent: string | null;
 }
 
+// The two halves of the needs/orders tab sort on deliberately DIFFERENT
+// keys -- gfadmin/views.py:644-645 is
+//   "needs":  ...order_by("-created")[:200]
+//   "orders": ...order_by("-delivery_datetime")[:200]
+// Don't copy one onto the other: the orders table renders
+// delivery_datetime as its Date column (foodbank.html:522), so sorting it
+// by `created` shows a Date column out of date order, and applying the
+// 200-row cap to the wrong key hands back a different 200 rows entirely.
 export async function getNeedsForFoodbankTab(session: Session, foodbankId: number, limit: number): Promise<FoodbankChangeRow[]> {
   const result = await session.prepare("SELECT * FROM foodbankchange WHERE foodbank_id = ? ORDER BY created DESC LIMIT ?").bind(foodbankId, limit).all();
   return result.results.map((r) => mapNeedRow(r as Record<string, unknown>));
 }
 
+// `actual_cost` is deliberately NOT selected: Django's Cost column here is
+// Order.natural_cost() (givefood/models/orders.py:74-75), a bare
+// float(cost/100) with no actual_cost branch. The separate
+// natural_actual_cost() at :77-81 belongs to the order DETAIL page only
+// (admin/order.njk:49-51). Ordering by delivery_datetime also lets this
+// use order_foodbank_delivery_idx (0005_orders_and_charity.sql:34).
 export async function getOrdersForFoodbankTab(session: Session, foodbankId: number, limit: number): Promise<OrderTabRow[]> {
   const result = await session
     .prepare(
-      "SELECT id, order_id, created, delivery_datetime, delivery_provider, no_items, cost, actual_cost, notification_email_sent FROM orders WHERE foodbank_id = ? ORDER BY created DESC LIMIT ?",
+      "SELECT id, order_id, created, delivery_datetime, delivery_provider, no_items, cost, notification_email_sent FROM orders WHERE foodbank_id = ? ORDER BY delivery_datetime DESC LIMIT ?",
     )
     .bind(foodbankId, limit)
     .all<OrderTabRow>();
@@ -53,15 +66,20 @@ export interface ArticleTabRow {
   published_date: string;
   title: string;
   url: string;
-  featured: boolean;
 }
 
+// `featured` is deliberately NOT selected. Django's articles partial
+// (gfadmin/templates/admin/foodbank.html:591-604) is two cells -- title,
+// then timesince -- with no featured column at all. The featured toggle
+// lives only on the admin dashboard (admin/index.html:131-133, ported at
+// routes/admin/articles.ts); a static star here would be a column Django
+// does not have.
 export async function getArticlesForFoodbankTab(session: Session, foodbankId: number, limit: number): Promise<ArticleTabRow[]> {
   const result = await session
-    .prepare("SELECT id, published_date, title, url, featured FROM foodbankarticle WHERE foodbank_id = ? ORDER BY published_date DESC LIMIT ?")
+    .prepare("SELECT id, published_date, title, url FROM foodbankarticle WHERE foodbank_id = ? ORDER BY published_date DESC LIMIT ?")
     .bind(foodbankId, limit)
-    .all<{ id: number; published_date: string; title: string; url: string; featured: number }>();
-  return result.results.map((r) => ({ ...r, featured: r.featured === 1 }));
+    .all<ArticleTabRow>();
+  return result.results;
 }
 
 export interface SubscriptionCounts {

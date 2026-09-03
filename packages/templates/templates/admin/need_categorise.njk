@@ -4,8 +4,14 @@
 
 {% block body %}
 <div class="columns">
-  <div class="column is-half">
-    <h2 class="title is-4">{{ need.need_id }}</h2>
+  {# need_categorise.html:25 -- one column with NO size class, i.e. full page width (Django's
+     head style also flows each .field inline across it). The generic-form `is-half` this page
+     had picked up left the whole item/type/category table in the left half of the page. #}
+  <div class="column">
+    {# need_categorise.html:26 -- {{ need.need_id_short }}, the 7-char id (models/needs.py:81-82),
+       as on every other need page. Falls back to the full uuid until adminNeedCategorise passes
+       need_id_short the way adminNeedDetail/adminNeedTranslations already do. #}
+    <h2 class="title is-4">{{ need.need_id_short or need.need_id }}</h2>
 
     <form action="/admin/need/{{ need.need_id }}/categorise/" method="post">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">

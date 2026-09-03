@@ -1,4 +1,8 @@
 {# gfadmin/templates/admin/includes/needtable.html -- one row per need, shared by the dashboard's unpublished/published panels. #}
+{# needtable.html:1,39-41 wraps the whole table in {% if needs.all %} and prints "No needs" when
+   the queue is empty -- deliberately NOT the port's usual <td colspan>None</td> empty row, which
+   would leave a bare header row on the state this panel sits in most of the time. #}
+{% if needs.length %}
 <table class="table is-fullwidth is-hoverable">
   <thead>
     <tr><th></th><th>Foodbank</th><th>When</th><th></th></tr>
@@ -6,7 +10,7 @@
   <tbody>
     {% for need in needs %}
     <tr>
-      <td class="input-method">{{ need.input_method_emoji }}</td>
+      <td class="input-method">{{ need.input_method_emoji | safe }}</td>
       <td>
         {% if need.foodbank_slug %}<a href="/admin/foodbank/{{ need.foodbank_slug }}/">{{ need.foodbank_name }}</a>
         {% else %}{{ need.foodbank_name or "Unknown" }}{% endif %}
@@ -14,17 +18,23 @@
       <td><a href="/admin/need/{{ need.need_id }}/">{{ need.timesince_ago }}</a></td>
       {% if not need.published %}
       <td>
-        <form method="post" action="/admin/need/{{ need.need_id }}/delete/" onsubmit="return confirm('Delete this need?');">
+        {# needtable.html:31 -- Bulma's small circular x (class="delete is-small", empty body, the
+           3px nudge), and a confirm naming the food bank. The name goes through data-name rather
+           than straight into the JS string as Django does, so an apostrophe ("St Michael's")
+           can't break the literal; `or "this"` covers the LEFT JOIN's null foodbank_name. #}
+        <form method="post" action="/admin/need/{{ need.need_id }}/delete/" data-name="{{ need.foodbank_name or 'this' }}"
+              onsubmit="return confirm('Are you sure you want to delete ' + this.dataset.name + ' need?');">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-          <button type="submit" class="button is-small is-danger is-light">Delete</button>
+          <button type="submit" class="delete is-small" style="margin-top:3px;" aria-label="Delete need"></button>
         </form>
       </td>
       {% else %}
       <td></td>
       {% endif %}
     </tr>
-    {% else %}
-    <tr><td colspan="4">None</td></tr>
     {% endfor %}
   </tbody>
 </table>
+{% else %}
+<p>No needs</p>
+{% endif %}

@@ -20,7 +20,7 @@ import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
 import { verifyCsrf, issueCsrfToken } from "../../lib/csrf";
 import { adminPageContext } from "./pageContext";
-import { fullNameFoodbank } from "../../lib/fields";
+import { fullNameFoodbank, titleCapitalised } from "../../lib/fields";
 import { inputMethodEmoji } from "../../lib/needAdminDisplay";
 import { timesince } from "../../lib/timesince";
 
@@ -127,7 +127,15 @@ export async function adminFoodbankDetail(c: Context<AppEnv>): Promise<Response>
     no_orders: totals.orders,
     number_subscribers: totals.emailSubscribers,
     total_weight_kg: totalWeightKg,
-    total_weight_kg_pkg: Math.round(totalWeightKg * PACKAGING_WEIGHT_PC * 100) / 100,
+    // gfadmin/views.py:632 -- `total_weight_kg * PACKAGING_WEIGHT_PC`, no
+    // rounding: the template's |intcomma renders the float as-is, tail and
+    // all. The port previously rounded to 2dp here, a visible divergence
+    // (23415.6 kg raw renders "27,630.41" rounded vs Django's
+    // "27,630.407999999996"). Python and JS share IEEE754 doubles and both
+    // stringify via shortest-round-trip repr -- 23415.6 * 1.18 gives the
+    // identical 27630.407999999996 in each -- so the raw product reproduces
+    // Django byte for byte.
+    total_weight_kg_pkg: totalWeightKg * PACKAGING_WEIGHT_PC,
     total_items: totals.totalItems,
     total_cost: totals.totalCostPence / 100,
   });
@@ -149,6 +157,10 @@ export async function adminFoodbankTab(c: Context<AppEnv>): Promise<Response> {
       const [needs, orders] = await Promise.all([getNeedsForFoodbankTab(db, foodbank.id, NEEDS_ORDERS_TAB_LIMIT), getOrdersForFoodbankTab(db, foodbank.id, NEEDS_ORDERS_TAB_LIMIT)]);
       return c.html(
         await render("admin/foodbank_tabs/needsorders.njk", {
+          // gfadmin/templates/admin/foodbank.html:461 and :509 head each of
+          // this fragment's two columns with a New Need / New Order button
+          // carrying ?foodbank=<slug>; the template needs the slug for those.
+          foodbank_slug: foodbank.slug,
           needs: needs.map((n) => ({ ...n, input_method_emoji: inputMethodEmoji(n.input_method), need_id_short: n.need_id.slice(0, 7) })),
           orders: orders.map((o) => ({ ...o, delivery_provider_slug: o.delivery_provider ? slugify(o.delivery_provider) : null })),
         }),
@@ -162,7 +174,10 @@ export async function adminFoodbankTab(c: Context<AppEnv>): Promise<Response> {
       const articles = await getArticlesForFoodbankTab(db, foodbank.id, ARTICLES_TAB_LIMIT);
       return c.html(
         await render("admin/foodbank_tabs/articles.njk", {
-          articles: articles.map((a) => ({ ...a, published_date_timesince: `${timesince(a.published_date)} ago` })),
+          // title_captialised is Django's own (misspelled) FoodbankArticle method,
+          // articles.py:34-52 -- already ported as lib/fields.ts's titleCapitalised
+          // and applied on every other article surface, just never on this tab.
+          articles: articles.map((a) => ({ ...a, title_captialised: titleCapitalised(a.title), published_date_timesince: `${timesince(a.published_date)} ago` })),
         }),
       );
     }

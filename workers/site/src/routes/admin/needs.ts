@@ -31,6 +31,21 @@ import { adminPageContext } from "./pageContext";
 
 const TRANSLATE_LANGUAGES = ["cy", "ga", "gd"] as const;
 
+function sameOrigin(a: string, b: string): boolean {
+  try {
+    return new URL(a).origin === new URL(b).origin;
+  } catch {
+    return false;
+  }
+}
+
+// The food bank URL fields a need's `uri` could plausibly have been
+// captured from, most likely first. Both crawlers set `uri =
+// foodbank.shopping_list_url` at creation (givefood/utils/crawlers.py:541-548,
+// workers/jobs/src/queues/needcheckRender.ts:214), so the fresh-need case
+// matches on the first entry.
+const NEED_URI_PROXY_FIELDS = ["shopping_list_url", "url"] as const;
+
 // gfadmin/views.py:1753-1831 need() -- the detail page. `id` is the
 // public need_id UUID (dashed or dashless, getNeedByUuid normalises).
 export async function adminNeedDetail(c: Context<AppEnv>): Promise<Response> {
@@ -39,21 +54,49 @@ export async function adminNeedDetail(c: Context<AppEnv>): Promise<Response> {
   if (!need) return c.notFound();
 
   const foodbankSlug = need.foodbank_id !== null ? await getFoodbankSlugById(db, need.foodbank_id) : null;
-  const [prevPublished, prevNonpert, subscriberCounts, crawlSet, translationCount] = await Promise.all([
+  const [prevPublished, prevNonpert, subscriberCounts, crawlSet, translationCount, foodbank] = await Promise.all([
     need.foodbank_id !== null ? getPrevPublishedNeed(db, need.foodbank_id, need.created) : Promise.resolve(null),
     need.foodbank_id !== null ? getPrevNonpertinentNeed(db, need.foodbank_id, need.created) : Promise.resolve(null),
     need.foodbank_id !== null ? getNeedSubscriberCounts(db, need.foodbank_id) : Promise.resolve({ email: 0, webpush: 0, mobile: 0, whatsapp: 0 }),
     getCrawlSetForNeed(db, need.id),
     need.published ? getTranslationCountForNeed(db, need.id) : Promise.resolve(0),
+    foodbankSlug ? getFoodbankBySlug(db, foodbankSlug) : Promise.resolve(null),
   ]);
 
   const changeList = need.change_text.split("\n");
   const excessList = need.excess_change_text ? need.excess_change_text.split("\n") : [];
 
-  // gfadmin/views.py:258-264's `"facebook.com" not in need.uri and
-  // "bankthefood.org" not in need.uri` gate -- neither source can be
-  // framed/isn't worth proxying.
-  const showProxy = !!foodbankSlug && !!need.uri && !need.uri.includes("facebook.com") && !need.uri.includes("bankthefood.org");
+  // gfadmin/templates/admin/need.html:258-264's `"facebook.com" not in
+  // need.uri and "bankthefood.org" not in need.uri` gate -- neither source
+  // can be framed/isn't worth proxying.
+  //
+  // Django previews the need's OWN `uri` (`?url={{ need.uri|urlencode }}`),
+  // i.e. the page the shopping list was extracted from -- not whatever
+  // `shopping_list_url` holds now. That distinction matters: `uri` is a
+  // snapshot taken at crawl time and the food bank's URL fields are edited
+  // in the admin, so an older need previewed against the current field
+  // silently compares the extraction to a different page.
+  //
+  // WP 6.3's proxy can't take a raw URL (that was Django's SSRF). So name
+  // the field whose origin matches and pin the exact page with `target=`,
+  // which proxy.ts:35-60 only honours when its origin matches the resolved
+  // field URL's origin -- the same mechanism discrepancies.ts:41-50 uses.
+  // If no field's origin matches (a legacy Distill-era uri, or an edited
+  // shopping_list_url), show no preview rather than a wrong one -- the
+  // policy discrepancies.ts:32-40 already states.
+  //
+  // Consequence of the field-based proxy, disclosed rather than worked
+  // around: a need with no food bank cannot be previewed at all, where
+  // Django's `{% if need.uri %}` alone would still show one.
+  let proxySrc: string | null = null;
+  if (foodbank && foodbankSlug && need.uri && !need.uri.includes("facebook.com") && !need.uri.includes("bankthefood.org")) {
+    for (const field of NEED_URI_PROXY_FIELDS) {
+      if (sameOrigin(foodbank[field], need.uri)) {
+        proxySrc = `/admin/proxy/?foodbank=${encodeURIComponent(foodbankSlug)}&field=${field}&target=${encodeURIComponent(need.uri)}`;
+        break;
+      }
+    }
+  }
   const now = new Date();
 
   const html = await render("admin/need.njk", {
@@ -77,7 +120,8 @@ export async function adminNeedDetail(c: Context<AppEnv>): Promise<Response> {
     subscriber_count: subscriberCounts.email + subscriberCounts.webpush + subscriberCounts.mobile + subscriberCounts.whatsapp,
     crawl_set: crawlSet ? { ...crawlSet, start_timesince: `${timesince(crawlSet.start, now)} ago` } : null,
     translation_count: translationCount,
-    show_proxy: showProxy,
+    show_proxy: !!proxySrc,
+    proxy_src: proxySrc,
   });
   return c.html(html);
 }
@@ -124,12 +168,16 @@ async function handlePublishTransition(c: Context<AppEnv>, publish: boolean): Pr
 }
 
 // gfadmin/views.py:1949-1955 need_nonpertinent -- the de-facto "reject".
+// Redirects to the dashboard (views.py:1955 `redirect("admin:index")`), not
+// back to the need: rejecting is the last thing a reviewer does with a need,
+// so this returns them to the queue for the next one. need_delete does the
+// same; only need_publish redirects back to the need it acted on.
 export async function adminNeedNonpertinent(c: Context<AppEnv>): Promise<Response> {
   if (!(await requireCsrf(c))) return c.text("Forbidden", 403);
   const needId = c.req.param("id")!;
   const result = await setNeedNonpertinent(dbSession(c), needId);
   if (!result) return c.notFound();
-  return c.redirect(`/admin/need/${needId}/`, 302);
+  return c.redirect("/admin/", 302);
 }
 
 // gfadmin/views.py:1929-1935 need_delete.
@@ -216,7 +264,9 @@ export async function adminNeedCategorise(c: Context<AppEnv>): Promise<Response>
   const lines = await buildCategoriseLines(db, need.id, need.change_text, need.excess_change_text);
   const html = await render("admin/need_categorise.njk", {
     ...(await adminPageContext(c, "needs")),
-    need,
+    // need_categorise.html:26 heads the page with {{ need.need_id_short }}
+    // (models/needs.py:81-82). Same one-liner adminNeedDetail already does.
+    need: { ...need, need_id_short: need.need_id.slice(0, 7) },
     lines,
     categories: ITEM_CATEGORIES,
   });

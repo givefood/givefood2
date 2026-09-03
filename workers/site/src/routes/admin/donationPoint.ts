@@ -90,5 +90,10 @@ export async function adminDonationPointDelete(c: Context<AppEnv>): Promise<Resp
   if (!(await verifyCsrf(c, c.env.CSRF_SECRET, csrfToken))) return c.text("Forbidden", 403);
 
   await deleteDonationPoint(db, existing.id);
+  // foodbank_check.njk's Delete uses hx-target="closest li" / hx-swap="outerHTML",
+  // which needs an empty body to swap in -- same branch as photoDelete.ts. Without
+  // it htmx follows the 302 below and swaps the whole detail page into the <li>.
+  // The plain-form caller (generic_form.njk) sends no HX-Request and keeps the 302.
+  if (c.req.header("HX-Request")) return c.body(null, 200);
   return c.redirect(`/admin/foodbank/${slug}/`, 302);
 }

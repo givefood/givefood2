@@ -6,9 +6,16 @@
 {% block body %}
 <div class="columns">
   <div class="column">
+    {# discrepancy.html:12's bare <h2>Discrepancy</h2>, promoted to <h1 class="title"> the way
+       every other ported admin page does (see stats.njk's own note). #}
+    <h1 class="title">Discrepancy</h1>
     <dl>
       <dt>Food Bank</dt>
       <dd>{% if foodbank %}<a href="/admin/foodbank/{{ foodbank.slug }}/">{{ discrepancy.foodbank_name }}</a>{% else %}{{ discrepancy.foodbank_name or "Unknown" }}{% endif %}</dd>
+      {# discrepancy.html:16-17 -- the AI's finding is a labelled dt/dd inside this same dl,
+         aligned with Food Bank and URL, using the mdi robot glyph rather than an emoji. #}
+      <dt><span class="mdi mdi-robot"></span> thinks...</dt>
+      <dd>{{ discrepancy.discrepancy_text }}</dd>
       <dt>Type</dt>
       <dd>{{ discrepancy.discrepancy_type }}</dd>
       <dt>Status</dt>
@@ -21,20 +28,21 @@
       {% endif %}
     </dl>
 
-    <div class="box"><p>&#129302; {{ discrepancy.discrepancy_text }}</p></div>
-
-    {% if discrepancy.status == "New" %}
-      <form action="/admin/discrepancy/{{ discrepancy.id }}/action/" method="post" style="display:inline">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <input type="hidden" name="action" value="done">
-        <input type="submit" class="button is-link is-light" value="Done">
-      </form>
-      <form action="/admin/discrepancy/{{ discrepancy.id }}/action/" method="post" style="display:inline">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <input type="hidden" name="action" value="invalid">
-        <input type="submit" class="button is-warning is-light" value="Invalid">
-      </form>
-    {% endif %}
+    {# discrepancy.html:23-26 renders the action form unconditionally, whatever the status --
+       views.py:2206-2217 accepts the transition from any status, and so does
+       adminDiscrepancyAction/setDiscrepancyStatus. Gating on status == "New" hid the only
+       dismiss path from anyone who reloaded or hit Back after actioning a discrepancy. #}
+    <form action="/admin/discrepancy/{{ discrepancy.id }}/action/" method="post" style="display:inline">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="action" value="done">
+      <input type="submit" class="button is-link is-light" value="Done">
+    </form>
+    <form action="/admin/discrepancy/{{ discrepancy.id }}/action/" method="post" style="display:inline">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="action" value="invalid">
+      {# discrepancy.html:25 -- is-danger, matching both dashboards' red ✗ for the same action. #}
+      <input type="submit" class="button is-danger is-light" value="Invalid">
+    </form>
   </div>
 
   {% if foodbank %}

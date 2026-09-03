@@ -1,11 +1,39 @@
 {% extends "admin/page.njk" %}
 
-{% block title %}Check{% endblock %}
+{# check.html:5 -- `Check {{ foodbank.name }}`; without the name every food
+   bank's browser tab read "Check - Give Food Admin". #}
+{% block title %}Check {{ foodbank.name }}{% endblock %}
 
 {% block body %}
 <h1 class="title">Check: {{ foodbank.name }}</h1>
-<p><a href="/admin/foodbank/{{ foodbank.slug }}/">&larr; Back</a></p>
-<p><a href="/admin/foodbanks/next/" class="button is-link is-light is-small">Next</a></p>
+
+{# check.html:13-31 -- the page header is a nested `columns`: links and
+   "Last edit" on the left, a right-aligned Edit / Touch / Next button stack
+   on the right. Django nests it inside the results page's own left column;
+   it sits above the job branches here so it also renders while a check is
+   queued, running or failed (the port's results `columns` only exists in
+   the done branch). Touch is how a reviewer marks a checked food bank as
+   reviewed, so check -> touch -> next needs all three here. #}
+<div class="columns">
+  <div class="column">
+    <ul>
+      <li><a href="{{ foodbank.url }}" target="_blank" rel="noopener">{{ foodbank.url }}</a></li>
+      <li><a href="/admin/foodbank/{{ foodbank.slug }}/" target="_blank">{{ foodbank.slug }}</a></li>
+    </ul>
+    {% if foodbank_edited_timesince %}<p>Last edit: {{ foodbank_edited_timesince }} ago</p>{% endif %}
+  </div>
+  <div class="column" style="text-align: right;">
+    <a href="/admin/foodbank/{{ foodbank.slug }}/edit/" class="button is-link is-light" target="_blank">Edit</a>
+    {# Touch markup copied from foodbank_detail.njk:37-40 -- adminFoodbankTouch
+       verifies CSRF, and its HX-Request branch returns the disabled "Touched"
+       replacement button, so hx-swap keeps the reviewer on this page. #}
+    <form method="post" action="/admin/foodbank/{{ foodbank.slug }}/touch/" style="margin-top:10px;">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="button is-link is-light" hx-post="/admin/foodbank/{{ foodbank.slug }}/touch/" hx-vals='{"csrf_token": "{{ csrf_token }}"}' hx-swap="outerHTML">Touch</button>
+    </form>
+    <a href="/admin/foodbanks/next/" class="button is-link is-light" style="margin-top:10px; display:inline-block;">Next</a>
+  </div>
+</div>
 
 {% if not job %}
   <form method="post" action="/admin/foodbank/{{ foodbank.slug }}/check/">
@@ -41,91 +69,188 @@
        and the preview column below takes the remaining third. Two is-half
        columns split it 50/50 and squeezed the comparison tables. #}
     <div class="column">
-      <h3 class="title is-5">Details</h3>
-      <table class="table is-fullwidth">
-        <thead><tr><th></th><th>Ours</th><th>Found</th><th></th></tr></thead>
-        <tbody>
-          <tr class="{% if result.detailChanges.address %}check-changed{% endif %}">
-            <td>Address</td>
-            <td>{{ foodbank.address }}<br>{{ foodbank.postcode }}</td>
-            <td>{{ result.aiResponse.details.address }}<br>{{ result.aiResponse.details.postcode }}</td>
-            <td></td>
-          </tr>
-          {% for field in use_ai_fields %}
-          <tr class="{% if result.detailChanges[field] %}check-changed{% endif %}">
-            <td>{{ field }}</td>
-            <td>{{ foodbank[field] or "" }}</td>
-            <td>{{ result.aiResponse.details[field] }}</td>
-            <td>
-              {% if result.detailChanges[field] %}
-              <form method="post" action="/admin/foodbank/{{ foodbank.slug }}/use-ai/{{ field }}/" style="display:inline">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                <input type="hidden" name="value" value="{{ result.aiResponse.details[field] }}">
-                <button type="submit" class="button is-small is-success is-light" hx-post="/admin/foodbank/{{ foodbank.slug }}/use-ai/{{ field }}/" hx-include="closest form" hx-swap="outerHTML">Use</button>
-              </form>
+      {# check.html:35-291 -- Details, Locations and Donation Points all live
+         in ONE `checktable` whose two 50% columns are Ours and Found, so
+         every row is a literal side-by-side diff. Rendering them as stacked
+         lists meant comparing by scrolling. The `checktable` class is what
+         admin.css:142-160 hangs the <dl>/<li> spacing off. #}
+      <table class="table is-fullwidth checktable">
+        <tr>
+          <th width="50%"><span class="mdi mdi-database"></span> Ours</th>
+          <th width="50%"><span class="mdi mdi-robot"></span> Found</th>
+        </tr>
+        <tr>
+          <td colspan="2">Details</td>
+        </tr>
+        <tr>
+          <td>
+            <dl>
+              {# check.html:46-72. `address` is a CRLF-separated TEXT column
+                 (0001_core.sql:14), so linebreaksbr is what keeps the two
+                 address blocks lined up line-for-line. #}
+              <dt{% if result.detailChanges.address %} class="check-changed"{% endif %}>Address</dt>
+              <dd{% if result.detailChanges.address %} class="check-changed"{% endif %}>{{ foodbank.address | linebreaksbr }}<br>{{ foodbank.postcode }}</dd>
+              {% for field in use_ai_fields %}
+              <dt{% if result.detailChanges[field] %} class="check-changed"{% endif %}>{{ use_ai_labels[field] }}</dt>
+              <dd{% if result.detailChanges[field] %} class="check-changed"{% endif %}>{% if field in url_fields and foodbank[field] %}<a href="{{ foodbank[field] }}" target="_blank" rel="noopener" class="newwindow"><img src="/static/img/newwindow.svg" alt="New window"></a> {% endif %}{{ foodbank[field] or "" }}</dd>
+              {% endfor %}
+              {# check.html:68-71 -- Ours-side only and unpaired: the AI
+                 response has no delivery_address to compare against. It
+                 matters more here than in Django, because the check job no
+                 longer suppresses "new location" flags on the delivery
+                 postcode (workers/jobs/src/adminJobs/foodbankCheck.ts:170),
+                 so the reviewer needs it to recognise a false flag. #}
+              {% if foodbank.delivery_address %}
+              <dt>Delivery address</dt>
+              <dd>{{ foodbank.delivery_address | linebreaksbr }}</dd>
               {% endif %}
-            </td>
-          </tr>
-          {% endfor %}
-        </tbody>
+            </dl>
+          </td>
+          <td>
+            <dl>
+              <dt{% if result.detailChanges.address %} class="check-changed"{% endif %}>Address</dt>
+              <dd{% if result.detailChanges.address %} class="check-changed"{% endif %}>{{ result.aiResponse.details.address | linebreaksbr }}<br>{{ result.aiResponse.details.postcode }}</dd>
+              {% for field in use_ai_fields %}
+              <dt{% if result.detailChanges[field] %} class="check-changed"{% endif %}>{{ use_ai_labels[field] }}</dt>
+              <dd{% if result.detailChanges[field] %} class="check-changed"{% endif %}>{% if field in url_fields and result.aiResponse.details[field] %}<a href="{{ result.aiResponse.details[field] }}" target="_blank" rel="noopener" class="newwindow"><img src="/static/img/newwindow.svg" alt="New window"></a> {% endif %}{{ result.aiResponse.details[field] }}
+                {# check.html:80-89 -- gated on a change AND a non-empty found
+                   value, so "Use" is never offered for something the AI did
+                   not find. #}
+                {% if result.detailChanges[field] and result.aiResponse.details[field] %}
+                <form method="post" action="/admin/foodbank/{{ foodbank.slug }}/use-ai/{{ field }}/" style="display:inline">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                  <input type="hidden" name="value" value="{{ result.aiResponse.details[field] }}">
+                  <button type="submit" class="button is-small is-success is-light" hx-post="/admin/foodbank/{{ foodbank.slug }}/use-ai/{{ field }}/" hx-include="closest form" hx-swap="outerHTML">Use</button>
+                </form>
+                {% endif %}
+              </dd>
+              {% endfor %}
+            </dl>
+          </td>
+        </tr>
+
+        {# check.html:211 -- the whole section is gated on content, so a food
+           bank with neither ours nor found shows no Locations heading at all. #}
+        {% if result.ourLocations.length or result.foundLocations.length %}
+        <tr>
+          <td colspan="2">Locations</td>
+        </tr>
+        <tr>
+          <td>
+            <ul>
+              {% for loc in result.ourLocations %}
+              <li class="htmx-fade">
+                {% if loc.discrepancy %}
+                {# check.html:220-227 -- an Ours-side discrepancy means we hold
+                   a location the AI could not find on the food bank's site,
+                   and the point of flagging it is this one-click delete.
+                   Django's is a bare hx-post button; this port's delete route
+                   verifies CSRF, so it is wrapped in a form and includes the
+                   token, the same shape as the "Use" button above. #}
+                <form method="post" action="/admin/foodbank/{{ foodbank.slug }}/location/{{ loc.slug }}/delete/" class="is-pulled-right" style="display:inline">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                  <button type="submit" class="button is-small is-danger is-light" hx-post="/admin/foodbank/{{ foodbank.slug }}/location/{{ loc.slug }}/delete/" hx-include="closest form" hx-confirm="Are you sure you want to delete this location?" hx-target="closest li" hx-swap="outerHTML swap:0.5s">Delete</button>
+                </form>
+                {% endif %}
+                {{ loc.name }}<br>
+                {% if loc.address %}{{ loc.address | linebreaksbr }}<br>{% endif %}
+                {{ loc.postcode }}
+              </li>
+              {% endfor %}
+            </ul>
+          </td>
+          <td>
+            <ul>
+              {% for loc in result.foundLocations %}
+              <li>
+                {% if loc.discrepancy %}
+                <a href="/admin/foodbank/{{ foodbank.slug }}/location/new/?name={{ loc.name | urlencode }}&amp;postcode={{ loc.postcode | urlencode }}" class="button is-link is-small is-light" target="_blank" rel="noopener">Add</a>
+                {% endif %}
+                {{ loc.name }}<br>
+                {% if loc.address %}{{ loc.address | linebreaksbr }}<br>{% endif %}
+                {{ loc.postcode }}
+              </li>
+              {% endfor %}
+            </ul>
+          </td>
+        </tr>
+        {% endif %}
+
+        {# check.html:251 -- same content gate for donation points. #}
+        {% if result.ourDonationPoints.length or result.foundDonationPoints.length %}
+        <tr>
+          <td colspan="2">Donation Points</td>
+        </tr>
+        <tr>
+          <td>
+            <ul>
+              {% for dp in result.ourDonationPoints %}
+              <li class="htmx-fade">
+                {% if dp.discrepancy %}
+                {# check.html:260-267, the donation-point twin of the delete
+                   above, down to the confirm wording. #}
+                <form method="post" action="/admin/foodbank/{{ foodbank.slug }}/donationpoint/{{ dp.slug }}/delete/" class="is-pulled-right" style="display:inline">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                  <button type="submit" class="button is-small is-danger is-light" hx-post="/admin/foodbank/{{ foodbank.slug }}/donationpoint/{{ dp.slug }}/delete/" hx-include="closest form" hx-confirm="Are you sure you want to delete this donation point?" hx-target="closest li" hx-swap="outerHTML swap:0.5s">Delete</button>
+                </form>
+                {% endif %}
+                {{ dp.name }}<br>
+                {% if dp.address %}{{ dp.address | linebreaksbr }}<br>{% endif %}
+                {{ dp.postcode }}
+              </li>
+              {% endfor %}
+            </ul>
+          </td>
+          <td>
+            <ul>
+              {% for dp in result.foundDonationPoints %}
+              <li>
+                {% if dp.discrepancy %}
+                <a href="/admin/foodbank/{{ foodbank.slug }}/donationpoint/new/?name={{ dp.name | urlencode }}&amp;postcode={{ dp.postcode | urlencode }}" class="button is-link is-small is-pulled-right is-light" target="_blank" rel="noopener">Add</a>
+                {% endif %}
+                {{ dp.name }}<br>
+                {% if dp.address %}{{ dp.address | linebreaksbr }}<br>{% endif %}
+                {{ dp.postcode }}
+              </li>
+              {% endfor %}
+            </ul>
+          </td>
+        </tr>
+        {% endif %}
       </table>
-
-      <h3 class="title is-5">Locations</h3>
-      <p><strong>Ours</strong></p>
-      <ul>
-        {% for loc in result.ourLocations %}
-        <li>{{ loc.name }}{% if loc.address %} -- {{ loc.address }}{% endif %} ({{ loc.postcode }}){% if loc.discrepancy %} <span class="tag is-warning is-light">not found</span>{% endif %}</li>
-        {% else %}
-        <li>None</li>
-        {% endfor %}
-      </ul>
-      <p><strong>Found</strong></p>
-      <ul>
-        {% for loc in result.foundLocations %}
-        <li>{{ loc.name }}{% if loc.address %} -- {{ loc.address }}{% endif %} ({{ loc.postcode }}){% if loc.discrepancy %} <span class="tag is-info is-light">new</span> <a href="/admin/foodbank/{{ foodbank.slug }}/location/new/?name={{ loc.name | urlencode }}&amp;postcode={{ loc.postcode | urlencode }}" target="_blank" rel="noopener" class="button is-small is-light">Add</a>{% endif %}</li>
-        {% else %}
-        <li>None</li>
-        {% endfor %}
-      </ul>
-
-      <h3 class="title is-5">Donation Points</h3>
-      <p><strong>Ours</strong></p>
-      <ul>
-        {% for dp in result.ourDonationPoints %}
-        <li>{{ dp.name }}{% if dp.address %} -- {{ dp.address }}{% endif %} ({{ dp.postcode }}){% if dp.discrepancy %} <span class="tag is-warning is-light">not found</span>{% endif %}</li>
-        {% else %}
-        <li>None</li>
-        {% endfor %}
-      </ul>
-      <p><strong>Found</strong></p>
-      <ul>
-        {% for dp in result.foundDonationPoints %}
-        <li>{{ dp.name }}{% if dp.address %} -- {{ dp.address }}{% endif %} ({{ dp.postcode }}){% if dp.discrepancy %} <span class="tag is-info is-light">new</span> <a href="/admin/foodbank/{{ foodbank.slug }}/donationpoint/new/?name={{ dp.name | urlencode }}&amp;postcode={{ dp.postcode | urlencode }}" target="_blank" rel="noopener" class="button is-small is-light">Add</a>{% endif %}</li>
-        {% else %}
-        <li>None</li>
-        {% endfor %}
-      </ul>
     </div>
 
     {# check.html:293 -- is-one-third for the preview. #}
     <div class="column is-one-third">
-      <h3 class="title is-5">Pages fetched</h3>
       <div class="tabs is-boxed">
-        <ul role="tablist">
+        <ul role="tablist" aria-label="Website previews">
           {% for page in result.fetchedPages %}
-          <li class="{% if loop.first %}is-active{% endif %}" role="presentation"><a data-tab="checkpage-{{ page.name }}" role="tab"><span>{{ page.name }}</span></a></li>
+          {# check.html:296-300 -- the label is the display name ("Shopping
+             List"), the data-tab is the key; the port collapsed both onto the
+             internal key, so the strip read "homepage shopping_list ...". #}
+          <li class="{% if loop.first %}is-active{% endif %}" role="presentation"><a data-tab="checkpage-{{ page.name }}" role="tab" aria-selected="{% if loop.first %}true{% else %}false{% endif %}" aria-controls="checkpage-{{ page.name }}-panel" id="checkpage-{{ page.name }}-tab"><span>{{ page_labels[page.name] or page.name }}</span></a></li>
           {% endfor %}
         </ul>
       </div>
-      {% for page in result.fetchedPages %}
-      <div class="column checkpage-{{ page.name }} tabcontent{% if not loop.first %} is-hidden{% endif %}">
-        {% if page.found %}
-          <iframe class="preview-frame" src="/admin/proxy/?foodbank={{ foodbank.slug }}&amp;field={{ page.proxyField }}" style="width:100%;height:800px;border:none;" loading="lazy"></iframe>
-        {% else %}
-          <p>Could not fetch {{ page.url }}</p>
-        {% endif %}
+      {# check.html:306 -- tabber.js hides panels with ".sections .tabcontent",
+         so without this wrapper changetab() only ever un-hides the panel that
+         was clicked and never re-hides the one already showing: every tab
+         click stacked another iframe on screen. The panels are plain divs, as
+         Django's are -- a Bulma .column directly inside another .column with
+         no .columns between it just adds stray padding. #}
+      <div class="sections">
+        {% for page in result.fetchedPages %}
+        <div class="checkpage-{{ page.name }} tabcontent{% if not loop.first %} is-hidden{% endif %}" role="tabpanel" id="checkpage-{{ page.name }}-panel" aria-labelledby="checkpage-{{ page.name }}-tab">
+          {# check.html:309 -- pop the real page out of the iframe. #}
+          <a href="{{ page.url }}" target="_blank" rel="noopener" class="newwindow is-pulled-right"><img src="/static/img/newwindow.svg" alt="New window"></a>
+          {% if page.found %}
+            <iframe class="preview-frame" src="/admin/proxy/?foodbank={{ foodbank.slug }}&amp;field={{ page.proxyField }}" style="width:100%;height:800px;border:none;" loading="lazy"></iframe>
+          {% else %}
+            <p>Could not fetch {{ page.url }}</p>
+          {% endif %}
+        </div>
+        {% endfor %}
       </div>
-      {% endfor %}
     </div>
   </div>
 {% endif %}

@@ -91,7 +91,10 @@
       <dt>Latest Need Check</dt>
       <dd>
         {% if stats.latest_need_check %}
-          {% if stats.latest_need_crawlset_id %}<a href="/admin/crawl-set/{{ stats.latest_need_crawlset_id }}.json">{{ stats.latest_need_check_timesince }}</a>
+          {# admin/index.html:94-97 links `gfadmin:crawl_set` (gfadmin/urls/crawl_sets.py:8 ->
+             "crawl-set/<int>/"), the HTML crawl-set page -- NOT the sibling `crawl_set_json`
+             endpoint. The port's HTML route is adminCrawlSetDetail; ".json" would dump raw JSON. #}
+          {% if stats.latest_need_crawlset_id %}<a href="/admin/crawl-set/{{ stats.latest_need_crawlset_id }}/">{{ stats.latest_need_check_timesince }}</a>
           {% else %}{{ stats.latest_need_check_timesince }}{% endif %}
         <br><span class="is-size-7">{{ stats.latest_need_check.last_need_check|date("N j, Y, P") }}</span>
         {% endif %}
@@ -112,7 +115,12 @@
         {% for article in articles %}
         <tr>
           <td>{% if article.foodbank_slug %}<a href="/admin/foodbank/{{ article.foodbank_slug }}/">{{ article.foodbank_name }}</a>{% else %}{{ article.foodbank_name or "" }}{% endif %}</td>
-          <td><a href="{{ article.url }}" target="_blank" rel="noopener">{{ article.title }}</a></td>
+          {# admin/index.html:126 -- {{ article.title_captialised|truncatewords:10 }} inside
+             {{ article.url_with_ref }} (givefood/models/articles.py:29-33 and :34-52). The `or`
+             fallbacks keep this cell rendering on rows the route hasn't enriched yet; once
+             adminIndex() maps titleCapitalised()/urlWithRefFoodbank() onto each article the
+             left-hand side always wins. #}
+          <td><a href="{{ article.url_with_ref or article.url }}" target="_blank" rel="noopener">{{ (article.title_captialised or article.title)|truncatewords(10) }}</a></td>
           <td>{{ article.published_date|date("D jS H:i") }}</td>
           <td>
             <form method="post" style="display:inline">

@@ -20,7 +20,7 @@
         <tr>
           <td>{% if need.published %}<span style="color:green">&#10003;</span>{% else %}<span style="color:red">x</span>{% endif %}</td>
           <td>{% if need.nonpertinent %}<span style="color:green">&#10003;</span>{% else %}<span style="color:red">x</span>{% endif %}</td>
-          <td>{{ need.input_method_emoji }}</td>
+          <td>{{ need.input_method_emoji | safe }}</td>
           <td><a href="/admin/need/{{ need.need_id }}/">{{ need.need_id_short }}</a></td>
           <td class="is-size-7">{{ need.change_text | linebreaksbr | safe }}</td>
           <td class="is-size-7">{{ need.excess_change_text | linebreaksbr | safe }}</td>
@@ -53,7 +53,11 @@
           <td class="delivery-provider-icon">{% if order.delivery_provider_slug %}<img src="/static/img/delivery_provider/icon/{{ order.delivery_provider_slug }}.png" width="12" alt="{{ order.delivery_provider }}">{% endif %}</td>
           <td><a href="/admin/order/{{ order.order_id }}/">{{ order.delivery_datetime|date("D") }}, {{ order.delivery_datetime|date("N j, Y, P") }}</a></td>
           <td>{{ order.no_items }}</td>
-          <td>&pound;{{ (order.actual_cost or order.cost) / 100 }}</td>
+          {# Order.natural_cost() -- float(cost/100), the ordered cost,
+             unconditionally (givefood/models/orders.py:74-75). NOT
+             actual_cost: natural_actual_cost() at :77-81 is a separate
+             method used only on the order detail page (order.njk:49-51). #}
+          <td>&pound;{{ order.cost / 100 }}</td>
           <td>{% if order.notification_email_sent %}<span class="mdi mdi-email-outline"></span>{% endif %}</td>
         </tr>
         {% endfor %}

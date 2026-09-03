@@ -4,6 +4,7 @@ import { render } from "@givefood/templates";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
 import { verifyCsrf } from "../../lib/csrf";
+import { timesince } from "../../lib/timesince";
 import { adminPageContext } from "./pageContext";
 
 // gfadmin/views.py:1321-1326 foodbank_use_ai_detail's ALLOWED_FIELDS, same
@@ -25,6 +26,44 @@ const CHECK_USE_AI_FIELDS = [
   "locations_url",
   "contacts_url",
 ] as const;
+
+// gfadmin/templates/admin/check.html:48-67 -- Django hardcodes a human
+// label per <dt>. Kept as a parallel map so the field names above stay
+// byte-identical to workers/jobs' CHECK_USE_AI_FIELDS, which are also the
+// detailChanges keys and the /use-ai/<field>/ URL segment.
+const CHECK_USE_AI_LABELS: Record<(typeof CHECK_USE_AI_FIELDS)[number], string> = {
+  phone_number: "Phone",
+  contact_email: "Email",
+  charity_number: "Charity",
+  facebook_page: "Facebook",
+  bankuet_slug: "Bankuet",
+  rss_url: "RSS URL",
+  news_url: "News URL",
+  donation_points_url: "Donation Points URL",
+  locations_url: "Locations URL",
+  contacts_url: "Contacts URL",
+};
+
+// check.html:59-67 (Ours) and :144-196 (Found) give every URL field a
+// new-window icon link on both sides, so a reviewer can open a candidate
+// URL before pressing Use. Same set as useAi.ts:16's URL_FIELDS, an array
+// rather than a Set because nunjucks' `in` operator falls back to JS
+// `key in obj` for anything that isn't an array or string.
+const CHECK_URL_FIELDS: string[] = ["rss_url", "news_url", "donation_points_url", "locations_url", "contacts_url"];
+
+// check.html:296-299 labels each preview tab with the foodbank_urls key
+// ("Home", "Shopping List", ...) set in gfadmin/views.py:935-993, while
+// the data-tab attribute keeps the slug. The port's page.name is the
+// internal key from workers/jobs/src/adminJobs/foodbankCheck.ts:81-91, so
+// map to the display name at render time -- renaming it job-side would
+// orphan every already-stored admin_job result.
+const CHECK_PAGE_LABELS: Record<string, string> = {
+  homepage: "Home",
+  shopping_list: "Shopping List",
+  locations: "Locations",
+  contacts: "Contacts",
+  donation_points: "Donation Points",
+};
 
 // gfadmin/views.py:1138-1215 foodbank_check, redesigned per PLAN.md
 // §9.4.4's "enqueue and poll, no Workflows" architecture (WP 6.8):
@@ -72,6 +111,13 @@ export async function adminFoodbankCheck(c: Context<AppEnv>): Promise<Response> 
     job,
     result: job && job.status === "done" ? JSON.parse(job.result!) : null,
     use_ai_fields: CHECK_USE_AI_FIELDS,
+    use_ai_labels: CHECK_USE_AI_LABELS,
+    url_fields: CHECK_URL_FIELDS,
+    page_labels: CHECK_PAGE_LABELS,
+    // check.html:19 `Last edit: {{ foodbank.edited|timesince }} ago`. There
+    // is no nunjucks `timesince` filter (packages/templates/src/env.ts), so
+    // it is computed here, as admin/index.ts:325-336 already does.
+    foodbank_edited_timesince: foodbank.edited ? timesince(foodbank.edited, new Date()) : null,
   });
   return c.html(html);
 }

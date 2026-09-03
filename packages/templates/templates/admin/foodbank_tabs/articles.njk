@@ -1,14 +1,17 @@
-{# gfadmin/views.py foodbank_articles_tab -- lazy-loaded fragment. #}
-<table class="table is-fullwidth">
+{# gfadmin/views.py foodbank_articles_tab -- lazy-loaded fragment.
+   Two cells, title first then timesince, matching the `articles` partial at
+   gfadmin/templates/admin/foodbank.html:591-604. There is no featured
+   column here: Django's featured toggle lives only on the admin dashboard
+   (admin/index.html:131-133), ported at routes/admin/articles.ts. #}
+<table class="table is-fullwidth is-hoverable">
   <tbody>
     {% for article in articles %}
     <tr>
-      <td>{{ article.published_date_timesince }}</td>
-      <td><a href="{{ article.url }}">{{ article.title }}</a></td>
-      <td>{% if article.featured %}&#9733;{% else %}&#9734;{% endif %}</td>
+      <td><a href="{{ article.url }}">{{ article.title_captialised }}</a></td>
+      <td><span>{{ article.published_date_timesince }}</span></td>
     </tr>
     {% else %}
-    <tr><td colspan="3">None</td></tr>
+    <tr><td colspan="2">None</td></tr>
     {% endfor %}
   </tbody>
 </table>

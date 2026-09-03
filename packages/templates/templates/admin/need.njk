@@ -1,6 +1,12 @@
 {% extends "admin/page.njk" %}
 
-{% block title %}{{ need.foodbank_name or "Unknown" }} need{% endblock %}
+{# need.html:3 is `{{ need }}`, i.e. FoodbankChange.__str__ (givefood/models/
+   needs.py:84-85): "<foodbank> - <created strftime '%b %d %Y %H:%M:%S'>
+   (<need_id_short>)". Reproduced so several needs for the SAME food bank
+   open in separate tabs stay tellable apart. One deliberate deviation:
+   __str__ interpolates a null foodbank_name as the literal "None"; the
+   "Unknown" fallback here matches what the page body already shows. #}
+{% block title %}{{ need.foodbank_name or "Unknown" }} - {{ need.created|date("M d Y H:i:s") }} ({{ need.need_id_short }}){% endblock %}
 
 {% block body %}
 <div class="columns">
@@ -12,11 +18,11 @@
       <dt>Food Bank</dt>
       <dd>{% if foodbank_slug %}<a href="/admin/foodbank/{{ foodbank_slug }}/">{{ need.foodbank_name }}</a>{% else %}{{ need.foodbank_name or "Unknown" }}{% endif %}</dd>
       <dt>Input Method</dt>
-      <dd>{{ need.input_method_emoji }} {{ need.input_method_human }}</dd>
+      <dd>{{ need.input_method_emoji | safe }} {{ need.input_method_human }}</dd>
       <dt>Created</dt>
-      <dd><time datetime="{{ need.created }}" title="{{ need.created }}">{{ need.created_timesince }}</time></dd>
+      <dd><time datetime="{{ need.created }}" title="{{ need.created|date("N j, Y, P") }}">{{ need.created_timesince }}</time></dd>
       <dt>Modified</dt>
-      <dd><time datetime="{{ need.modified }}" title="{{ need.modified }}">{{ need.modified_timesince }}</time></dd>
+      <dd><time datetime="{{ need.modified }}" title="{{ need.modified|date("N j, Y, P") }}">{{ need.modified_timesince }}</time></dd>
       {% if need.uri %}
         <dt>URL</dt>
         <dd><a href="{{ need.uri }}">{{ need.uri | truncatechars(35) }}</a></dd>
@@ -36,30 +42,35 @@
 
     {% if crawl_set %}
       <h3>Crawl Set</h3>
-      <time datetime="{{ crawl_set.start }}" title="{{ crawl_set.start }}">{{ crawl_set.start_timesince }}</time>
+      <time datetime="{{ crawl_set.start }}" title="{{ crawl_set.start|date("N j, Y, P") }}">{{ crawl_set.start_timesince }}</time>
       <br>
-      <a href="/admin/crawl-set/{{ crawl_set.crawl_set_id }}.json">{{ crawl_set.start }}</a>
+      {# need.html:51 links `{% url 'admin:crawl_set' %}` -- the HTML detail
+         page (gfadmin/urls/crawl_sets.py:8), NOT the separately-named
+         `crawl_set_json` on line 7. #}
+      <a href="/admin/crawl-set/{{ crawl_set.crawl_set_id }}/">{{ crawl_set.start|date("N j, Y, P") }}</a>
     {% endif %}
 
-    {% if prev_published or prev_nonpert %}
-      <h3>Previous</h3>
-      <dl>
-        {% if prev_published %}
-          <dt>Published</dt>
-          <dd>
-            <time datetime="{{ prev_published.created }}" title="{{ prev_published.created }}">{{ prev_published.created_timesince }}</time>
-            <br><a href="/admin/need/{{ prev_published.need_id }}/">{{ prev_published.need_id_short }}</a>
-          </dd>
-        {% endif %}
-        {% if prev_nonpert %}
-          <dt>Non Pertinent</dt>
-          <dd>
-            <time datetime="{{ prev_nonpert.created }}" title="{{ prev_nonpert.created }}">{{ prev_nonpert.created_timesince }}</time>
-            <br><a href="/admin/need/{{ prev_nonpert.need_id }}/">{{ prev_nonpert.need_id_short }}</a>
-          </dd>
-        {% endif %}
-      </dl>
-    {% endif %}
+    {# need.html:54-70 renders the heading and the <dl> unconditionally --
+       only the individual <dt>/<dd> pairs are guarded -- so a food bank's
+       first need (and any need with no food bank) still shows "Previous"
+       above an empty list, keeping the column's section order stable. #}
+    <h3>Previous</h3>
+    <dl>
+      {% if prev_published %}
+        <dt>Published</dt>
+        <dd>
+          <time datetime="{{ prev_published.created }}" title="{{ prev_published.created|date("N j, Y, P") }}">{{ prev_published.created_timesince }}</time>
+          <br><a href="/admin/need/{{ prev_published.need_id }}/">{{ prev_published.need_id_short }}</a>
+        </dd>
+      {% endif %}
+      {% if prev_nonpert %}
+        <dt>NonPert</dt>
+        <dd>
+          <time datetime="{{ prev_nonpert.created }}" title="{{ prev_nonpert.created|date("N j, Y, P") }}">{{ prev_nonpert.created_timesince }}</time>
+          <br><a href="/admin/need/{{ prev_nonpert.need_id }}/">{{ prev_nonpert.need_id_short }}</a>
+        </dd>
+      {% endif %}
+    </dl>
 
     <h3>Workflow</h3>
     <table class="table is-fullwidth">
@@ -71,18 +82,22 @@
       <tr>
         <td>{% if need.published %}<span style="color:green">&check;</span>{% else %}<span style="color:red">&times;</span>{% endif %}</td>
         <td>Publish</td>
+        {# need.html:89-95 renders the same Publish button whatever
+           need.published is -- only the tick/cross in the cell to the left
+           changes. Re-pressing it on an already-published need is Django's
+           only UI retry for a failed translation fan-out (views.py:1974's
+           save(do_translate=True) -> needs.py:313-317), and
+           handlePublishTransition enqueues TRANSLATE_LANGUAGES on every
+           publish, so keeping it unconditional keeps that retry. The
+           /unpublish/ route stays registered but, as in Django, is not
+           linked from any page: unpublishing is done by unticking Published
+           on the edit form (need_form.njk:38), which recomputes the food
+           bank's fields the same way. #}
         <td>
-          {% if need.published %}
-            <form action="/admin/need/{{ need.need_id }}/unpublish/" method="post">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-              <input type="submit" class="button is-warning is-pulled-right is-small is-light" value="Unpublish" onclick="this.form.submit();this.disabled = true;">
-            </form>
-          {% else %}
-            <form action="/admin/need/{{ need.need_id }}/publish/" method="post">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-              <input type="submit" class="button is-warning is-pulled-right is-small is-light" value="Publish" onclick="this.form.submit();this.disabled = true;">
-            </form>
-          {% endif %}
+          <form action="/admin/need/{{ need.need_id }}/publish/" method="post">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="submit" class="button is-warning is-pulled-right is-small is-light" value="Publish" onclick="this.form.submit();this.disabled = true;">
+          </form>
         </td>
       </tr>
       <tr>
@@ -106,6 +121,17 @@
     {% if need.published %}
       <a href="/admin/need/{{ need.need_id }}/translations/">Translations <span class="tag is-info is-normal is-light">{{ translation_count }}</span></a>
     {% endif %}
+
+    {# need.html:136-140 -- outside the published guard above, so it shows
+       for every need. Points at adminNeedEmail (routes/admin/index.ts:263),
+       which honours ?format=html and treats anything else as text. Django's
+       data-turbo="false" has no equivalent here: no admin template loads
+       Turbo. #}
+    <h3>Notification Preview</h3>
+    <ul>
+      <li><a href="/admin/need/{{ need.need_id }}/email/?format=html">HTML</a></li>
+      <li><a href="/admin/need/{{ need.need_id }}/email/?format=txt">TXT</a></li>
+    </ul>
 
     <h3><span class="mdi mdi-alert"></span> Danger Zone</h3>
     <form action="/admin/need/{{ need.need_id }}/nonpertinent/" method="post">
@@ -131,38 +157,50 @@
       </div>
     </div>
 
-    {% if prev_published or prev_nonpert %}
-      <div class="tabs is-boxed">
-        <ul role="tablist" aria-label="Need comparison">
-          <li class="is-active" role="presentation"><a data-tab="published" role="tab" aria-selected="true" id="published-tab"><span>Published</span></a></li>
-          <li role="presentation"><a data-tab="nonpert" role="tab" aria-selected="false" id="nonpert-tab"><span>Non Pertinent</span></a></li>
-        </ul>
-      </div>
+    {# need.html:172-253 renders the tab bar and the comparison block
+       unconditionally; only the panels inside are guarded, and each has a
+       "No previous ..." placeholder. Guarding the whole thing on a
+       predecessor existing (as this did) deleted the tabs AND made those
+       placeholders unreachable in exactly the case they were written for --
+       a food bank's first need, or a need with no food bank at all.
 
-      <div class="columns sections">
-        {% if prev_published %}
-          <div class="published column is-half tabcontent">
-            <div class="box">{% if diff_from_pub %}<p>{{ diff_from_pub | safe }}</p>{% else %}<p class="nochange">No change</p>{% endif %}</div>
-          </div>
-          <div class="published column is-half tabcontent">
-            <div class="box">{% if diff_from_pub_excess %}<p>{{ diff_from_pub_excess | safe }}</p>{% else %}<p class="nochange">No change</p>{% endif %}</div>
-          </div>
-        {% else %}
-          <div class="published column tabcontent">No previous published need</div>
-        {% endif %}
+       One deliberate improvement on Django's markup: need.html:180 points
+       aria-controls at "nonpert-panel", an id Django never defines (its
+       nonpert and fallback panels at :214, :220, :234 and :248 are bare
+       divs). Every panel here carries an id so both references resolve in
+       both branches. Django's inert inner <div class="tab-content"> wrapper
+       (need.html:191, :203) is not reproduced -- the class appears in no
+       stylesheet and tabber.js never reads it. #}
+    <div class="tabs is-boxed">
+      <ul role="tablist" aria-label="Need comparison">
+        <li class="is-active" role="presentation"><a data-tab="published" role="tab" aria-selected="true" aria-controls="published-panel" id="published-tab"><span>Published</span></a></li>
+        <li role="presentation"><a data-tab="nonpert" role="tab" aria-selected="false" aria-controls="nonpert-panel" id="nonpert-tab"><span>Non Pertinent</span></a></li>
+      </ul>
+    </div>
 
-        {% if prev_nonpert %}
-          <div class="nonpert column is-half is-hidden tabcontent">
-            <div class="box">{% if diff_from_nonpert %}<p>{{ diff_from_nonpert | safe }}</p>{% else %}<p class="nochange">No change</p>{% endif %}</div>
-          </div>
-          <div class="nonpert column is-half is-hidden tabcontent">
-            <div class="box">{% if diff_from_nonpert_excess %}<p>{{ diff_from_nonpert_excess | safe }}</p>{% else %}<p class="nochange">No change</p>{% endif %}</div>
-          </div>
-        {% else %}
-          <div class="nonpert column is-hidden tabcontent">No previous non-pertinent need</div>
-        {% endif %}
-      </div>
-    {% endif %}
+    <div class="columns sections">
+      {% if prev_published %}
+        <div class="published column is-half tabcontent" role="tabpanel" id="published-panel" aria-labelledby="published-tab">
+          <div class="box">{% if diff_from_pub %}<p>{{ diff_from_pub | safe }}</p>{% else %}<p class="nochange">No change</p>{% endif %}</div>
+        </div>
+        <div class="published column is-half tabcontent" role="tabpanel" id="published-excess-panel" aria-labelledby="published-tab">
+          <div class="box">{% if diff_from_pub_excess %}<p>{{ diff_from_pub_excess | safe }}</p>{% else %}<p class="nochange">No change</p>{% endif %}</div>
+        </div>
+      {% else %}
+        <div class="published column tabcontent" role="tabpanel" id="published-panel" aria-labelledby="published-tab">No previous published need</div>
+      {% endif %}
+
+      {% if prev_nonpert %}
+        <div class="nonpert column is-half is-hidden tabcontent" role="tabpanel" id="nonpert-panel" aria-labelledby="nonpert-tab">
+          <div class="box">{% if diff_from_nonpert %}<p>{{ diff_from_nonpert | safe }}</p>{% else %}<p class="nochange">No change</p>{% endif %}</div>
+        </div>
+        <div class="nonpert column is-half is-hidden tabcontent" role="tabpanel" id="nonpert-excess-panel" aria-labelledby="nonpert-tab">
+          <div class="box">{% if diff_from_nonpert_excess %}<p>{{ diff_from_nonpert_excess | safe }}</p>{% else %}<p class="nochange">No change</p>{% endif %}</div>
+        </div>
+      {% else %}
+        <div class="nonpert column is-hidden tabcontent" role="tabpanel" id="nonpert-panel" aria-labelledby="nonpert-tab">No previous nonpertinent need</div>
+      {% endif %}
+    </div>
 
   </div>
 
@@ -172,7 +210,10 @@
      diffs instead of beside them, which is the whole point of the layout. #}
   {% if show_proxy %}
   <div class="column">
-    <iframe class="preview-frame" src="/admin/proxy/?foodbank={{ foodbank_slug }}&amp;field=shopping_list_url" style="width:100%;height:1000px;border:none;" loading="lazy"></iframe>
+    {# need.html:261 previews `need.uri` -- the page this need was actually
+       extracted from -- so `proxy_src` is built in needs.ts to pin that
+       exact URL rather than whatever shopping_list_url holds today. #}
+    <iframe class="preview-frame" src="{{ proxy_src }}" style="width:100%;height:1000px;border:none;" loading="lazy"></iframe>
   </div>
   {% endif %}
 
