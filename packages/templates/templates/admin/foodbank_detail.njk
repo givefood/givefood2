@@ -189,7 +189,12 @@
     <a href="/admin/foodbank/{{ foodbank.slug }}/location/new/" class="button is-link is-light">New Location</a>
     <a href="/admin/foodbank/{{ foodbank.slug }}/location/new/area/" class="button is-link is-light">New Location Area</a>
 
-    <h3 class="title is-5">Locations ({{ locations.length }})</h3>
+    {# foodbank.html:306 -- bare "Locations", no count. The tab label itself
+       carries counts.locations (additional FoodbankLocation rows only), a
+       different number from this section, which always shows at least the
+       Main address row -- an added "(0)" here read as contradicting the row
+       directly beneath it. #}
+    <h3 class="title is-5">Locations</h3>
     {# foodbank.html:307-388 -- a THREE-cell table: label, detail, controls.
        Row 1 is the food bank's OWN main address (the only link into
        /admin/foodbank/<slug>/edit/address/ from this page), row 2 the
