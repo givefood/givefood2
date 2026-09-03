@@ -11,14 +11,37 @@ const BOT_USER_AGENT = "Mozilla/5.0 (compatible; GiveFoodBot/1.0; +https://www.g
 // scrapeFacebook(), kept as its own small copy rather than a shared
 // import -- this WP's fetches are plain GETs with no retry/anti-bot logic,
 // a materially simpler case than that pipeline's.
+// Same headers and one-shot retry as routes/admin/proxy.ts's fetchPreview, for
+// the same reason: several food bank sites sit behind bot protection that
+// intermittently 403s a bot-UA request with no Accept header coming from
+// Cloudflare's network. It matters more here than on the preview, because a
+// blocked fetch here does not surface as an error -- it returns null, the page
+// is reported to the model and the admin as "not found", and the AI comparison
+// is then made against a page we simply failed to read.
+const PAGE_HEADERS: Record<string, string> = {
+  "User-Agent": BOT_USER_AGENT,
+  Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+  "Accept-Language": "en-GB,en;q=0.9",
+};
+
 async function fetchPageBodyText(url: string): Promise<string | null> {
   let res: Response;
   try {
-    res = await fetch(url, { headers: { "User-Agent": BOT_USER_AGENT }, signal: AbortSignal.timeout(20_000) });
+    res = await fetch(url, { headers: PAGE_HEADERS, signal: AbortSignal.timeout(20_000) });
+    if (res.status === 403 || res.status === 429) {
+      await new Promise((resolve) => setTimeout(resolve, 750));
+      res = await fetch(url, { headers: PAGE_HEADERS, signal: AbortSignal.timeout(20_000) });
+    }
   } catch {
     return null;
   }
-  if (res.status !== 200) return null;
+  if (res.status !== 200) {
+    // Logged rather than swallowed: "the site blocked us" and "this page does
+    // not exist" reach the check page as the same empty result, and only the
+    // log distinguishes them.
+    console.log(`foodbank-check: ${url} returned ${res.status}, treating the page as not found`);
+    return null;
+  }
 
   let text = "";
   const rewriter = new HTMLRewriter()
