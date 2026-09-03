@@ -76,7 +76,7 @@ import { gfdashHeatmap } from "./routes/dashboards/heatmap";
 import { gfdashPricePerCalorie } from "./routes/dashboards/pricePerCalorie";
 import { gfdashPricePerItemCategory } from "./routes/dashboards/pricePerItemCategory";
 import { writeIndex, writeConstituency, writeConstituencyByCode, writeEmail, writeSend, writeDone } from "./routes/write";
-import { adminSignIn, adminAuthReceiver, adminSignOut } from "./routes/admin/auth";
+import { adminSignIn, adminAuthStart, adminAuthReceiver, adminSignOut } from "./routes/admin/auth";
 import { adminApp, adminIndex } from "./routes/admin";
 import { notPortedYet, gone } from "./routes/notPortedYet";
 import { tryAppendSlashRedirect } from "./lib/appendSlash";
@@ -472,6 +472,7 @@ app.route("/dumps", gone());
 // is a registered Google redirect URI) but implemented under
 // routes/admin/, not as a standalone feature; see that file's own comment.
 app.get("/auth/", adminSignIn);
+app.get("/auth/start/", adminAuthStart);
 app.get("/auth/receiver/", adminAuthReceiver);
 app.get("/auth/sign-out/", adminSignOut);
 app.get("/admin/", adminIndex); // same bare-mount-point quirk as api2Index/api2Docs above -- see routes/admin/index.ts's own comment

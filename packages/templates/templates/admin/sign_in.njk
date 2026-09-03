@@ -29,7 +29,15 @@
     </div>
     {% else %}
     <div>
-      <a href="/auth/?next=%2Fadmin%2F" class="button is-link">Sign in with Google</a>
+      {# routes/admin/auth.ts:adminAuthStart -- the actual click that talks
+         to Google. Split out of this page's own route 2026-09-03: that
+         route used to auto-redirect to Google itself whenever `next` was
+         present, which meant landing here from requireAdminAuth's gate
+         (always carrying a next) skipped this page and this click
+         entirely -- Google's own still-active session then signed the
+         admin straight back in with no explicit action, making Sign Out
+         look broken. #}
+      <a href="/auth/start/?next={{ next | urlencode }}" class="button is-link">Sign in with Google</a>
     </div>
     {% endif %}
   </div>
