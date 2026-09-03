@@ -28,15 +28,13 @@
       {% endif %}
     </dl>
 
-    {# discrepancy.html:23-26 renders the action form unconditionally, whatever the status --
-       views.py:2206-2217 accepts the transition from any status, and so does
-       adminDiscrepancyAction/setDiscrepancyStatus. Gating on status == "New" hid the only
-       dismiss path from anyone who reloaded or hit Back after actioning a discrepancy. #}
-    <form action="/admin/discrepancy/{{ discrepancy.id }}/action/" method="post" style="display:inline">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <input type="hidden" name="action" value="done">
-      <input type="submit" class="button is-link is-light" value="Done">
-    </form>
+    {# discrepancy.html:23-26 renders exactly one form here -- Invalid. There is no Done
+       button: views.py:2206-2217 accepts action=="done" in the backend (dead code the
+       template never reaches), but the real "resolve" path is the embedded foodbank form
+       in the next column -- saving it marks this discrepancy Done as a side effect
+       (views.py:817-838, foodbank.ts:75-77). A standalone Done button here would let an
+       admin dismiss a real discrepancy without touching the data that triggered it, which
+       Django's own UI never allows. #}
     <form action="/admin/discrepancy/{{ discrepancy.id }}/action/" method="post" style="display:inline">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <input type="hidden" name="action" value="invalid">
