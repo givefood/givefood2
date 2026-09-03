@@ -1,3 +1,4 @@
+import puppeteer from "@cloudflare/puppeteer";
 import type { Env } from "../../worker-configuration";
 
 export type ScrapeType = "web" | "facebook" | "bankthefood";
@@ -39,47 +40,171 @@ function stripDataUris(markdown: string): string {
   return DATA_URI_RES.reduce((s, re) => s.replace(re, "()"), markdown);
 }
 
-// general.py:114-164 get_markdown() -- ported as the REST endpoint (POST
-// /accounts/{id}/browser-rendering/markdown), not the BROWSER Workers
-// Binding: the binding's exact request shape for /markdown was never
-// verified against a live account in this build (PLAN.md §8.5.3's own
-// flag), where the REST call is confirmed working in production today.
-export async function getMarkdown(env: Env, url: string): Promise<string | null> {
-  const apiUrl = `https://api.cloudflare.com/client/v4/accounts/${env.CF_ACCOUNT_ID}/browser-rendering/markdown`;
+// A from-scratch HTML->Markdown pass over page.content(), standing in for
+// the /markdown REST endpoint's own (undocumented) converter. Deliberately
+// does not attempt readability-style content extraction -- neither does
+// the REST endpoint, which converts the whole rendered document -- and
+// deliberately has no <img> handling at all, so a data: URI logo can never
+// reach the output in the first place (stripDataUris() below is kept as a
+// defensive backstop, not because this path is expected to need it).
+//
+// Every handler below writes DIRECTLY into the shared `out` string from
+// its own element()/onEndTag()/text() callback, rather than using
+// element.before()/after() and relying on a separately-registered "*"
+// text() handler to pick the inserted content up. Tried that first; it
+// doesn't work -- confirmed live against a real page, twice. before()/
+// after() content from one .on() registration never reached a different
+// .on("*", {text}) handler's callback at all (headings and link brackets
+// silently vanished), and separately, element.remove() didn't stop that
+// same "*" handler from seeing text inside the removed subtree (a
+// <style> block's CSS came through as the markdown's first "sentence").
+// Both are consequences of the same fact: HTMLRewriter dispatches each
+// .on() registration's callbacks independently off the ORIGINAL parse,
+// not off one another's edits to the stream. Writing straight into `out`
+// sidesteps needing that stream-visibility semantics at all -- it only
+// depends on callbacks firing in document order (start tag, then
+// children, then end tag), which a streaming HTML parser does guarantee,
+// and which the skipDepth counter alone is enough to gate correctly.
+async function htmlToMarkdown(html: string): Promise<string> {
+  let out = "";
+  let skipDepth = 0;
+  const rewriter = new HTMLRewriter()
+    .on("script, style, svg, iframe, canvas, noscript", {
+      element(el) {
+        skipDepth++;
+        el.onEndTag(() => {
+          skipDepth--;
+        });
+      },
+    })
+    .on("h1, h2, h3, h4, h5, h6", {
+      element(el) {
+        if (skipDepth > 0) return;
+        out += `\n\n${"#".repeat(Number(el.tagName[1]))} `;
+        el.onEndTag(() => {
+          out += "\n";
+        });
+      },
+    })
+    .on("li", {
+      element(el) {
+        if (skipDepth > 0) return;
+        out += "\n- ";
+      },
+    })
+    .on("br", {
+      element(el) {
+        if (skipDepth > 0) return;
+        out += "\n";
+      },
+    })
+    .on("a[href]", {
+      element(el) {
+        if (skipDepth > 0) return;
+        const href = el.getAttribute("href");
+        if (!href) return;
+        out += "[";
+        el.onEndTag(() => {
+          out += `](${href})`;
+        });
+      },
+    })
+    .on("p, div, tr, blockquote, ul, ol", {
+      element(el) {
+        if (skipDepth > 0) return;
+        out += "\n";
+        el.onEndTag(() => {
+          out += "\n";
+        });
+      },
+    })
+    .on("*", {
+      text(chunk) {
+        // Collapsing to a single space, not appending verbatim: real markup
+        // is full of whitespace-only text nodes between tags (an <li>'s own
+        // indentation before its nested <a>), and appending one of those
+        // unchanged put a raw "\n" between "- " and the "[" of the very
+        // link the bullet was for -- confirmed live, "- " and its link
+        // landed on two separate lines. Every intentional line break in
+        // this output comes from the structural handlers above; text()
+        // should never contribute one.
+        if (skipDepth === 0) out += chunk.text.replace(/\s+/g, " ");
+      },
+    });
+  // .transform() only wires up the stream; none of the handlers above run a
+  // single callback until the output is actually read -- draining it via
+  // .text() is required to make the parse happen at all, even though this
+  // function ignores what that call returns and reads `out` instead (same
+  // drain-for-side-effects idiom scrapeFacebook()/fetchPageBodyText() use).
+  await rewriter.transform(new Response(html)).text();
+  // Real markup runs deeply indented (confirmed live: an MDN page's
+  // whitespace-only text nodes between tags carried straight through as
+  // blank/space-only lines) -- collapsed per line before the blank-line
+  // squeeze below, or the squeeze would never see them as blank.
+  return out
+    .split("\n")
+    .map((line) => line.replace(/[ \t]+/g, " ").trim())
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
 
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const waitUntil = WAIT_UNTILS[Math.min(attempt, WAIT_UNTILS.length - 1)];
-    let res: Response;
-    try {
-      res = await fetch(apiUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${env.CF_BROWSER_TOKEN}` },
-        body: JSON.stringify({
-          url,
-          rejectResourceTypes: ["image"],
-          rejectRequestPattern: ["/^.*\\.(css)/"],
-          gotoOptions: { waitUntil, timeout: 45000 },
-        }),
-        signal: AbortSignal.timeout(65_000),
-      });
-    } catch {
-      continue;
-    }
-    if (!res.ok) continue;
-    let json: { success?: boolean; result?: string };
-    try {
-      json = await res.json();
-    } catch {
-      continue;
-    }
-    if (!json.success) continue;
-    const result = json.result;
-    if (!result) continue;
-    const low = result.toLowerCase();
-    if (CHALLENGE_MARKERS.some((m) => low.includes(m))) continue; // checked BEFORE stripping, matching general.py
-    return stripDataUris(result);
+// general.py:114-164 get_markdown(), moved off the REST endpoint it still
+// uses (see that function's own docstring) onto the `browser` Workers
+// Binding, maintainer's call 2026-09-03 despite this being the one path in
+// the whole jobs Worker explicitly flagged highest-stakes (needcheckRender.ts's
+// own comment) -- Django has no binding to have chosen instead, so this is
+// a deliberate divergence from its proven behaviour, not a port of it.
+// Same three-attempt retry, same degrading waitUntil ladder, same
+// challenge-check-before-strip order as the REST version; the one
+// intentional difference is rejecting requests by resourceType()
+// ("image", "stylesheet") rather than the REST call's rejectResourceTypes
+// + a regex on the request URL -- resourceType() classifies a stylesheet
+// correctly even when its URL has no ".css" in it (a query-stringed CDN
+// URL, for instance), so it's strictly the more faithful match for "don't
+// fetch styling", not a looser one.
+export async function getMarkdown(env: Env, url: string): Promise<string | null> {
+  let browser: Awaited<ReturnType<typeof puppeteer.launch>>;
+  try {
+    browser = await puppeteer.launch(env.BROWSER);
+  } catch {
+    return null; // no session available at all -- nothing left to retry
   }
-  return null;
+
+  try {
+    const page = await browser.newPage();
+    await page.setRequestInterception(true);
+    page.on("request", (req) => {
+      const type = req.resourceType();
+      if (type === "image" || type === "stylesheet") req.abort();
+      else req.continue();
+    });
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const waitUntil = WAIT_UNTILS[Math.min(attempt, WAIT_UNTILS.length - 1)];
+      try {
+        await page.goto(url, { waitUntil, timeout: 45_000 });
+      } catch {
+        continue; // navigation timeout, DNS failure, etc -- try the next attempt
+      }
+
+      let html: string;
+      try {
+        html = await page.content();
+      } catch {
+        continue; // page navigated away/crashed between goto and content()
+      }
+
+      const markdown = await htmlToMarkdown(html);
+      if (!markdown) continue;
+      const low = markdown.toLowerCase();
+      if (CHALLENGE_MARKERS.some((m) => low.includes(m))) continue; // checked BEFORE stripping, matching general.py
+      return stripDataUris(markdown);
+    }
+    return null;
+  } finally {
+    await browser.close(); // gotchas.md: REST auto-closes, a binding session does not
+  }
 }
 
 // crawlers.py:334-342's scrape_type == "facebook" branch. A GET to the

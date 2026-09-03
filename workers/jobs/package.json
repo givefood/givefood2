@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@cloudflare/puppeteer": "^1.4.0",
     "@givefood/db": "workspace:*",
     "fast-xml-parser": "^5.11.1"
   },

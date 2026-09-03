@@ -20,8 +20,6 @@ export interface Env {
   CHARITY_NI_Q: Queue<unknown>;
 
   OPENROUTER_KEY: string;
-  CF_BROWSER_TOKEN: string;
-  CF_ACCOUNT_ID: string;
   GCP_TRANSLATE_KEY: string;
   EW_CHARITY_KEY: string;
   SCOT_CHARITY_KEY: string;

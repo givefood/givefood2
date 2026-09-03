@@ -9,6 +9,11 @@
   "name": "givefood-jobs",
   "main": "./src/index.ts",
   "compatibility_date": "2026-08-28",
+  // Required for the `browser` binding's @cloudflare/puppeteer client
+  // (needcheck/scrape.ts's getMarkdown()) -- the binding itself works
+  // without it, but @cloudflare/puppeteer's own code uses a few node:
+  // builtins internally.
+  "compatibility_flags": ["nodejs_compat"],
 
   // Verified against production CrawlSet data: ONE need sweep per day at
   // ~15:00 UTC. docs/crons.md documents 4x daily and is WRONG. Reconcile
@@ -94,7 +99,13 @@
     ]
   },
 
-  "browser": { "binding": "BROWSER" },
+  // remote:true because Browser Rendering has no local simulation at
+  // all -- `wrangler dev` with this unset gives an always-undefined
+  // BROWSER, only caught at the first puppeteer.launch() call. Verified
+  // live 2026-09-03 with `wrangler dev` (no --remote) plus this flag:
+  // getMarkdown() ran a real Chromium session against example.com and a
+  // real MDN page end to end.
+  "browser": { "binding": "BROWSER", "remote": true },
   // Same DATA KV namespace as workers/site (§3.3's binding map: "Slug-
   // redirect map, site stats, /frag/ payloads, all-foodbanks/all-locations
   // blobs") -- this Worker is the writer for the /frag/ payloads WP 4.4
@@ -119,8 +130,13 @@
   ],
 
   "secrets": {
+    // CF_BROWSER_TOKEN/CF_ACCOUNT_ID dropped 2026-09-03: needcheck/scrape.ts's
+    // getMarkdown() moved from the /browser-rendering/markdown REST call to
+    // the `browser` binding above, which needs neither -- a binding runs
+    // in-account already, with no separate auth. That was CF_ACCOUNT_ID's
+    // only use anywhere in this Worker (grepped clean).
     "required": [
-    "OPENROUTER_KEY", "CF_BROWSER_TOKEN", "CF_ACCOUNT_ID", "GCP_TRANSLATE_KEY",
+    "OPENROUTER_KEY", "GCP_TRANSLATE_KEY",
     "EW_CHARITY_KEY", "SCOT_CHARITY_KEY", "POSTMARK_TOKEN", "WHATSAPP_TOKEN",
     "FIREBASE_SERVICE_ACCOUNT", "VAPID_PRIVATE_KEY", "VAPID_PUBLIC_KEY",
     "VAPID_ADMIN_EMAIL", "GMAP_STATIC_KEY", "GMAP_PLACES_KEY", "GMAP_GEOCODE_KEY",
