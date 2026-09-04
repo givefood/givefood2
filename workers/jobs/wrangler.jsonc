@@ -25,7 +25,13 @@
       "30 5 * * *",       // charityinfo
       // dump's "30 4 * * *" slot deliberately gone, not repurposed --
       // WP 5.6, maintainer decision 2026-09-02: PLAN.md §8.8.
-      "30 3 * * 0",       // days_between_needs  (one SQL statement, not a fan-out)
+      // "SUN", not "0": Cloudflare's cron scheduler numbers days of the
+      // week 1=Sunday..7=Saturday, not the 0=Sunday..6=Saturday most unix
+      // cron implementations use. "30 3 * * 0" was rejected outright by
+      // the trigger-update API on first real deploy 2026-09-04 ("invalid
+      // cron string", code 10100) -- caught only by actually deploying,
+      // not by anything that runs locally.
+      "30 3 * * SUN",     // days_between_needs  (one SQL statement, not a fan-out)
       "10 3 * * *",       // crawlitem retention prune (repurposed slot)
       "*/5 * * * *"       // /frag/ payload refresh into KV
     ]
