@@ -10,11 +10,11 @@ import { verifyCsrf } from "../../lib/csrf";
 // dashboard's "Force Check" -> gfoffline's foodbank_need_check, moved
 // here per PLAN.md §8.12's own "keep the capability, move the door").
 // Django ran these synchronously inline; this Worker instead does exactly
-// what givefood-jobs's own cron fan-out does for the whole table
+// what givefood2-jobs's own cron fan-out does for the whole table
 // (scheduled/index.ts's needcheck/getArticles/charityInfo) but for one
 // foodbank: a one-row CrawlSet (no run_id -- admin-triggered, not a cron
 // needing dedup) plus a single queue message, consumed by the SAME
-// givefood-jobs handlers the cron path uses. These three message shapes
+// givefood2-jobs handlers the cron path uses. These three message shapes
 // are duplicated from workers/jobs/src/queues/{needcheckRender,articles,
 // charity}.ts rather than imported -- the two Workers never share src/,
 // same as every other cross-Worker duplication already in this codebase

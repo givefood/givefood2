@@ -17,7 +17,7 @@ export async function handleJobsQueue(batch: MessageBatch<JobMessage>, env: Env)
       await dispatch(message.body, env);
       message.ack();
     } catch (err) {
-      console.error(`givefood-jobs: "jobs" message failed`, message.body, err);
+      console.error(`givefood2-jobs: "jobs" message failed`, message.body, err);
       message.retry();
     }
   }

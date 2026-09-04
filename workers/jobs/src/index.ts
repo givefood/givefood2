@@ -49,7 +49,7 @@ export default {
         for (const message of batch.messages) message.retry();
         return;
       default:
-        console.error(`givefood-jobs: unhandled queue "${batch.queue}"`);
+        console.error(`givefood2-jobs: unhandled queue "${batch.queue}"`);
     }
   },
 } satisfies ExportedHandler<Env>;

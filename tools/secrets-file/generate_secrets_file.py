@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Generate a `SECRET_NAME=value` file for `wrangler deploy --secrets-file`,
-for the site Worker (givefood2) or the jobs Worker (givefood-jobs), by
+for the site Worker (givefood2) or the jobs Worker (givefood2-jobs), by
 pulling values from Django's live Postgres GfCredential table by name --
 same source, same read-only connection pattern as tools/pg-to-d1/
 extract_core.py.

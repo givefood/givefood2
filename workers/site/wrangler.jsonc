@@ -110,18 +110,18 @@
       // here and returns 200 immediately -- no consumer declared anywhere
       // yet. Command processing (subscribe/unsubscribe, which needs a D1
       // whatsappsubscriber table that doesn't exist yet, and the outbound
-      // WHATSAPP_TOKEN send capability, which lives only on givefood-jobs)
+      // WHATSAPP_TOKEN send capability, which lives only on givefood2-jobs)
       // is Phase 5 work; messages simply queue up until that consumer is
       // built, same as Cloudflare Queues' normal producer-before-consumer
       // support.
       { "queue": "whatsapp-hook",  "binding": "WHATSAPP_Q" },
       // Admin-triggered single-foodbank "Force Check"/"Force Article
       // Crawl"/"Force Charity Crawl" (foodbank_detail.njk): the SAME
-      // queues givefood-jobs's own cron fan-out (scheduled/index.ts)
+      // queues givefood2-jobs's own cron fan-out (scheduled/index.ts)
       // already produces to and consumes from, just with an admin-built
       // one-row CrawlSet instead of the cron's whole-table one. Multiple
       // Workers can bind as producers to the same queue; the consumer
-      // binding (and all four handler code) stays on givefood-jobs only,
+      // binding (and all four handler code) stays on givefood2-jobs only,
       // matching this codebase's Worker isolation rule -- this Worker
       // never imports workers/jobs/src, it only enqueues onto queues that
       // already exist.

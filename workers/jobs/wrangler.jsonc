@@ -6,7 +6,7 @@
 // secrets/crons/queues are unverified against the real account.
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "givefood-jobs",
+  "name": "givefood2-jobs",
   "main": "./src/index.ts",
   "compatibility_date": "2026-08-28",
   // Required for the `browser` binding's @cloudflare/puppeteer client

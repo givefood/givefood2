@@ -42,7 +42,7 @@ export async function handleScheduled(
 ): Promise<void> {
   const handler = HANDLERS[event.cron];
   if (!handler) {
-    console.error(`givefood-jobs: no handler registered for cron "${event.cron}"`);
+    console.error(`givefood2-jobs: no handler registered for cron "${event.cron}"`);
     return;
   }
   ctx.waitUntil(handler(env, event.scheduledTime));
