@@ -32,7 +32,7 @@ function phoneClashError(specs: readonly AdminFieldSpec[], values: Record<string
 
 async function renderFoodbankForm(
   c: Context<AppEnv>,
-  opts: { title: string; fieldSpecs: typeof FOODBANK_FIELDS; slug: string; stampEdited: boolean; showDelete?: boolean },
+  opts: { title: string; fieldSpecs: typeof FOODBANK_FIELDS; slug: string; stampEdited: boolean },
 ): Promise<Response> {
   const db = dbSession(c);
   const foodbank = await getFoodbankBySlug(db, opts.slug);
@@ -49,7 +49,6 @@ async function renderFoodbankForm(
       fields: opts.fieldSpecs,
       foodbank: data,
       show_proxy: true,
-      show_delete: opts.showDelete ?? false,
       error,
     });
     return c.html(html, error ? 400 : 200);
@@ -90,7 +89,7 @@ async function renderFoodbankForm(
 
 // givefood/forms.py:58-70 FoodbankForm -- the full 30-field edit form.
 export async function adminFoodbankEdit(c: Context<AppEnv>): Promise<Response> {
-  return renderFoodbankForm(c, { title: "Edit Foodbank", fieldSpecs: FOODBANK_FIELDS, slug: c.req.param("slug")!, stampEdited: true, showDelete: true });
+  return renderFoodbankForm(c, { title: "Edit Foodbank", fieldSpecs: FOODBANK_FIELDS, slug: c.req.param("slug")!, stampEdited: true });
 }
 
 // gfadmin/views.py:817-858 foodbank_form's create branch (`slug=None`,

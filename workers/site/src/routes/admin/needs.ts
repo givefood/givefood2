@@ -384,23 +384,16 @@ export async function adminNeedEditForm(c: Context<AppEnv>): Promise<Response> {
     const changeText = typeof body.change_text === "string" ? body.change_text : "";
     const excessChangeText = typeof body.excess_change_text === "string" && body.excess_change_text.trim() !== "" ? body.excess_change_text : null;
     const published = !!body.published;
-    const foodbankSlug = typeof body.foodbank_slug === "string" ? body.foodbank_slug.trim() : "";
     const formValues = { change_text: changeText, excess_change_text: excessChangeText, published };
 
-    let foodbankId: number | null = null;
-    let foodbankName: string | null = need.foodbank_name;
-    if (foodbankSlug) {
-      const foodbank = await getFoodbankBySlug(db, foodbankSlug);
-      // Fixes gfadmin/views.py:1928's unguarded `Foodbank.objects.get()`
-      // (DoesNotExist -> 500) the same way needNew.ts:113 already does for
-      // the create half of this same view -- re-rendered with the typed
-      // shopping list intact rather than a bare 400 that throws it away.
-      if (!foodbank) return renderNeedEditForm(c, db, need, formValues, foodbankSlug, `No food bank with slug "${foodbankSlug}"`);
-      foodbankId = foodbank.id;
-      foodbankName = foodbank.name;
-    } else {
-      foodbankName = null;
-    }
+    // THE FOOD BANK IS NOT EDITABLE HERE any more (maintainer decision
+    // 2026-09-05, see need_form.njk). Django's NeedForm exposes it and this
+    // route used to read `foodbank_slug` back off the body; it now keeps
+    // whatever the need already has. Nothing is trusted from the form, so
+    // there is no slug to validate and no "no food bank with slug X" path.
+    const foodbankId = need.foodbank_id;
+    const foodbankName = need.foodbank_name;
+    const foodbankSlug = foodbankId !== null ? await getFoodbankSlugById(db, foodbankId) : null;
 
     // givefood/models/needs.py:64 -- `change_text` has no blank=True, so
     // NeedForm's is_valid() rejects an empty shopping list with "This field

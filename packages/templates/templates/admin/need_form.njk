@@ -29,26 +29,27 @@
     <form method="post" class="form-edit-need">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 
-      {# givefood/forms.py:232 -- `foodbank = ModelChoiceField(queryset=
-         Foodbank.objects.filter().order_by('name'))`, i.e. a <select> the
-         admin picks by NAME. Still a text input rather than Django's
-         <select> -- that queryset is unscoped (~1,000+ options, open and
-         closed alike) -- but backed by a datalist of name -> slug pairs,
-         same substitution and same reasoning as admin/need_new.njk:42-54.
-         OPEN food banks only (getOpenFoodbankOptions); a closed one is
-         still reachable by typing its slug, which is exactly why this
-         stays free text and not a <select>. #}
+      {# Django's NeedForm (givefood/forms.py:232) exposes `foodbank` as an
+         editable ModelChoiceField here, and this port carried that over as a
+         slug text input backed by a datalist. It is now READ-ONLY on the edit
+         form -- maintainer decision 2026-09-05: a need is created against the
+         food bank whose page produced it, and reassigning one to a different
+         food bank is not something this form needs to do. The create half
+         (admin/need_new.njk) still picks a food bank, because that is where
+         the association is made.
+
+         Nothing is posted for it any more, so routes/admin/needs.ts keeps
+         whatever foodbank_id the need already has rather than reading one
+         back off the form. #}
       <div class="field">
-        <label class="label" for="id_foodbank">Food Bank Slug</label>
+        <label class="label">Food Bank</label>
         <div class="control">
-          <input class="input" type="text" id="id_foodbank" name="foodbank_slug" value="{{ foodbank_slug }}" placeholder="(none)" list="foodbank_slugs" autocomplete="off">
-          <datalist id="foodbank_slugs">
-            {% for option in foodbank_options %}
-            <option value="{{ option.slug }}">{{ option.name }}</option>
-            {% endfor %}
-          </datalist>
+          {% if foodbank_slug %}
+            <p><a href="/admin/foodbank/{{ foodbank_slug }}/">{{ need.foodbank_name or foodbank_slug }}</a></p>
+          {% else %}
+            <p>(none) &mdash; a need cannot be published without a food bank.</p>
+          {% endif %}
         </div>
-        <p class="help">Start typing a food bank&rsquo;s name to pick it from the list. Leave blank to leave this need unassigned to any food bank. A need cannot be published without one.</p>
       </div>
 
       {# Labels are the model's explicit verbose_names (givefood/models/needs.py:64
