@@ -29,7 +29,7 @@
     {% if articles.length %}
         <b>News from {{ full_name }}</b><br>
         {% for article in articles %}
-            <a href="{{ article.url_with_ref }}">{{ article.title_captialised }}</a><br><span class="articledate">{{ article.published_date }}</span>
+            <a href="{{ article.url_with_ref }}">{{ article.title_captialised }}</a><br><span class="articledate">{{ article.published_date|date("N j, Y, P") }}</span>
             <br>
         {% endfor %}
         <br>

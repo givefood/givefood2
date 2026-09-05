@@ -33,7 +33,7 @@
                 <tr>
                     <td><a href="{{ url('wfbn:foodbank', article.foodbank.slug) }}">{{ article.foodbank.name }}</a></td>
                     <td><a href="{{ article.url_with_ref }}">{{ article.title_captialised|truncatewords(10) }}</a></td>
-                    <td>{{ article.published_date }}</td>
+                    <td>{{ article.published_date|date("N j, Y, P") }}</td>
                 </tr>
             {% endfor %}
         </table>

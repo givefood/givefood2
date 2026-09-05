@@ -59,7 +59,7 @@
                 {% for article in articles %}
                     <li>
                       <a href="{{ article.url_with_ref }}">{{ article.title_captialised }}</a><br>
-                      <span class="is-size-7">{{ article.published_date }}</span>
+                      <span class="is-size-7">{{ article.published_date|date("N j, Y, P") }}</span>
                     </li>
                 {% endfor %}
             </ul>
