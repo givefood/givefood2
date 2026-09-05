@@ -191,7 +191,10 @@ export async function getBeautyBankProductNeeds(session: Session): Promise<Beaut
   const likeParams = BEAUTYBANKS_PRODUCTS.map((product) => `%${product}%`);
   const result = await session
     .prepare(
-      `SELECT fc.foodbank_id AS foodbank_id, fc.foodbank_name AS foodbank_name, f.slug AS foodbank_slug, ` +
+      // f.name, not fc.foodbank_name: migration 0019 dropped the cached
+      // copy from foodbankchange, and this query already joins the parent.
+      // This was /dashboard/beautybanks/'s 500 on 2026-09-05.
+      `SELECT fc.foodbank_id AS foodbank_id, f.name AS foodbank_name, f.slug AS foodbank_slug, ` +
         `f.postcode AS postcode, f.lat_lng AS lat_lng, fc.change_text AS change_text, fc.created AS created ` +
         `FROM foodbankchange fc JOIN foodbank f ON f.id = fc.foodbank_id ` +
         `WHERE fc.published = 1 AND (${likeClauses}) ORDER BY fc.created DESC`,

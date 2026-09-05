@@ -10,7 +10,7 @@ import {
   toDashedUuid,
 } from "@givefood/db";
 import { miles, nearest, R_PYTHON } from "@givefood/geo";
-import { formatCsvRow, round2 } from "@givefood/serialise";
+import { formatCsvRow, formatDjangoJsonDatetime, formatPyStrDatetime, round2 } from "@givefood/serialise";
 import type { AppEnv } from "../types";
 import { dbSession } from "../lib/session";
 import { geocode } from "../lib/geocode";
@@ -224,7 +224,9 @@ api1App.get("/foodbanks/search/", async (c) => {
       needs: latestNeed.change_text,
       number_needs: noItems(latestNeed.change_text),
       need_id: toDashedUuid(latestNeed.need_id),
-      updated: latestNeed.created,
+      // gfapi1/views.py:151 `str(foodbank.latest_need.created)` -- space
+      // separator, six digits (PLAN.md §7.4.6's middle row).
+      updated: formatPyStrDatetime(latestNeed.created),
       updated_text: timesince(latestNeed.created),
       latt_long: foodbank.lat_lng,
       self: foodbankSelfUrl(foodbank.slug),
@@ -283,11 +285,16 @@ api1App.get("/foodbank/:slug/", async (c) => {
     network: foodbank.network,
     needs: foodbank.latestNeed!.change_text,
     number_needs: noItems(foodbank.latestNeed!.change_text),
-    need_found: foodbank.last_need,
+    // views.py:203 passes the raw datetime -> DjangoJSONEncoder (T, three
+    // digits); :207 wraps latest_need_date() in str() (space, six). Two
+    // renderings of near-identical values two lines apart -- Django's, and
+    // reproduced exactly rather than harmonised (§7.4.6's "three different
+    // renderings in one API").
+    need_found: foodbank.last_need === null ? null : formatDjangoJsonDatetime(foodbank.last_need),
     need_id: toDashedUuid(foodbank.latestNeed!.need_id),
     need_self: needSelfUrl(toDashedUuid(foodbank.latestNeed!.need_id)),
     locations: locationsList,
-    updated: foodbank.latestNeed ? foodbank.latestNeed.created : foodbank.modified,
+    updated: formatPyStrDatetime(foodbank.latestNeed ? foodbank.latestNeed.created : foodbank.modified),
     updated_text: timesince(foodbank.latestNeed!.created),
     self: foodbankSelfUrl(foodbank.slug),
   };
@@ -314,7 +321,7 @@ api1App.get("/needs/", async (c) => {
     const foodbankSlug = slugify(need.foodbank_name ?? "");
     return {
       id: toDashedUuid(need.need_id),
-      created: need.created,
+      created: formatDjangoJsonDatetime(need.created), // views.py:231, raw datetime -> DjangoJSONEncoder
       foodbank_name: need.foodbank_name,
       foodbank_slug: foodbankSlug,
       foodbank_self: foodbankSelfUrl(foodbankSlug),
@@ -338,7 +345,7 @@ api1App.get("/need/:id/", async (c) => {
   const foodbankSlug = slugify(need.foodbank_name ?? "");
   const needResponse = {
     id: toDashedUuid(need.need_id),
-    created: need.created,
+    created: formatDjangoJsonDatetime(need.created), // views.py:250, same as the list above
     foodbank_name: need.foodbank_name,
     foodbank_slug: foodbankSlug,
     foodbank_self: foodbankSelfUrl(foodbankSlug),

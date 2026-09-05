@@ -334,7 +334,7 @@ export async function searchAdmin(session: Session, rawQuery: string): Promise<A
     session
       .prepare(
         `SELECT need_id, foodbank_name, modified
-         FROM foodbankchange
+         FROM foodbankchange_full
          WHERE ${containsAnyOf(NEED_SEARCH_COLUMNS, mode)}
          ORDER BY created DESC
          LIMIT ${RESULT_LIMIT}`,

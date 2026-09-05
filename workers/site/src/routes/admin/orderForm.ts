@@ -183,7 +183,8 @@ async function renderForm(
   let needOptions: NeedOptionRow[] = needs;
   if (data.need_id !== null && !needs.some((need) => need.id === data.need_id)) {
     const currentNeed = await db
-      .prepare("SELECT id, need_id, foodbank_name, created FROM foodbankchange WHERE id = ?")
+      // _full: foodbank_name is a joined column since migration 0019.
+      .prepare("SELECT id, need_id, foodbank_name, created FROM foodbankchange_full WHERE id = ?")
       .bind(data.need_id)
       .first<NeedOptionRow>();
     // ORDER BY created DESC above, and anything outside the window is older

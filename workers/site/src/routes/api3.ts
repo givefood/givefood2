@@ -3,6 +3,7 @@ import { companyDonationPointsExist, getDonationPointsByCompanySlug, getFoodbank
 import type { AppEnv } from "../types";
 import { dbSession } from "../lib/session";
 import { changeList, charityRegisterUrl, excessList } from "@givefood/models";
+import { formatPyStrDatetime } from "@givefood/serialise";
 
 // gfapi3 -- predates gfapi2/func.py's ALLOWED_FORMATS/apiResponse()
 // machinery entirely: every endpoint here is JSON-only, with no CORS
@@ -68,7 +69,8 @@ api3App.get("/donationpoints/company/:slug/", async (c) => {
           id: toDashedUuid(latestNeed.need_id),
           items: needsList,
           excess: excessListValue,
-          found: latestNeed.created,
+          // gfapi3/views.py:75 `str(dp.foodbank.latest_need.created)`.
+          found: formatPyStrDatetime(latestNeed.created),
         },
       },
       address: dp.address,

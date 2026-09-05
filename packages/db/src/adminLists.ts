@@ -460,10 +460,15 @@ export async function deleteSubscription(session: Session, type: "email" | "mobi
 // latest published need per food bank name, rather than a .latest() per
 // food bank"). D1/SQLite has no DISTINCT ON; ROW_NUMBER() OVER (PARTITION
 // BY ...) is the named-in-this-WP portable equivalent -- one query, same
-// result shape (latest published need per foodbank_name, joined by name
-// not id, matching Django's own join key exactly). `Foodbank.objects
-// .all()` is also unbounded in Django (open and closed); paginated here
-// like every other list this phase has built.
+// result shape. `Foodbank.objects.all()` is also unbounded in Django (open
+// and closed); paginated here like every other list this phase has built.
+//
+// JOINED BY foodbank_id, NOT BY NAME. The first version of this query
+// partitioned and joined on foodbankchange.foodbank_name to match Django's
+// own key exactly. Migration 0019 (2026-09-05) dropped that column -- it
+// was a cached copy of the parent's name that went stale on a rename, and
+// a join on it silently missed every renamed food bank. Django's name-join
+// is therefore the bug, not the contract; the id is what the FK is for.
 export interface FoodbankWithoutNeedRow {
   id: number;
   name: string;
@@ -478,11 +483,11 @@ export async function getFoodbanksWithoutNeedPage(session: Session, page: number
     SELECT f.id, f.name, f.slug, latest.need_id AS latest_need_id, latest.created AS latest_need_created
     FROM foodbank f
     LEFT JOIN (
-      SELECT foodbank_name, need_id, created,
-             ROW_NUMBER() OVER (PARTITION BY foodbank_name ORDER BY created DESC) AS rn
+      SELECT foodbank_id, need_id, created,
+             ROW_NUMBER() OVER (PARTITION BY foodbank_id ORDER BY created DESC) AS rn
       FROM foodbankchange
       WHERE published = 1
-    ) latest ON latest.foodbank_name = f.name AND latest.rn = 1
+    ) latest ON latest.foodbank_id = f.id AND latest.rn = 1
   `;
   const [countRow, result] = await Promise.all([
     session.prepare("SELECT COUNT(*) AS n FROM foodbank").first<{ n: number }>(),

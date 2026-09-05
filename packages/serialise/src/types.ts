@@ -4,10 +4,11 @@
 // `__float` wrapper explicitly -- see float.ts. json.ts unwraps it to a
 // plain number (an accepted tradeoff, see json.ts); xml.ts/csv.ts render
 // it with full float formatting, since those two stay byte-exact with the
-// Python API they're replacing. Likewise a datetime is carried as a
-// pre-formatted string wrapper, never a JS `Date`, so xml.ts can render it
-// with full 6-digit precision (PLAN.md §7.4.6) without json.ts needing to
-// agree on the same format.
+// Python API they're replacing. Likewise a datetime is carried as the RAW
+// D1 column string in a wrapper, never a JS `Date`, and each writer
+// formats it the way its Python counterpart does -- three fractional
+// digits for JSON, six for XML, str()-style for YAML (PLAN.md §7.4.6,
+// pyDatetime.ts). The raw string is not itself any of those three.
 export type SerialisableValue =
   | null
   | boolean

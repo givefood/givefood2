@@ -1,4 +1,5 @@
 import { Absent, parse as buildXml } from "js2xmlparser";
+import { formatIsoDatetime } from "./pyDatetime";
 import { isDatetimeValue, isFloatValue, isPlainObject, type SerialisableValue } from "./types";
 
 // WP 2.3, PLAN.md §7.4.3. Structural, not byte, parity -- js2xmlparser (one
@@ -35,7 +36,8 @@ function transformValue(v: SerialisableValue, itemName: (parentKey: string) => s
   if (v === null) return Absent.instance;
   if (typeof v === "boolean" || typeof v === "string" || typeof v === "number") return v;
   if (isFloatValue(v)) return v.__float;
-  if (isDatetimeValue(v)) return v.__datetime;
+  // dicttoxml calls isoformat() on a datetime: T separator, six digits.
+  if (isDatetimeValue(v)) return formatIsoDatetime(v.__datetime);
   if (Array.isArray(v)) return v.map((item) => transformValue(item, itemName)); // top-level array; see transformObject for the keyed case
   if (isPlainObject(v)) return transformObject(v, itemName);
   return v;

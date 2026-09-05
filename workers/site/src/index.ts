@@ -6,6 +6,7 @@ import { noStore } from "./middleware/noStore";
 import { serverTiming } from "./middleware/serverTiming";
 import { cacheTag } from "./middleware/cacheTag";
 import { runtimeIdentity } from "./middleware/runtimeIdentity";
+import { securityHeaders } from "./middleware/securityHeaders";
 import { slugRedirect } from "./middleware/slugRedirect";
 import { resolveLanguage } from "./middleware/resolveLanguage";
 import { geoJsonPreload } from "./middleware/geoJsonPreload";
@@ -108,6 +109,7 @@ api2App.route("/", api2ConstituenciesApp);
 const app = new Hono<AppEnv>();
 
 app.use("*", serverTiming); // was RenderTime
+app.use("*", securityHeaders); // was SecurityMiddleware's nosniff + Referrer-Policy
 app.use("*", cacheTag);     // PLAN.md §3.6 -- what queues/cachePurge.ts purges by
 app.use("*", runtimeIdentity); // was context_processors.py's instance_id/version env reads
 app.use("*", slugRedirect); // was SlugRedirectMiddleware

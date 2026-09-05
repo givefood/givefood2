@@ -1,3 +1,4 @@
+import { formatDjangoJsonDatetime } from "./pyDatetime";
 import { isDatetimeValue, isFloatValue, type SerialisableValue } from "./types";
 
 // WP 2.3, PLAN.md §7.4.2. Structural, not byte, parity (maintainer decision,
@@ -11,15 +12,20 @@ import { isDatetimeValue, isFloatValue, type SerialisableValue } from "./types";
 // for a Worker's CPU-ms budget, not just less code.
 //
 // A __float-wrapped value unwraps to a plain number (so 1.0 renders as
-// "1", same as any other JS number -- the accepted tradeoff). A
-// __datetime value unwraps to its raw string as-is, no truncation --
-// structural parity doesn't require matching Python's 3-vs-6-digit
-// precision split between formats, only the same underlying value.
+// "1", same as any other JS number -- the accepted tradeoff).
+//
+// A __datetime value is formatted the way DjangoJSONEncoder formats it
+// (pyDatetime.ts). An earlier version of this comment argued the raw D1
+// string could pass through "as-is, no truncation" under structural
+// parity. That was wrong on both counts, and the maintainer's 2026-08-30
+// decision (PLAN.md §7.10.1 S1) applied structural parity to YAML ONLY --
+// "JSON, XML and CSV remain byte-exact". The raw string was also not one
+// shape but two (see pyDatetime.ts), which no reading of "parity" covers.
 function toPlainJs(v: SerialisableValue): unknown {
   if (v === null || typeof v !== "object") return v;
   if (Array.isArray(v)) return v.map(toPlainJs);
   if (isFloatValue(v)) return v.__float;
-  if (isDatetimeValue(v)) return v.__datetime;
+  if (isDatetimeValue(v)) return formatDjangoJsonDatetime(v.__datetime);
   const out: Record<string, unknown> = {};
   for (const k of Object.keys(v)) out[k] = toPlainJs((v as Record<string, SerialisableValue>)[k] as SerialisableValue);
   return out;
