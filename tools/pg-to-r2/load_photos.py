@@ -101,9 +101,20 @@ RATE_LIMIT_RETRIES = 6
 RATE_LIMIT_BACKOFF = 20.0  # seconds, multiplied by the attempt number
 
 # The three URL shapes gfwfbn/urls/generic.py:12-17 registers, and therefore
-# the three R2 keys routes/media.ts derives ("media" + url.pathname). Both
-# child tables carry a denormalised foodbank_slug, so none of these needs to
-# join back to givefood_foodbank.
+# the three R2 keys routes/media.ts derives ("media" + url.pathname).
+#
+# THE PARENT SLUG COMES FROM givefood_foodbank, NOT from the child's
+# denormalised `foodbank_slug`. That column goes stale when a food bank is
+# renamed and nothing re-saves its children: 9 rows in Postgres and 24 in
+# D1 disagreed with their own parent, across three renames
+# (hertford-district -> hertford-ware-district, wetherby-district ->
+# wetherby-district1, food-for-thought -> food-for-thought-dumbarton).
+#
+# The first version of this script trusted that column and filed 20 donation
+# point photos under keys no page ever requests -- reported as a 404 on
+# /needs/at/wetherby-district1/donationpoint/all-saints-church-bramham/
+# photo.jpg. The page builds its URL from the food bank it is actually
+# rendering, so the join is the only thing that agrees with it.
 QUERIES = [
     (
         "foodbank",
@@ -121,9 +132,10 @@ QUERIES = [
         """
         SELECT pp.id, pp.place_id, pp.photo_ref, pp.html_attributions,
                pp.created, pp.modified, pp.blob,
-               'media/needs/at/' || l.foodbank_slug || '/' || l.slug || '/photo.jpg'
+               'media/needs/at/' || f.slug || '/' || l.slug || '/photo.jpg'
           FROM givefood_placephoto pp
           JOIN givefood_foodbanklocation l ON l.place_id = pp.place_id
+          JOIN givefood_foodbank f ON f.id = l.foodbank_id
          ORDER BY pp.id
         """,
     ),
@@ -132,9 +144,10 @@ QUERIES = [
         """
         SELECT pp.id, pp.place_id, pp.photo_ref, pp.html_attributions,
                pp.created, pp.modified, pp.blob,
-               'media/needs/at/' || d.foodbank_slug || '/donationpoint/' || d.slug || '/photo.jpg'
+               'media/needs/at/' || f.slug || '/donationpoint/' || d.slug || '/photo.jpg'
           FROM givefood_placephoto pp
           JOIN givefood_foodbankdonationpoint d ON d.place_id = pp.place_id
+          JOIN givefood_foodbank f ON f.id = d.foodbank_id
          ORDER BY pp.id
         """,
     ),
