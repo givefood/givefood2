@@ -21,8 +21,9 @@ real line in the output file by default:
                being true once the site's own secrets got tangled up in
                a Text-vs-Secret migration, so generating fresh is now the
                sensible default rather than the cautious exception).
-  - "manual"   Lives outside Postgres entirely -- Google Cloud Console,
-               Meta's WhatsApp Business dashboard. Prompted for
+  - "manual"   Lives outside Postgres entirely -- just Google Cloud
+               Console now, since WHATSAPP_APP_SECRET was copied into
+               GfCredential by hand. Prompted for
                interactively via getpass (hidden input, never echoed,
                never a command-line arg, never written to shell history)
                so the file comes out complete without the value ever
@@ -114,12 +115,13 @@ SITE_SECRETS = [
         "every outstanding CSRF token, which is fine on a redeploy",
     ),
     SecretSpec("WHATSAPP_WEBHOOKVERIFYTOKEN", "db", "whatsapp_webhookverifytoken"),
-    SecretSpec(
-        "WHATSAPP_APP_SECRET",
-        "manual",
-        note="Meta WhatsApp Business dashboard -> App Secret. Django never "
-        "verified webhook signatures, so there is no Postgres source.",
-    ),
+    # Uppercase cred_name, unlike most rows here, and NOT a credential any
+    # Django code path reads -- Django's webhook view has no
+    # X-Hub-Signature-256 check at all, so it never needed the app secret.
+    # Added to GfCredential by hand 2026-09-04 (Meta App Dashboard ->
+    # Settings -> Basic -> App Secret) purely so this script can source it
+    # like everything else. Grepping foodcharity for it will find nothing.
+    SecretSpec("WHATSAPP_APP_SECRET", "db", "WHATSAPP_APP_SECRET"),
     SecretSpec(
         "GOOGLE_OAUTH_CLIENT_SECRET",
         "manual",
@@ -234,8 +236,8 @@ def main():
     parser.add_argument(
         "--skip-manual",
         action="store_true",
-        help="Leave secrets with no automatic source (GOOGLE_OAUTH_CLIENT_SECRET, WHATSAPP_APP_SECRET) as "
-        "commented-out placeholders instead of prompting for them interactively.",
+        help="Leave secrets with no automatic source (GOOGLE_OAUTH_CLIENT_SECRET) as commented-out "
+        "placeholders instead of prompting for them interactively.",
     )
     parser.add_argument(
         "--out-dir",
