@@ -9,6 +9,7 @@ import { handleCharityEwQueue } from "./queues/charityEw";
 import { handleCharityScotlandQueue } from "./queues/charityScotland";
 import { handleCharityNiQueue } from "./queues/charityNi";
 import { handleCharityEwDlq, handleCharityNiDlq, handleCharityScotlandDlq } from "./queues/charityDlq";
+import { handleCachePurgeQueue } from "./queues/cachePurge";
 
 // No routes, no assets -- see PLAN.md §3.1 "Why the second Worker is
 // genuinely required" (secret blast radius, different limits, deploy
@@ -43,11 +44,7 @@ export default {
       case "charity-ni-dlq":
         return handleCharityNiDlq(batch as MessageBatch<any>, env);
       case "cache-purge":
-        // TODO: build out per PLAN.md §3.6 "Purge: cache tags, not URLs".
-        // Not implemented -- retry everything rather than silently drop
-        // while this is unbuilt.
-        for (const message of batch.messages) message.retry();
-        return;
+        return handleCachePurgeQueue(batch as MessageBatch<any>, env);
       default:
         console.error(`givefood2-jobs: unhandled queue "${batch.queue}"`);
     }
