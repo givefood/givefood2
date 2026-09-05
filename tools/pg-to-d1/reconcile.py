@@ -63,12 +63,21 @@ from extract_core import (  # noqa: E402
 # foodbankarticle appears in two of its lists. Taken from extract_core's own
 # definitions rather than restated, so a table added there cannot be silently
 # missed here.
+# The 4th element of an entry, when present, carries the same `from_table` /
+# `where` the loader uses. THEY MUST BE HONOURED HERE TOO. Without them the
+# first version of this script reported foodbankchangetranslation as 73,790
+# rows short, because Postgres holds translations in all 21 of Django's
+# languages and the ETL deliberately loads only the three this port serves
+# (PLAN.md §2.7.1). That is a filter, not a gap -- and a reconciliation that
+# cries wolf on 74k rows is worse than none, because the real 91 get lost in
+# it.
 ALL_TABLES = []
 for group in (TABLES, HOMEPAGE_TABLES, DASHBOARD_TABLES, TRANSLATION_TABLES, LAUNCH_GAP_TABLES, GEO_TABLES):
     for entry in group:
-        pair = (entry[0], entry[1])
-        if pair not in ALL_TABLES:
-            ALL_TABLES.append(pair)
+        kwargs = entry[3] if len(entry) > 3 else {}
+        row = (entry[0], entry[1], kwargs.get("from_table"), kwargs.get("where"))
+        if row not in ALL_TABLES:
+            ALL_TABLES.append(row)
 
 # ONLY THESE MAY BE --apply'd. Postgres is authoritative for them and the
 # ids are shared, so a row in D1 and not in Postgres is a deletion that never
@@ -139,8 +148,21 @@ def d1_ids(token_box, table):
         offset += D1_PAGE
 
 
-def pg_ids(cur, table):
-    cur.execute(f"SELECT id FROM {table}")
+def pg_ids(cur, table, from_table=None, where=None):
+    """The id set the LOADER would produce -- same FROM and same WHERE, or
+    the comparison is against rows the ETL was never asked to copy."""
+    src = from_table or table
+    # `from_table` aliases the base table (e.g. "... t JOIN ..."), so the id
+    # column has to be qualified the way the loader's own select_cols are.
+    alias = ""
+    if from_table:
+        parts = from_table.split()
+        if len(parts) > 1 and parts[1].isalpha() and parts[1].upper() not in ("JOIN", "LEFT", "INNER"):
+            alias = parts[1] + "."
+    sql = f"SELECT {alias}id FROM {src}"
+    if where:
+        sql += f" WHERE {where}"
+    cur.execute(sql)
     return {r[0] for r in cur.fetchall()}
 
 
@@ -167,8 +189,8 @@ def main():
         only = {t.strip() for t in sys.argv[sys.argv.index("--tables") + 1].split(",")}
 
     tables = [
-        (pg, d1)
-        for pg, d1 in ALL_TABLES
+        (pg, d1, ft, wh)
+        for pg, d1, ft, wh in ALL_TABLES
         if (only is None or d1 in only) and (include_large or only is not None or d1 not in LARGE_TABLES)
     ]
     if not tables:
@@ -188,12 +210,27 @@ def main():
     total_stray = total_missing = total_deleted = 0
     t0 = time.monotonic()
 
-    for pg_table, d1_table in tables:
-        try:
-            in_pg = pg_ids(cur, pg_table)
-        except psycopg2.Error as exc:
-            conn.rollback()
-            print("%-28s  SKIPPED (postgres: %s)" % (d1_table, str(exc).strip().splitlines()[0][:40]), flush=True)
+    # ONE D1 TABLE CAN HAVE SEVERAL LOADER DEFINITIONS. foodbankarticle is in
+    # both HOMEPAGE_TABLES (a featured-only slice, 171 rows) and
+    # DASHBOARD_TABLES (the full 17,235), and what the ETL actually puts in
+    # D1 is the UNION. Comparing against either definition alone reports
+    # thousands of phantom strays -- 17,067 of them, on the first attempt.
+    by_d1 = {}
+    for pg_table, d1_table, from_table, where in tables:
+        by_d1.setdefault(d1_table, []).append((pg_table, from_table, where))
+
+    for d1_table, defs in by_d1.items():
+        in_pg = set()
+        failed = None
+        for pg_table, from_table, where in defs:
+            try:
+                in_pg |= pg_ids(cur, pg_table, from_table, where)
+            except psycopg2.Error as exc:
+                conn.rollback()
+                failed = str(exc).strip().splitlines()[0][:40]
+                break
+        if failed:
+            print("%-28s  SKIPPED (postgres: %s)" % (d1_table, failed), flush=True)
             continue
         in_d1 = d1_ids(token_box, d1_table)
 
