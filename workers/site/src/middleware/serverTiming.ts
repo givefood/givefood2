@@ -21,6 +21,19 @@ export const serverTiming: MiddlewareHandler<AppEnv> = async (c, next) => {
 // same thing Django's did (view + DB + template render, not just the
 // render call) -- see debugcomment.njk. Reads the start time this
 // middleware already recorded rather than each route handler timing itself.
+//
+// WHOLE MILLISECONDS. This used to be toFixed(3), matching Django, which
+// prints a real fraction ("Took 64.066ms"). On Workers the fraction was
+// always exactly ".000": timers are deliberately coarsened against timing
+// attacks, so performance.now() does not advance during synchronous
+// execution and only moves at I/O boundaries. Three digits of guaranteed
+// zero is not precision, it is decoration that reads like precision --
+// which is worse than none, because someone will eventually believe it.
+//
+// A deliberate divergence from Django, and only in the human-facing
+// string: the Server-Timing header above keeps its decimals, since that is
+// a machine-readable field where the format is conventional and a consumer
+// may reasonably parse a float.
 export function elapsedMs(c: Context<AppEnv>): string {
-  return (performance.now() - c.get("requestStartTime")).toFixed(3);
+  return String(Math.round(performance.now() - c.get("requestStartTime")));
 }
