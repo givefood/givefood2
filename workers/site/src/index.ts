@@ -78,7 +78,7 @@ import { gfdashPricePerItemCategory } from "./routes/dashboards/pricePerItemCate
 import { writeIndex, writeConstituency, writeConstituencyByCode, writeEmail, writeSend, writeDone } from "./routes/write";
 import { adminSignIn, adminAuthStart, adminAuthReceiver, adminSignOut } from "./routes/admin/auth";
 import { adminApp, adminIndex } from "./routes/admin";
-import { notPortedYet, gone } from "./routes/notPortedYet";
+import { notPortedPath, gone } from "./routes/notPortedYet";
 import { tryAppendSlashRedirect } from "./lib/appendSlash";
 import { render404 } from "./render404";
 import { render500 } from "./render500";
@@ -173,10 +173,12 @@ app.route("/api", api2App);
 app.get("/api/", api2Index);
 app.get("/api/docs/", api2Docs);
 
-// Genuinely unmatched /api/* paths -- nothing should reach this now that
-// the above covers every route gfapi2/gfapi1/gfapi3 actually register,
-// but kept as a defensive fallback rather than a bare 404.
-app.route("/api", notPortedYet("unmatched /api/* path", app));
+// No /api catch-all. Every route gfapi1/gfapi2/gfapi3 register is covered
+// above -- verified 2026-09-05 by probing /api/, /api/1/, /api/2/,
+// /api/3/, /api/2/foodbanks/ and /api/2/needs/ against beta, all 200 --
+// so the "defensive fallback" that used to sit here only ever caught URLs
+// that do not exist, and answered 501 where 404 is the truthful answer.
+// Unmatched /api/* now reaches app.notFound() like everything else.
 
 // gfwfbn `index` -- i18n-patterned (givefood/urls.py:47, inside
 // i18n_patterns), so it's registered once bare (English, no prefix) and
@@ -221,7 +223,7 @@ app.get("/needs/at/:slug/:locslug/", wfbnFoodbankLocation);
 // and sitemap_places*.xml is separately, also confirmed out of scope).
 // The underlying Place gazetteer DATA is NOT out of scope -- /aac/ (§4.8.6)
 // still needs it migrated to D1 for its place-name search half; see
-// routes/public/aac.ts. A real 404 here, not notPortedYet's 501 -- this
+// routes/public/aac.ts. A real 404 here, not a 501 -- this
 // isn't "not built yet", it's "never coming". Registered ahead of the
 // generic /needs catch-all below purely so it doesn't inherit that
 // placeholder's misleading "not ported yet" text; Hono resolves this by
@@ -455,18 +457,55 @@ app.all("/write/to/:slug/email/", writeEmail); // writeEmail itself 404s anythin
 app.all("/write/to/:slug/email/send/", writeSend); // writeSend itself 405s anything but POST (R5)
 app.get("/write/to/:slug/email/done/", writeDone);
 
-// Everything below is specified in PLAN.md but not yet built. Each returns
-// 501 so the gap is loud during development. Build order follows PLAN.md
-// §10's phases: wfbn (translated pages) and the APIs next, admin last.
-app.route("/needs", notPortedYet("gfwfbn (translated pages)", app));
+// The genuine remaining gaps, named one path at a time rather than as
+// catch-all mounts over /needs, /api and / (which is what used to be
+// here). Everything NOT listed here now falls through to app.notFound()
+// below and gets a real 404 page -- see routes/notPortedYet.ts for why
+// answering 501 to a URL that does not exist in Django either is the
+// wrong answer on a live domain.
+//
+// Verified against Django's own URL patterns 2026-09-05 (givefood/urls.py,
+// gfwfbn/urls/{generic,i18n}.py, gfdash/urls.py) by probing beta: these
+// are what is left. gfdash, /frag/ and all three API versions turned out
+// to be fully ported, despite the catch-alls implying otherwise -- the
+// catch-alls were answering 501 for *invalid* dashboard/frag/api paths,
+// which read as "unbuilt" when it was really "no such URL".
+//
+// This list should only ever shrink. If one is missed, the cost is a 404
+// where a 501 was meant -- which is the right answer for a live site
+// anyway, so the failure mode points the safe way.
+const NOT_PORTED: Array<[string, string]> = [
+  ["/human/", "human-readable data page"],
+  ["/sitemap_external.xml", "external sitemap"],
+  ["/sitemap_places.xml", "places sitemap"],
+  ["/sitemap_places_index.xml", "places sitemap index"],
+  // The param has to be the WHOLE segment: Hono does not match a param
+  // with literal text around it inside one segment, so both
+  // "/sitemap_places_:page{[0-9]+}.xml" and
+  // "/sitemap_places_:page{[0-9]+\\.xml}" silently never fire (both
+  // 404'd on /sitemap_places_2.xml live, then confirmed against Hono
+  // directly). The literal prefix and the extension both belong inside
+  // the regex. A param in a LATER segment is fine, which is why
+  // /:countrySlug{...}/geo.json above works. Not "/sitemap_places_*",
+  // which would also swallow non-numeric junk that should 404.
+  ["/:sitemapPage{sitemap_places_[0-9]+\\.xml}", "paged places sitemap"],
+  ["/firebase-messaging-sw.js", "Firebase messaging service worker"],
+  ["/tests/maplibre/", "maplibre test page"],
+  ["/what-food-banks-need/", "legacy redirect to /needs/"],
+  ["/wp-login.php", "the Rick Astley redirect"],
+  ["/needs/manifest.json", "gfwfbn manifest"],
+  ["/needs/tt-old-data/", "gfwfbn tt-old-data"],
+];
+for (const [path, what] of NOT_PORTED) app.all(path, notPortedPath(what));
 // gfdumps -- PERMANENTLY out of scope, not deferred: maintainer decision
 // 2026-09-02 (WP 5.6's Container-based dump-generation cron, and the
 // R2-served download/listing pages that depended on it, were dropped
 // entirely rather than built -- see PLAN.md §8.8's own note on this
-// decision). A real 404 for the whole subtree, not notPortedYet's 501 --
-// this isn't "not built yet", it's "never coming". Same `.route()` +
-// catch-everything sub-app shape as notPortedYet() above (matches the
-// bare mount path too, not just subpaths), just returning 404 instead.
+// decision). A real 404 for the whole subtree, not a 501 -- this isn't
+// "not built yet", it's "never coming". A `.route()` + catch-everything
+// sub-app (matching the bare mount path too, not just subpaths) rather
+// than a path list, because the whole subtree is gone, not named parts
+// of it -- notPortedSubtree()'s shape, returning 404 instead of 501.
 app.route("/dumps", gone());
 // gfauth (WP 6.1/6.2) -- kept at its exact 3 URLs (receiver in particular
 // is a registered Google redirect URI) but implemented under
@@ -477,13 +516,18 @@ app.get("/auth/receiver/", adminAuthReceiver);
 app.get("/auth/sign-out/", adminSignOut);
 app.get("/admin/", adminIndex); // same bare-mount-point quirk as api2Index/api2Docs above -- see routes/admin/index.ts's own comment
 app.route("/admin", adminApp);
-app.route("/", notPortedYet("public site", app));
+// No `app.route("/", ...)` catch-all any more -- that single line was what
+// turned every genuinely-nonexistent URL on the site into a 501. Unmatched
+// requests now fall through to app.notFound() directly below.
 
 // PLAN.md §3.5 "APPEND_SLASH". No platform equivalent -- Workers Static
 // Assets' force-trailing-slash only affects ASSET lookups, not the 3,000+
 // food bank URLs that actually need this. The redirect check itself lives
-// in lib/appendSlash.ts, shared with notPortedYet() -- see that file's
-// comment for why a single copy here isn't enough (givefood/givefood2#3).
+// in lib/appendSlash.ts. This is now its ONLY caller: the catch-all
+// mounts that also needed it (givefood/givefood2#3 -- an app.all("*")
+// shadowed real routes requested without their trailing slash, so it had
+// to probe for a slashed variant itself) are gone, so nothing shadows
+// this handler any more and the redirect check lives in one place again.
 app.notFound(async (c) => {
   const redirect = await tryAppendSlashRedirect(c, app);
   if (redirect) return redirect;
