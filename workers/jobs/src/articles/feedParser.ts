@@ -97,26 +97,42 @@ function parseDate(text: string | undefined): Date | null {
 // whole queue message; see needcheckRender.ts's S1 pattern for the same
 // "render failure isn't a retryable error" shape, though article crawl
 // carries no discrepancy for it (crawlers.py doesn't either).
-export function parseFeed(xml: string): FeedItem[] {
+// `feedUrl` is REQUIRED, and is not decoration: an item's <link> may be
+// relative to the feed, and feedparser resolves those against the feed's
+// own URL before Django ever sees them (its _resolveRelativeURIs pass), so
+// every article Django has ever stored is absolute.
+//
+// This parser did not resolve them, so a feed using relative links -- e.g.
+// glossopdalefoodbank.org.uk, "/news/new-fire-door-needed/" -- stored the
+// path verbatim. Two consequences, both live on 2026-09-05:
+//
+//   * /needs/at/glossopdale/news/ returned a hard 500 on every request.
+//     FoodbankArticle.url_with_ref() calls `new URL(value)`, which THROWS
+//     on a relative URL rather than returning null.
+//   * Every such article was stored TWICE -- once absolute by Django's
+//     crawler, once relative by this one -- because the url uniqueness
+//     index saw two different strings for the same article.
+export function parseFeed(xml: string, feedUrl: string): FeedItem[] {
   let doc: Record<string, unknown>;
   try {
     doc = parser.parse(xml) as Record<string, unknown>;
   } catch {
     return [];
   }
+  const absolute = (item: FeedItem): FeedItem => ({ ...item, link: resolveLink(item.link, feedUrl) });
 
   const rssChannel = (doc.rss as Record<string, unknown> | undefined)?.channel as Record<string, unknown> | undefined;
-  if (rssChannel) return asArray(rssChannel.item as Record<string, unknown> | Record<string, unknown>[]).map(rssItemToFeedItem).filter(isUsable);
+  if (rssChannel) return asArray(rssChannel.item as Record<string, unknown> | Record<string, unknown>[]).map(rssItemToFeedItem).map(absolute).filter(isUsable);
 
   // RSS 1.0 (RDF): <item> is a direct child of the root, not nested under
   // <channel> -- the one structural difference from RSS 2.0 that matters
   // for the three fields read here (fields themselves are the same names,
   // decoded identically by removeNSPrefix).
   const rdfRoot = doc.RDF as Record<string, unknown> | undefined;
-  if (rdfRoot) return asArray(rdfRoot.item as Record<string, unknown> | Record<string, unknown>[]).map(rssItemToFeedItem).filter(isUsable);
+  if (rdfRoot) return asArray(rdfRoot.item as Record<string, unknown> | Record<string, unknown>[]).map(rssItemToFeedItem).map(absolute).filter(isUsable);
 
   const atomFeed = doc.feed as Record<string, unknown> | undefined;
-  if (atomFeed) return asArray(atomFeed.entry as Record<string, unknown> | Record<string, unknown>[]).map(atomEntryToFeedItem).filter(isUsable);
+  if (atomFeed) return asArray(atomFeed.entry as Record<string, unknown> | Record<string, unknown>[]).map(atomEntryToFeedItem).map(absolute).filter(isUsable);
 
   return [];
 }
@@ -147,5 +163,23 @@ function atomEntryToFeedItem(entry: Record<string, unknown>): FeedItem {
 // never insertable -- both checked once, here, rather than at every call
 // site.
 function isUsable(item: FeedItem): boolean {
-  return item.title !== "" && item.publishedDate !== null;
+  // link !== "" is new alongside the title/date guards: resolveLink()
+  // returns "" for anything it cannot make absolute, and an article with no
+  // usable URL is not insertable -- the column is the uniqueness key and
+  // every reader calls new URL() on it.
+  return item.title !== "" && item.publishedDate !== null && item.link !== "";
+}
+
+// Resolve an item link against the feed's own URL, the way feedparser does.
+// An already-absolute link is returned unchanged (the two-argument URL
+// constructor ignores the base when the input is absolute). Anything that
+// still will not parse yields "", which isUsable() then drops -- better a
+// missing article than a stored value that makes a whole page throw.
+function resolveLink(link: string, feedUrl: string): string {
+  if (!link) return "";
+  try {
+    return new URL(link, feedUrl).toString();
+  } catch {
+    return "";
+  }
 }

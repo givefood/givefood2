@@ -64,7 +64,7 @@ async function processOne(env: Env, msg: ArticlesMessage): Promise<void> {
     // unbounded; PLAN.md §8.6 measured a real 148s hang this permits).
     const res = await fetch(foodbank.rss_url, { headers: { "User-Agent": BOT_USER_AGENT }, signal: AbortSignal.timeout(20_000) });
     if (res.ok) {
-      const items = parseFeed(await res.text());
+      const items = parseFeed(await res.text(), foodbank.rss_url);
       for (const item of items) {
         const inserted = await insertArticleIfNew(session, {
           foodbankId: msg.foodbankId,
