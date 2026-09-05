@@ -125,7 +125,7 @@
                   onsubmit="return confirm('Notify about this need? {{ subscriber_counts.email }} by email, {{ subscriber_counts.webpush }} by web push, {{ subscriber_counts.whatsapp }} by WhatsApp, plus the mobile apps.')">
               <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
               <button type="submit" class="button is-link is-small is-light">
-                Notify{% if subscriber_count %} ({{ subscriber_count }}){% endif %}
+                Notify
               </button>
             </form>
           {% endif %}

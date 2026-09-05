@@ -43,11 +43,17 @@
          what the reviewer may have edited. Both are posted so needs.ts can
          tell a rename from a new line. #}
       <table class="table is-fullwidth">
-        <thead><tr><th>Item</th><th>Category</th></tr></thead>
+        {# Explicit column widths. Both controls are already width:100% of
+           their cell (Bulma's own .input rule), but with no width set the
+           browser sizes each column to its content's INTRINSIC width -- an
+           <input> defaults to ~20 characters -- so both boxes rendered
+           narrow with a wide empty gap between them, regardless of the
+           table being is-fullwidth. #}
+        <thead><tr><th style="width:60%">Item</th><th style="width:40%">Category</th></tr></thead>
         <tbody>
           {% for line in lines %}
           <tr>
-            <td><input type="text" class="input is-small item" name="item_{{ loop.index0 }}" value="{{ line.item }}" maxlength="250"></td>
+            <td><input type="text" class="input item" name="item_{{ loop.index0 }}" value="{{ line.item }}" maxlength="250"></td>
             <td>
               <input type="hidden" name="orig_item_{{ loop.index0 }}" value="{{ line.item }}">
               <input type="hidden" name="type_{{ loop.index0 }}" value="{{ line.type }}">
