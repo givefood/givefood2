@@ -7,6 +7,10 @@ import type { AppEnv } from "../types";
 // ship": keyed by URL path (not place_id), so serving a request is a single
 // env.MEDIA.get() with no D1 dependency and no lookup.
 //
+// screenshots/*.png is NOT here either, as of 2026-09-05: Django does not
+// persist screenshots (get_screenshot runs on every @cache_page miss), so
+// they are a live fetch like the favicons below -- routes/wfbn/screenshot.ts.
+//
 // favicon.png/donationpoint favicon.png are NOT here -- they don't go
 // through R2 at all. Google's favicon service (unlike Static Maps/Places/
 // Browser Rendering) is free and keyless, so there's no billed-API-call
@@ -21,7 +25,6 @@ import type { AppEnv } from "../types";
 export const mediaApp = new Hono<AppEnv>();
 
 mediaApp.get("/at/:slug/photo.jpg", serveMedia);
-mediaApp.get("/at/:slug/screenshots/:page{.+\\.png}", serveMedia);
 mediaApp.get("/at/:slug/donationpoint/:dp/photo.jpg", serveMedia);
 mediaApp.get("/at/:slug/:loc/photo.jpg", serveMedia);
 

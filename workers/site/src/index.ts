@@ -32,6 +32,7 @@ import { wfbnConstituencies, wfbnConstituency, wfbnMpPhotoRedirect } from "./rou
 import { wfbnFoodbankUpdates } from "./routes/wfbn/updates";
 import { wfbnFoodbankHit } from "./routes/wfbn/hit";
 import { wfbnFoodbankDonationpointFavicon, wfbnFoodbankFavicon } from "./routes/wfbn/favicon";
+import { wfbnFoodbankScreenshot } from "./routes/wfbn/screenshot";
 import { wfbnWebpushConfig, wfbnWebpushSubscribe, wfbnWebpushUnsubscribe } from "./routes/wfbn/webpush";
 import { wfbnMobsub, wfbnDeleteMobsub } from "./routes/wfbn/mobsub";
 import { humanRelay } from "./routes/human";
@@ -299,6 +300,14 @@ for (const locale of LOCALES) {
 // itself 404 a non-POST request instead.
 app.post("/needs/at/:slug/hit/", wfbnFoodbankHit);
 app.get("/needs/at/:slug/favicon.png", wfbnFoodbankFavicon);
+// gfwfbn/urls/generic.py:14 -- the five page names are in the URL pattern
+// there, so they are in the route here too rather than validated later.
+// THE WHOLE SEGMENT IS THE PARAM, ".png" included. Hono matches a param
+// against an entire path segment, so `:page{...}.png` -- a param followed
+// by literal text in the same segment -- never fires and the route 404s
+// silently. Same trap the sitemap_places patterns hit; the handler strips
+// the extension.
+app.get("/needs/at/:slug/screenshots/:page{(?:homepage|shoppinglist|donationpoints|contacts|locations)\\.png}", wfbnFoodbankScreenshot);
 app.get("/needs/at/:slug/donationpoint/:dpslug/favicon.png", wfbnFoodbankDonationpointFavicon);
 app.get("/needs/webpush/config/", wfbnWebpushConfig);
 app.all("/needs/webpush/subscribe/:slug/", wfbnWebpushSubscribe);

@@ -78,6 +78,11 @@
   // Cloudflare Images transform binding. routes/media.ts uses it to answer
   // `?s=<width>` on the photo routes -- see that file for the URL contract
   // and for why the templates no longer go through `/cdn-cgi/image/`.
+  // routes/wfbn/screenshot.ts. "remote": true because Browser Rendering has
+  // no local simulation -- `wrangler dev` would otherwise fail on the
+  // binding rather than take a screenshot.
+  "browser": { "binding": "BROWSER", "remote": true },
+
   "images": { "binding": "IMAGES" },
 
   // Workers Cache. NOT optional on a catch-all route -- see PLAN.md §3.6.

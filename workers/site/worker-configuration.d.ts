@@ -14,6 +14,8 @@ export interface Env {
   ASSETS: Fetcher;
   // Cloudflare Images transform binding -- routes/media.ts's ?s= resizing.
   IMAGES: ImagesBinding;
+  // Browser Rendering -- routes/wfbn/screenshot.ts.
+  BROWSER: Fetcher;
   SESSIONS: KVNamespace;
   DATA: KVNamespace;
   HITS: AnalyticsEngineDataset;

@@ -9,6 +9,7 @@
     "typecheck": "pnpm --filter @givefood/templates run precompile && tsc --noEmit"
   },
   "dependencies": {
+    "@cloudflare/puppeteer": "^1.4.0",
     "@givefood/db": "workspace:*",
     "@givefood/geo": "workspace:*",
     "@givefood/serialise": "workspace:*",
