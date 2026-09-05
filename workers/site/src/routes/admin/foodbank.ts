@@ -3,6 +3,7 @@ import { getFoodbankBySlug, updateFoodbankFields, insertFoodbank, deleteFoodbank
 import { render } from "@givefood/templates";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
+import { AGGREGATE_TAG, constituencyTag, foodbankTag } from "@givefood/urls";
 import { verifyCsrf } from "../../lib/csrf";
 import type { AdminFieldSpec, AdminFieldValue } from "../../lib/adminFormFields";
 import { FOODBANK_FIELDS, FOODBANK_PARTIAL_FORMS, fieldsByName, parseAdminFields } from "../../lib/adminFormFields";
@@ -64,6 +65,24 @@ async function renderFoodbankForm(
     if (error) return renderForm({ ...foodbank, ...parsed.values }, error);
 
     const newSlug = await updateFoodbankFields(db, foodbank.id, parsed.values, opts.stampEdited);
+
+    // givefood/models/foodbank.py:717-758's do_decache, as a tag purge
+    // rather than Django's hand-maintained URL list. Both slugs when the
+    // name changed: the old one so its now-wrong pages stop being served
+    // (they 404 or redirect afterwards, but a cached 200 would outlive
+    // that), the new one because its pages may already be cached from a
+    // crawler hit. Plus the constituency, whose page lists this food bank,
+    // and the aggregates.
+    //
+    // waitUntil, not awaited: the admin gets its redirect immediately and
+    // the purge happens on the way out. A failed enqueue must not turn a
+    // successful save into an error page -- the data is already written.
+    const purgeTags = [foodbankTag(foodbank.slug), AGGREGATE_TAG];
+    if (newSlug && newSlug !== foodbank.slug) purgeTags.push(foodbankTag(newSlug));
+    if (foodbank.parliamentary_constituency_slug) purgeTags.push(constituencyTag(foodbank.parliamentary_constituency_slug));
+    c.executionCtx.waitUntil(
+      c.env.PURGE_Q.send({ tags: purgeTags }).catch((err) => console.error("foodbank save: purge enqueue failed", err)),
+    );
 
     // gfadmin/views.py:817-838 foodbank_form's ?discrepancy=<id> handling
     // -- the discrepancy page's embedded FoodbankForm posts back here with

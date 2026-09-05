@@ -26,6 +26,7 @@ import {
 import { render } from "@givefood/templates";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
+import { AGGREGATE_TAG, foodbankTag } from "@givefood/urls";
 import { verifyCsrf } from "../../lib/csrf";
 import { diffHtml } from "../../lib/needDiff";
 import { inputMethodHuman, inputMethodEmoji } from "../../lib/needAdminDisplay";
@@ -156,6 +157,23 @@ export async function adminNeedUnpublish(c: Context<AppEnv>): Promise<Response> 
   return handlePublishTransition(c, false);
 }
 
+// Enqueues the tag purge for one food bank by id, resolving the slug the tag
+// is built from. A need carries foodbank_id, not the slug.
+//
+// waitUntil, and a swallowed error: the write has already happened, so a
+// failed enqueue must not turn a successful save into an error page. The
+// worst case is a stale page until the next purge or TTL, which is exactly
+// where this was before any of it existed.
+async function purgeFoodbank(c: Context<AppEnv>, foodbankId: number | null): Promise<void> {
+  if (foodbankId === null) return;
+  const slug = await getFoodbankSlugById(dbSession(c), foodbankId);
+  const tags = [AGGREGATE_TAG];
+  if (slug) tags.push(foodbankTag(slug));
+  c.executionCtx.waitUntil(
+    c.env.PURGE_Q.send({ tags }).catch((err) => console.error("need: purge enqueue failed", err)),
+  );
+}
+
 async function handlePublishTransition(c: Context<AppEnv>, publish: boolean): Promise<Response> {
   if (!(await requireCsrf(c))) return c.text("Forbidden", 403);
   const needId = c.req.param("id")!;
@@ -172,6 +190,14 @@ async function handlePublishTransition(c: Context<AppEnv>, publish: boolean): Pr
   if (publish) {
     await c.env.JOBS_Q.sendBatch(TRANSLATE_LANGUAGES.map((language) => ({ body: { type: "translate-need", needId: result.id, language } })));
   }
+
+  // Publishing or unpublishing a need is what actually changes a food bank's
+  // page for a visitor -- it is the most frequent reason a cached page goes
+  // stale, and the one Django covers only indirectly (needs.py:328 saves the
+  // food bank with do_decache=False on this path, so publishing a need has
+  // never purged anything there; the food bank's own next save does it).
+  // Purged here on both transitions.
+  await purgeFoodbank(c, result.foodbank_id);
 
   return c.redirect(`/admin/need/${needId}/`, 302);
 }

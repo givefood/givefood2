@@ -1,6 +1,7 @@
 import type { Context } from "hono";
 import { getFoodbankBySlug, getDonationPointBySlugs, upsertDonationPoint, deleteDonationPoint, getLocationLatLngsByFoodbankId } from "@givefood/db";
 import { render } from "@givefood/templates";
+import { AGGREGATE_TAG, foodbankTag } from "@givefood/urls";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
 import { verifyCsrf } from "../../lib/csrf";
@@ -107,6 +108,14 @@ export async function adminDonationPointForm(c: Context<AppEnv>): Promise<Respon
       existing?.id,
     );
     // views.py:1850-1851 `"%s#donationpoints" % reverse("admin:foodbank")`.
+    // A location/donation point change alters the food bank's own pages and
+    // the aggregate list endpoints -- same tag purge foodbank.ts's save does.
+    // waitUntil so a purge failure cannot fail a save that already happened.
+    c.executionCtx.waitUntil(
+      c.env.PURGE_Q.send({ tags: [foodbankTag(foodbank.slug), AGGREGATE_TAG] }).catch((err) =>
+        console.error("purge enqueue failed", err),
+      ),
+    );
     return c.redirect(`/admin/foodbank/${foodbank.slug}/#donationpoints`, 302);
   }
 

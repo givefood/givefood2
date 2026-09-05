@@ -11,6 +11,7 @@
   "dependencies": {
     "@cloudflare/puppeteer": "^1.4.0",
     "@givefood/db": "workspace:*",
+    "@givefood/urls": "workspace:*",
     "fast-xml-parser": "^5.11.1"
   },
   "devDependencies": {

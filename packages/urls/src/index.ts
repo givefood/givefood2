@@ -37,3 +37,4 @@ export function urlForLocale(locale: string, name: string, ...args: string[]): s
   if (locale === "en" || !I18N_SCOPED.has(name)) return path;
   return `/${locale}${path}`;
 }
+export * from "./cacheTags";

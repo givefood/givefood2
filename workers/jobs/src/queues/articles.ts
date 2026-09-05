@@ -1,3 +1,4 @@
+import { AGGREGATE_TAG, foodbankTag } from "@givefood/urls";
 import type { Env } from "../../worker-configuration";
 import {
   decrementCrawlSetRemaining,
@@ -83,7 +84,7 @@ async function processOne(env: Env, msg: ArticlesMessage): Promise<void> {
 
   const now = new Date().toISOString();
   await updateFoodbankLastCrawl(session, msg.foodbankId, now); // crawlers.py:58 stamps this unconditionally
-  if (foundNew) await env.PURGE_Q.send({ tags: [`fb-${foodbank.slug}`] }); // crawlers.py:60's do_decache=True
+  if (foundNew) await env.PURGE_Q.send({ tags: [foodbankTag(foodbank.slug), AGGREGATE_TAG] }); // crawlers.py:60's do_decache=True
 
   const closed = await finishCrawlItem(session, crawlItemId, null);
   if (closed) await decrementCrawlSetRemaining(session, msg.crawlSetId);

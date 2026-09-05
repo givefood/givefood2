@@ -4,14 +4,18 @@ import type { Env } from "../../worker-configuration";
 // purge Django fires from Foodbank.save() (models/foodbank.py:717-758) with
 // the specific URLs and prefixes that food bank owns.
 //
-// THIS IS THE BLUNT VERSION, ON PURPOSE. It ignores the tags in the message
-// and purges the whole zone. PLAN.md §3.6 specifies purging by Cache-Tag,
-// which is the right design and is not built: nothing in workers/site emits
-// a Cache-Tag header except routes/media.ts, so there is no tag set to purge
-// against. Until that lands, the choice for a queue consumer is
-// purge_everything or nothing, and nothing means a food bank edited in the
-// admin keeps serving its old page until someone remembers the Clear Cache
-// button.
+// PURGES BY TAG, per PLAN.md §3.6. workers/site/src/middleware/cacheTag.ts
+// stamps every cacheable response with what it depends on -- fb-<slug> for
+// one food bank's pages and API representations, pc-<slug> for a
+// constituency, fb-all for the aggregates -- and this turns a message
+// naming those tags into a purge of exactly them.
+//
+// Checked before building it: purge by tag is NOT Enterprise-only. Free,
+// Pro, Business and Enterprise all support URL, hostname, tag and prefix
+// purging; only the rate limits differ. givefood.org.uk is Business.
+//
+// purge_everything remains, as the fallback for a message with no tags.
+// That is what the previous version of this consumer did for every message.
 //
 // This consumer used to be a `message.retry()` stub in index.ts -- every
 // purge message retried forever and then went to cache-purge-dlq, which has
@@ -27,36 +31,29 @@ import type { Env } from "../../worker-configuration";
 // responses become the thing being cached, and a missing purge becomes a
 // visibly stale food bank page.
 //
-// COALESCED PER BATCH. purge_everything is the most expensive operation
-// available against a zone's cache and Cloudflare rate-limits it; a batch of
-// 30 messages must not become 30 purges. One call, then every message in the
-// batch is acked or retried on its outcome.
-//
-// WHEN THE TAG DESIGN LANDS: keep this file, replace the body of
-// purgeZone() with a `files`/`tags` payload built from the batch, and delete
-// the coalescing -- purging by tag is cheap enough to do per message.
+// COALESCED PER BATCH, still. Cloudflare caps a tag purge at 30 tags per
+// request, and a batch of messages naming overlapping tags (every food bank
+// save carries fb-all) would otherwise purge the same tag repeatedly. The
+// batch's tags are unioned, then sent in chunks of 30.
 
 export interface CachePurgeMessage {
-  // Written by producers today, ignored here. Kept in the type so a producer
-  // that starts tagging does not silently disagree with the consumer.
+  // Tag names come from @givefood/urls' cacheTags module, which is also what
+  // workers/site stamps responses with -- a tag invented independently on
+  // either side is a purge that silently does nothing.
   tags?: string[];
-  urls?: string[];
 }
 
-async function purgeZone(env: Env): Promise<boolean> {
-  if (!env.CF_ZONE_ID || !env.CF_API_KEY) {
-    // Not a failure worth retrying: the secrets are either set or they are
-    // not, and retrying a batch every 60s until the DLQ will not change that.
-    console.error("cache-purge: CF_ZONE_ID/CF_API_KEY unset, nothing purged");
-    return true;
-  }
+// Cloudflare's cap for a tag purge. Exceeding it is a 400, not a partial
+// purge, so the union is chunked rather than truncated.
+const TAGS_PER_REQUEST = 30;
 
+async function purge(env: Env, body: Record<string, unknown>): Promise<boolean> {
   let res: Response;
   try {
     res = await fetch(`https://api.cloudflare.com/client/v4/zones/${env.CF_ZONE_ID}/purge_cache`, {
       method: "POST",
       headers: { Authorization: `Bearer ${env.CF_API_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ purge_everything: true }),
+      body: JSON.stringify(body),
       signal: AbortSignal.timeout(15_000),
     });
   } catch (err) {
@@ -82,10 +79,39 @@ async function purgeZone(env: Env): Promise<boolean> {
 }
 
 export async function handleCachePurgeQueue(batch: MessageBatch<CachePurgeMessage>, env: Env): Promise<void> {
-  const ok = await purgeZone(env);
+  if (!env.CF_ZONE_ID || !env.CF_API_KEY) {
+    // Acked, not retried: the secrets are either set or they are not, and
+    // retrying a batch every 60s until the DLQ will not make one appear.
+    console.error("cache-purge: CF_ZONE_ID/CF_API_KEY unset, nothing purged");
+    for (const message of batch.messages) message.ack();
+    return;
+  }
+
+  const tags = new Set<string>();
+  let purgeAll = false;
+  for (const message of batch.messages) {
+    const t = message.body?.tags;
+    if (t?.length) t.forEach((tag) => tags.add(tag));
+    // A message that names no tags cannot be satisfied by a tag purge, and
+    // guessing would be worse than the blunt instrument.
+    else purgeAll = true;
+  }
+
+  let ok: boolean;
+  if (purgeAll) {
+    ok = await purge(env, { purge_everything: true });
+    if (ok) console.log(`cache-purge: purged everything for ${batch.messages.length} message(s)`);
+  } else {
+    const list = [...tags];
+    ok = true;
+    for (let i = 0; i < list.length && ok; i += TAGS_PER_REQUEST) {
+      ok = await purge(env, { tags: list.slice(i, i + TAGS_PER_REQUEST) });
+    }
+    if (ok) console.log(`cache-purge: purged ${list.length} tag(s) for ${batch.messages.length} message(s): ${list.slice(0, 8).join(", ")}`);
+  }
+
   for (const message of batch.messages) {
     if (ok) message.ack();
     else message.retry({ delaySeconds: 60 });
   }
-  if (ok) console.log(`cache-purge: purged the zone for ${batch.messages.length} message(s)`);
 }
