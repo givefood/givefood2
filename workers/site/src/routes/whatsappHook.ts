@@ -33,6 +33,15 @@ import { hmacSha256HexBytes, timingSafeEqual } from "../lib/hmac";
 // against the X-Hub-Signature-256 header's "sha256=<hex>" value, before any
 // parsing.
 //
+// IT REALLY IS THE APP SECRET, confirmed by the maintainer 2026-09-05.
+// Worth recording because the doubt is easy to re-acquire: WHATSAPP_TOKEN
+// (the access token) and this looked alike enough to be mistaken for each
+// other, and getting it wrong FAILS CLOSED AND SILENTLY -- every signature
+// check would mismatch, every POST would still return 200 to Meta as
+// designed below, and the only evidence would be a log line. The App
+// Secret is Meta App Dashboard -> Settings -> Basic; the access token is
+// under WhatsApp -> API Setup. They are not interchangeable.
+//
 // Every POST returns exactly 200 regardless of outcome -- PLAN.md is
 // explicit: "Keep the always-200 response to Meta (they de-register a
 // webhook that stops returning 200), but log rejections." This is a
