@@ -138,9 +138,26 @@ export async function wfbnFoodbankDonationpoint(c: Context<AppEnv>): Promise<Res
 
   // Reused for both the Link preload header and the page's own
   // data-include src.
+  //
+  // crossorigin=anonymous IS LOAD-BEARING, and its absence made this header
+  // inert from the day it was written (ticket #11). The preload has to be
+  // issued in the same mode as the real request or the browser cannot reuse
+  // it: static/js/csi.js fetches the fragment with
+  // `fetch(url, {credentials: 'same-origin'})`, i.e. CORS mode with
+  // credentials mode "same-origin". A preload with no `crossorigin` is made
+  // in NO-CORS mode, which matches nothing here -- so the browser threw the
+  // preload away, fetched the fragment a second time, and logged "was
+  // preloaded using link preload but not used within a few seconds".
+  // `crossorigin=anonymous` maps to exactly CORS + "same-origin"
+  // credentials, which is why middleware/geoJsonPreload.ts has carried it
+  // since it was ported.
+  //
+  // Only sent when the fragment will actually be requested: donationpoint.
+  // njk renders the data-include under `{% if donationpoint.opening_hours %}`,
+  // so hinting unconditionally would preload a request the page never makes.
   const openingHoursUrl = urlForLocale(locale, "wfbn:foodbank_donationpoint_openinghours", slug, dpslug);
   if (donationpoint.opening_hours && donationpoint.opening_hours.trim()) {
-    c.header("Link", `<${openingHoursUrl}>; rel=preload; as=fetch`);
+    c.header("Link", `<${openingHoursUrl}>; rel=preload; as=fetch; crossorigin=anonymous`);
   }
 
   const context = buildPageContext({
