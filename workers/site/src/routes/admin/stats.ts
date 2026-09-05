@@ -258,6 +258,7 @@ export async function adminSubscriberGraph(c: Context<AppEnv>): Promise<Response
   const buckets = new Map<string, WeekBucket>();
   for (const row of signups) {
     const key = weekKey(parseStatsTimestamp(row.created));
+    if (key === null) continue; // unreadable timestamp -- see weekKey()
     let bucket = buckets.get(key);
     if (!bucket) {
       // `whatsapp` stays 0 for every week: there is no whatsappsubscriber

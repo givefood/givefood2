@@ -41,6 +41,8 @@ export async function gfdashWeeklyItemcountYear(c: Context<AppEnv>): Promise<Res
   const weekNeeds = new Map<string, number>();
   for (const row of rows) {
     const key = weekKey(parseD1Timestamp(row.created));
+    // An unreadable timestamp is skipped, not bucketed: see weekKey().
+    if (key === null) continue;
     weekNeeds.set(key, (weekNeeds.get(key) ?? 0) + noItems(row.change_text));
   }
 
