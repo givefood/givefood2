@@ -34,7 +34,7 @@ import { adminSearch } from "./search";
 import { adminQuarterStats, adminEditStats, adminOrderStats, adminSubscriberStats, adminSubscriberGraph, adminNeedStats } from "./stats";
 import { adminItemsList, adminItemForm } from "./items";
 import { adminOrderGroupsList, adminOrderGroupDetail, adminOrderGroupForm } from "./orderGroup";
-import { adminSlugRedirectsList, adminSlugRedirectForm, adminSlugRedirectsResync } from "./slugRedirect";
+import { adminSlugRedirectsList, adminSlugRedirectForm } from "./slugRedirect";
 import { adminMap } from "./map";
 import { adminClearCache } from "./clearCache";
 import { adminOrderForm } from "./orderForm";
@@ -219,7 +219,6 @@ adminApp.post("/clearcache/", adminClearCache);
 // /slug-redirect/new/ must precede /slug-redirect/:id/edit/ (Hono matches in
 // registration order), same shape as the parlcon/location blocks above.
 adminApp.get("/slug-redirects/", adminSlugRedirectsList);
-adminApp.post("/slug-redirects/resync/", adminSlugRedirectsResync);
 adminApp.get("/slug-redirect/new/", adminSlugRedirectForm);
 adminApp.post("/slug-redirect/new/", adminSlugRedirectForm);
 adminApp.get("/slug-redirect/:id/edit/", adminSlugRedirectForm);

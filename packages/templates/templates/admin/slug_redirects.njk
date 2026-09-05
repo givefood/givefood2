@@ -1,7 +1,7 @@
 {# gfadmin/templates/admin/slug_redirects.html (37 lines), plus the two
    port-only additions described below. Its own template rather than the
-   shared admin/list.njk, because list.njk has no slot for the KV panel and
-   this is the one admin list whose page has to explain a second store.
+   shared admin/list.njk, because list.njk has no slot for the note about
+   propagation delay, which this is the one admin list that needs.
 
    Django's table: 4 columns (Old Slug / New Slug / Created / Edit link),
    no count, no empty state, no pagination. The count, the "None" row and
@@ -20,24 +20,18 @@
       <a href="/admin/slug-redirect/new/" class="button is-link is-light">New Slug Redirect</a>
     </div>
 
-    {# PORT ONLY -- no Django equivalent. The middleware reads a DATA-KV
-       blob, not the table (workers/site/src/middleware/slugRedirect.ts),
-       so the page has to say whether the two agree and offer a way to put
-       them back in step. See lib/slugRedirectKv.ts for why the blob can
-       drift and why propagation is minutes rather than instant. #}
+    {# PORT ONLY -- no Django equivalent. Django's own admin says nothing
+       about propagation because its cache is invisible; this says it out
+       loud so nobody wonders whether a save "worked". Django caches the
+       same map for 3600s with nothing invalidating it on save
+       (givefood/utils/cache.py:12-32), so there a new redirect can take an
+       hour unless someone hits /admin/clearcache/. #}
     <div class="notification is-light">
-      <form method="post" action="/admin/slug-redirects/resync/" class="is-pulled-right">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <button type="submit" class="button is-small is-light">Rebuild KV blob</button>
-      </form>
-      <p>
-        <strong>KV blob:</strong> {{ kv_count }} {{ "entry" if kv_count == 1 else "entries" }}
-        {% if not kv_in_sync %}&mdash; <strong class="has-text-danger">out of sync with the database ({{ total }})</strong>{% endif %}
-      </p>
       <p class="help">
-        Redirects are served from this blob, not from the database. A save rewrites it
-        immediately, but goes live within roughly five minutes rather than instantly
-        (KV convergence, then a 60s edge cache, then a 5 minute in-process memo).
+        Redirects are served from this table. A save goes live within about
+        five minutes rather than instantly -- middleware/slugRedirect.ts
+        memoises the map for that long per warm isolate, so it is not
+        querying D1 on every food bank page view.
       </p>
     </div>
 

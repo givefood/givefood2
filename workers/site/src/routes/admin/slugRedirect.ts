@@ -6,13 +6,11 @@ import { dbSession } from "../../lib/session";
 import { verifyCsrf } from "../../lib/csrf";
 import { parseAdminFields, type AdminFieldSpec } from "../../lib/adminFormFields";
 import { timesince } from "../../lib/timesince";
-import { syncSlugRedirectsToKv, readSlugRedirectKvCount } from "../../lib/slugRedirectKv";
 import { adminPageContext } from "./pageContext";
 
 // gfadmin/views.py:2276-2308 -- slug_redirects() (the list) and
 // slug_redirect_form() (create+edit in ONE Django view, registered at two
-// URLs: gfadmin/urls/core.py:9-10). Plus one port-only route, the manual
-// KV rebuild -- see lib/slugRedirectKv.ts for why the blob exists at all.
+// URLs: gfadmin/urls/core.py:9-10).
 //
 // Django's admin has no CSRF middleware (settings.py:97 comments it out),
 // so its form POST is unprotected and its list page has no mutating
@@ -57,7 +55,7 @@ const MAX_SLUG_LENGTH = 200;
 export async function adminSlugRedirectsList(c: Context<AppEnv>): Promise<Response> {
   const db = dbSession(c);
   const now = new Date();
-  const [page, kvCount] = await Promise.all([getSlugRedirectsPage(db, parsePage(c), PAGE_SIZE), readSlugRedirectKvCount(c.env)]);
+  const page = await getSlugRedirectsPage(db, parsePage(c), PAGE_SIZE);
 
   const html = await render("admin/slug_redirects.njk", {
     ...(await adminPageContext(c, "settings")), // views.py:2282 "section":"settings"
@@ -66,10 +64,6 @@ export async function adminSlugRedirectsList(c: Context<AppEnv>): Promise<Respon
     total_pages: totalPages(page.total, page.pageSize),
     has_next: page.hasNext,
     rows: page.rows.map((row) => ({ ...row, created_ago: timesince(row.created, now) })),
-    kv_count: kvCount,
-    // The blob holds every row, not just this page's, so it is the FULL
-    // table count it should agree with.
-    kv_in_sync: kvCount === page.total,
   });
   return c.html(html);
 }
@@ -122,9 +116,9 @@ export async function adminSlugRedirectForm(c: Context<AppEnv>): Promise<Respons
     if (oldSlug === newSlug) return c.text("Old slug and new slug are the same", 400);
 
     await upsertSlugRedirect(db, { oldSlug, newSlug }, existing?.id);
-    // The whole point of the work package: D1 and the KV blob the
-    // middleware reads move together, in the same request.
-    await syncSlugRedirectsToKv(c.env, db);
+    // No cache to invalidate: middleware/slugRedirect.ts reads this table
+    // directly, memoised 5 minutes per isolate, so a save is live within
+    // that window on its own.
     return c.redirect("/admin/slug-redirects/", 302); // views.py:2300
   }
 
@@ -137,23 +131,9 @@ export async function adminSlugRedirectForm(c: Context<AppEnv>): Promise<Respons
     // Django has NO delete for SlugRedirect -- only the list and this
     // form exist (verified: `grep -rn SlugRedirect --include="*.py"` hits
     // nothing but these two views, the imports and the tests). None is
-    // ported. If one is ever wanted it must also call
-    // syncSlugRedirectsToKv(), or the deleted key keeps 301ing forever.
+    // ported.
     delete_url: null,
   });
   return c.html(html);
 }
 
-// PORT ONLY -- no Django equivalent. The KV blob is a port artefact and
-// can drift out of step with D1 (the initial seed, a hand edit via
-// /admin/query/, a `put` that failed after the row was written), so the
-// list page shows both counts and this rebuilds the blob from D1 on
-// demand. POST + CSRF, like every other mutation in this admin.
-export async function adminSlugRedirectsResync(c: Context<AppEnv>): Promise<Response> {
-  const body = await c.req.parseBody();
-  const csrfToken = typeof body.csrf_token === "string" ? body.csrf_token : undefined;
-  if (!(await verifyCsrf(c, c.env.CSRF_SECRET, csrfToken))) return c.text("Forbidden", 403);
-
-  await syncSlugRedirectsToKv(c.env, dbSession(c));
-  return c.redirect("/admin/slug-redirects/", 302);
-}

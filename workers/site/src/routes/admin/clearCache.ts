@@ -111,17 +111,11 @@ export async function adminClearCache(c: Context<AppEnv>): Promise<Response> {
     // Safe to delete because routes/public/frag.ts's readOrCompute() recomputes
     // and rewrites either one on a miss, so the worst case is one live query.
     //
-    // DELIBERATELY NOT CLEARED: DATA's "slug_redirects" blob
-    // (middleware/slugRedirect.ts:18). It is a KV-hosted PROJECTION, not a
-    // cache: the middleware falls back to {} on a miss (slugRedirect.ts:27-28),
-    // it is rebuilt only by lib/slugRedirectKv.ts on an admin write, and no
-    // request path reads the slugredirect table (migrations/0016_slugredirect.sql)
-    // directly. Deleting it would silently kill every live 301 until the next
-    // slug-redirect edit. Django's own getter re-reads the table on a miss
-    // (givefood/utils/cache.py:25-29), so clearing it there is harmless; here it
-    // is not. If this button should ever also REFRESH that blob, the call is
-    // rebuildSlugRedirectKv() from lib/slugRedirectKv.ts -- a rebuild, never a
-    // bare delete.
+    // The "slug_redirects" KV blob this used to warn about is GONE
+    // (2026-09-05): middleware/slugRedirect.ts reads the slugredirect
+    // table directly now, so there is no projection to keep in step, and
+    // nothing here to avoid deleting. The KV key itself was deleted with
+    // `wrangler kv key delete` at the same time.
     //
     // ALSO NOT CLEARABLE, and honest about it: slugRedirect.ts:21 memoises that
     // map in module scope for 300s. No request can clear another isolate's copy
