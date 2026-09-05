@@ -21,9 +21,12 @@ real line in the output file by default:
                being true once the site's own secrets got tangled up in
                a Text-vs-Secret migration, so generating fresh is now the
                sensible default rather than the cautious exception).
-  - "manual"   Lives outside Postgres entirely -- just Google Cloud
-               Console now, since WHATSAPP_APP_SECRET was copied into
-               GfCredential by hand. Prompted for
+  - "manual"   Lives outside Postgres entirely. NO SECRET USES THIS ANY
+               MORE -- both that did (WHATSAPP_APP_SECRET,
+               GOOGLE_OAUTH_CLIENT_SECRET) were copied into GfCredential
+               by hand on 2026-09-04, so every run is now unattended. The
+               branch is kept because "some future secret has no DB row"
+               is a when-not-if, and it costs one elif. Prompted for
                interactively via getpass (hidden input, never echoed,
                never a command-line arg, never written to shell history)
                so the file comes out complete without the value ever
@@ -122,13 +125,13 @@ SITE_SECRETS = [
     # Settings -> Basic -> App Secret) purely so this script can source it
     # like everything else. Grepping foodcharity for it will find nothing.
     SecretSpec("WHATSAPP_APP_SECRET", "db", "WHATSAPP_APP_SECRET"),
-    SecretSpec(
-        "GOOGLE_OAUTH_CLIENT_SECRET",
-        "manual",
-        note="Google Cloud Console, OAuth client "
-        "927281004707-*.apps.googleusercontent.com. Django's sign-in flow "
-        "never used a client secret at all.",
-    ),
+    # Same story as WHATSAPP_APP_SECRET above: uppercase cred_name, added
+    # to GfCredential by hand 2026-09-04, and read by no Django code path
+    # -- Django's GSI sign-in was a client-side ID-token flow with no
+    # server-to-server exchange, so it never had a client secret at all.
+    # Sourced from Google Cloud Console for OAuth client
+    # 927281004707-*.apps.googleusercontent.com.
+    SecretSpec("GOOGLE_OAUTH_CLIENT_SECRET", "db", "GOOGLE_OAUTH_CLIENT_SECRET"),
     SecretSpec(
         "SESSION_HMAC_KEY",
         "generate",
