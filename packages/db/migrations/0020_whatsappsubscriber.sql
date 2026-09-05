@@ -40,6 +40,14 @@ CREATE TABLE whatsappsubscriber (
 CREATE INDEX whatsappsubscriber_foodbank_idx ON whatsappsubscriber(foodbank_id);
 
 -- Django has no unique constraint here, so a number can legitimately appear
--- twice for two different food banks -- and, in production, twice for the
--- same one. Not enforced, deliberately: adding a constraint the source data
--- violates would fail the load rather than surface the duplicate.
+-- against several different food banks -- and does: one number is
+-- subscribed to 10. Not enforced, deliberately, to match the source.
+--
+-- CORRECTION 2026-09-05: this comment originally also claimed the same
+-- (phone, foodbank) PAIR appears twice in production. Checked against the
+-- loaded data while building the inbound subscribe/unsubscribe consumer,
+-- and it does not -- there are zero duplicate pairs. The claim was wrong.
+-- It matters because Django's _handle_unsubscribe uses `.get()` on that
+-- pair and would raise MultipleObjectsReturned if one ever existed; see
+-- workers/jobs/src/queues/whatsappHook.ts, which deletes every match
+-- rather than one, so a future duplicate cannot take the webhook down.

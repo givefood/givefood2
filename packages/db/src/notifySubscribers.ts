@@ -99,6 +99,61 @@ export async function getWhatsappSubscribersPage(
   return results;
 }
 
+// ============ inbound WhatsApp subscribe / unsubscribe ============
+// givefood/views.py:1399-1470's _handle_subscribe/_handle_unsubscribe --
+// the commands a person texts the WhatsApp number. Django reaches these
+// straight from the webhook view; here they are the queue consumer's
+// (workers/jobs/src/queues/whatsappHook.ts).
+
+// `get_or_create(phone_number=, foodbank=)` (views.py:1419-1422), read
+// half. Returns the existing row's id, or null.
+export async function findWhatsappSubscriber(
+  session: Session,
+  phoneNumber: string,
+  foodbankId: number,
+): Promise<number | null> {
+  // LIMIT 1 where Django uses .get(). The table has no unique constraint
+  // on the pair (migration 0020 explains why), so .get() would raise
+  // MultipleObjectsReturned on a duplicate -- see whatsappHook.ts, which
+  // documents why that Django behaviour is not reproduced.
+  const row = await session
+    .prepare("SELECT id FROM whatsappsubscriber WHERE phone_number = ?1 AND foodbank_id = ?2 ORDER BY id LIMIT 1")
+    .bind(phoneNumber, foodbankId)
+    .first<{ id: number }>();
+  return row ? row.id : null;
+}
+
+// The create half of get_or_create. `created` is set; `last_notified`
+// stays NULL until the first send, matching the Django model's own
+// null=True default rather than back-dating it to the subscribe.
+export async function insertWhatsappSubscriber(
+  session: Session,
+  phoneNumber: string,
+  foodbankId: number,
+  createdIso: string,
+): Promise<void> {
+  await session
+    .prepare("INSERT INTO whatsappsubscriber (phone_number, foodbank_id, created) VALUES (?1, ?2, ?3)")
+    .bind(phoneNumber, foodbankId, createdIso)
+    .run();
+}
+
+// views.py:1460's `subscription.delete()`. Deletes EVERY row for the pair,
+// not one -- see whatsappHook.ts on why that is the deliberate choice.
+// Returns how many rows went, so the reply can distinguish "you were not
+// subscribed" from "done".
+export async function deleteWhatsappSubscriber(
+  session: Session,
+  phoneNumber: string,
+  foodbankId: number,
+): Promise<number> {
+  const result = await session
+    .prepare("DELETE FROM whatsappsubscriber WHERE phone_number = ?1 AND foodbank_id = ?2")
+    .bind(phoneNumber, foodbankId)
+    .run();
+  return result.meta.changes;
+}
+
 // notifications.py:652-654 -- stamped only for the sends that SUCCEEDED,
 // which is why the consumer collects ids as it goes rather than updating
 // the whole page. One statement for the page instead of one per

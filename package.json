@@ -10,6 +10,7 @@
     "dev:jobs": "pnpm --filter @givefood/jobs dev",
     "typecheck": "pnpm -r typecheck",
     "verify:webpush": "packages/templates/node_modules/.bin/tsx tools/webpush-vector/verify.ts",
+    "verify:whatsapp": "packages/templates/node_modules/.bin/tsx tools/whatsapp-command/verify.ts",
     "test": "pnpm -r test"
   },
   "devDependencies": {

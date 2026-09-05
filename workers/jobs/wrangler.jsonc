@@ -101,6 +101,20 @@
         "max_retries": 3, "dead_letter_queue": "jobs-dlq"
       },
       { "queue": "jobs-dlq", "max_batch_size": 10, "max_retries": 1 },
+      // WP 4.8 made workers/site a PRODUCER for this queue and deliberately
+      // left the consumer to "whichever Worker Phase 5 wires up". Nothing
+      // ever did, so from WP 4.8 until 2026-09-05 every inbound WhatsApp
+      // subscribe/unsubscribe was verified, enqueued, 200'd to Meta and then
+      // dropped. See queues/whatsappHook.ts.
+      //
+      // Small batches and a low concurrency on purpose: each message can
+      // send an outbound WhatsApp reply, and these are messages to real
+      // people, not API bookkeeping.
+      {
+        "queue": "whatsapp-hook", "max_batch_size": 5, "max_batch_timeout": 10,
+        "max_retries": 3, "max_concurrency": 5, "dead_letter_queue": "whatsapp-hook-dlq"
+      },
+      { "queue": "whatsapp-hook-dlq", "max_batch_size": 10, "max_retries": 1 },
       // PLAN.md §8.6: articles' own concurrency figure -- each food
       // bank's own (often tiny) hosting, not a shared API's rate limit.
       {
