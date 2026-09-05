@@ -21,8 +21,6 @@ export interface Env {
 
   OPENROUTER_KEY: string;
   GCP_TRANSLATE_KEY: string;
-  EW_CHARITY_KEY: string;
-  SCOT_CHARITY_KEY: string;
   POSTMARK_TOKEN: string;
   WHATSAPP_TOKEN: string;
   FIREBASE_SERVICE_ACCOUNT: string;
