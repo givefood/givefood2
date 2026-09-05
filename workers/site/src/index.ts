@@ -218,6 +218,12 @@ app.get("/needs/in/constituency/", (c) => c.redirect("/needs/in/constituencies/"
 // below: Django's url= is the literal string '/manifest.json', and
 // RedirectView does no locale-aware reversing on it.
 app.get("/needs/manifest.json", (c) => c.redirect("/manifest.json", 301));
+// gfwfbn/urls/i18n.py:8 -- RedirectView to the gfdash page that now holds
+// this data (gfdash/urls.py:15, ported and serving). 302, not 301: no
+// permanent=True, unlike the manifest one directly above. Same literal
+// unprefixed url= too, so the locale variants below also land on the
+// unprefixed /dashboard/ path.
+app.get("/needs/tt-old-data/", (c) => c.redirect("/dashboard/trusselltrust/old-data/", 302));
 app.get("/needs/in/constituency/:slug/mp_photo_threefour.png", wfbnMpPhotoRedirect);
 app.get("/needs/in/constituency/:slug/", wfbnConstituency);
 // :locslug is a generic catch-all at the same path depth as every literal
@@ -259,6 +265,7 @@ for (const locale of LOCALES) {
   app.get(`/${locale}/needs/at/:slug/rss.xml`, wfbnFoodbankRss);
   app.get(`/${locale}/needs/getlocation/`, wfbnGetLocation);
   app.get(`/${locale}/needs/manifest.json`, (c) => c.redirect("/manifest.json", 301));
+  app.get(`/${locale}/needs/tt-old-data/`, (c) => c.redirect("/dashboard/trusselltrust/old-data/", 302));
   app.get(`/${locale}/needs/at/:slug/locations/`, wfbnFoodbankLocations);
   app.get(`/${locale}/needs/at/:slug/donationpoints/`, wfbnFoodbankDonationpoints);
   app.get(`/${locale}/needs/at/:slug/donationpoint/:dpslug/`, wfbnFoodbankDonationpoint);
@@ -541,7 +548,6 @@ for (const path of OUT_OF_SCOPE) app.all(path, (c) => c.notFound());
 // anyway, so the failure mode points the safe way.
 const NOT_PORTED: Array<[string, string]> = [
   ["/human/", "human-readable data page"],
-  ["/needs/tt-old-data/", "gfwfbn tt-old-data"],
 ];
 for (const [path, what] of NOT_PORTED) app.all(path, notPortedPath(what));
 // gfdumps -- PERMANENTLY out of scope, not deferred: maintainer decision
