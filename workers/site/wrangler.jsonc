@@ -35,6 +35,25 @@
   // >= 2026-07-21 is required for the Workers Cache API used below.
   "compatibility_date": "2026-08-28",
 
+  // beta.givefood.org.uk was attached as a Custom Domain through the
+  // dashboard and went undeclared here for days. Every `wrangler deploy`
+  // therefore printed it under a "local config differs from remote"
+  // warning as a REMOVAL -- and since a deploy overrides remote config
+  // with local, the only reason beta survived each one is that Cloudflare
+  // keeps the domain attachment as its own resource. Declaring it closes
+  // that gap rather than relying on that continuing to be true.
+  //
+  // A Custom Domain, NOT a pattern route: it takes every request for the
+  // hostname, so there is no "/*" and no zone_name. Wrangler's
+  // CustomDomainRoute schema is additionalProperties:false and accepts
+  // only pattern/custom_domain/enabled/previews_enabled -- the zone_name
+  // Cloudflare reports back for it is not a settable input. enabled and
+  // previews_enabled are pinned to what the remote already had, so this
+  // declaration is a no-op against live rather than a change.
+  "routes": [
+    { "pattern": "beta.givefood.org.uk", "custom_domain": true, "enabled": true, "previews_enabled": false }
+  ],
+
   // ONE route, eventually. Most-specific-wins never has to be reasoned about.
   // During the strangler phases this pattern starts narrow
   // (/needs/at/*/photo.jpg, then /api/*, then /needs/*) and widens to /* last.
@@ -43,11 +62,10 @@
   // of this app is still 501 stubs (see routes/notPortedYet.ts), and this
   // catch-all pattern would intercept and break real traffic the moment a
   // deploy landed with it active, if that zone is on the same account. Until
-  // a route is deliberately cut over, deploys serve only from
-  // <name>.<subdomain>.workers.dev (workers_dev, on by default).
-  // "routes": [
+  // a route is deliberately cut over, deploys serve only from the beta
+  // custom domain above and <name>.<subdomain>.workers.dev (workers_dev, on
+  // by default). This entry joins the "routes" array above when it happens.
   //   { "pattern": "www.givefood.org.uk/*", "zone_name": "givefood.org.uk" }
-  // ],
 
   // Workers Cache. NOT optional on a catch-all route -- see PLAN.md §3.6.
   // Tiered, collapses concurrent misses, and serves hits WITHOUT
