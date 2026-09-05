@@ -10,6 +10,7 @@ import { handleCharityScotlandQueue } from "./queues/charityScotland";
 import { handleCharityNiQueue } from "./queues/charityNi";
 import { handleCharityEwDlq, handleCharityNiDlq, handleCharityScotlandDlq } from "./queues/charityDlq";
 import { handleCachePurgeQueue } from "./queues/cachePurge";
+import { handleJobsDlq } from "./queues/jobsDlq";
 
 // No routes, no assets -- see PLAN.md §3.1 "Why the second Worker is
 // genuinely required" (secret blast radius, different limits, deploy
@@ -45,6 +46,12 @@ export default {
         return handleCharityNiDlq(batch as MessageBatch<any>, env);
       case "cache-purge":
         return handleCachePurgeQueue(batch as MessageBatch<any>, env);
+      // Both dead-letter queues that previously had no case here. See
+      // queues/jobsDlq.ts -- jobs-dlq was reaching `default` and logging its
+      // own name rather than the message that failed.
+      case "jobs-dlq":
+      case "cache-purge-dlq":
+        return handleJobsDlq(batch as MessageBatch<any>, env);
       default:
         console.error(`givefood2-jobs: unhandled queue "${batch.queue}"`);
     }

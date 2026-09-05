@@ -71,6 +71,10 @@
         "queue": "cache-purge", "max_batch_size": 100, "max_batch_timeout": 30,
         "max_retries": 3, "dead_letter_queue": "cache-purge-dlq"
       },
+      // Was a dead-letter target with no consumer at all, so a purge that
+      // failed three times sat here until the retention period expired and
+      // nobody heard about it. See queues/jobsDlq.ts.
+      { "queue": "cache-purge-dlq", "max_batch_size": 10, "max_retries": 1 },
       {
         "queue": "jobs", "max_batch_size": 10, "max_batch_timeout": 30,
         "max_retries": 3, "dead_letter_queue": "jobs-dlq"
