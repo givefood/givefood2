@@ -181,7 +181,23 @@ async function htmlToMarkdown(html: string): Promise<string> {
 // and the same challenge-check-before-strip order.
 const MARKDOWN_ENDPOINT = "https://api.cloudflare.com/client/v4/accounts";
 
+// A FAILURE HERE USED TO BE COMPLETELY SILENT: every branch below was a
+// bare `continue`, so three attempts fell through to `return null` with
+// nothing written to the log. That is survivable for the ordinary case --
+// a food bank whose site is down is the most common outcome in this whole
+// pipeline and is not worth a log line each -- but it hides the one
+// failure that is NOT ordinary: a CF_API_KEY without the Browser
+// Rendering permission answers 403 for EVERY food bank, the sweep finds
+// nothing at all, and the only visible symptom is a quiet day in the
+// review queue. Which looks exactly like a quiet day.
+//
+// So the two are separated. A per-URL failure is logged at most once, on
+// the final attempt, and says which URL. An AUTH failure (401/403) is
+// logged immediately, every time, because it is never about the URL and
+// the operator needs to see it on the first food bank rather than infer
+// it from an empty queue.
 async function getMarkdownViaRest(env: Env, url: string): Promise<string | null> {
+  let lastFailure = "no attempt completed";
   for (let attempt = 0; attempt < 3; attempt++) {
     const waitUntil = WAIT_UNTILS[Math.min(attempt, WAIT_UNTILS.length - 1)];
     let res: Response;
@@ -198,24 +214,47 @@ async function getMarkdownViaRest(env: Env, url: string): Promise<string | null>
         }),
         signal: AbortSignal.timeout(60_000),
       });
-    } catch {
+    } catch (err) {
+      lastFailure = `fetch threw (${err instanceof Error ? err.message : String(err)})`;
       continue;
     }
-    if (!res.ok) continue;
 
-    let payload: { success?: boolean; result?: string };
+    if (res.status === 401 || res.status === 403) {
+      // Not retried, and not quiet. Every subsequent food bank in the
+      // sweep will fail identically, so the ladder is pointless here.
+      console.error(
+        `needcheck: Browser Rendering REST returned ${res.status} -- CF_API_KEY is missing the ` +
+          `Browser Rendering permission, or is wrong for account ${env.CF_ACCOUNT_ID}. ` +
+          `THE WHOLE SWEEP WILL FIND NOTHING until this is fixed. ${await res.text()}`,
+      );
+      return null;
+    }
+    if (!res.ok) {
+      lastFailure = `HTTP ${res.status}`;
+      continue;
+    }
+
+    let payload: { success?: boolean; result?: string; errors?: unknown };
     try {
-      payload = (await res.json()) as { success?: boolean; result?: string };
+      payload = (await res.json()) as typeof payload;
     } catch {
+      lastFailure = "response body was not JSON";
       continue;
     }
     const markdown = payload.success ? payload.result : undefined;
-    if (!markdown) continue;
+    if (!markdown) {
+      lastFailure = payload.success ? "empty result" : `success=false ${JSON.stringify(payload.errors ?? null)}`;
+      continue;
+    }
 
     const low = markdown.toLowerCase();
-    if (CHALLENGE_MARKERS.some((m) => low.includes(m))) continue; // BEFORE stripping, matching general.py
+    if (CHALLENGE_MARKERS.some((m) => low.includes(m))) {
+      lastFailure = "anti-bot challenge page"; // BEFORE stripping, matching general.py
+      continue;
+    }
     return stripDataUris(markdown);
   }
+  console.warn(`needcheck: no markdown for ${url} after 3 attempts (last: ${lastFailure})`);
   return null;
 }
 
