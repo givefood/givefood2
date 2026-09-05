@@ -30,7 +30,19 @@
   //
   // (verified from the repo root with --dry-run). Both are dashboard-side
   // settings and cannot be committed, which is exactly why the requirement
-  // is written down here.
+  // is written down here. Resolved 2026-09-05.
+  //
+  // WHICHEVER FORM IS USED, IT BELONGS IN THE **DEPLOY COMMAND** FIELD, not
+  // the Build command. Workers Builds runs the two in sequence, and putting
+  // the deploy in the build slot half-works in a way that is nastier than an
+  // outright failure: the first run of that shape uploaded and went live
+  // (version e761e71e), then the still-default `npx wrangler deploy` in the
+  // deploy slot ran at the repo root, hit the error above, and marked the
+  // whole build FAILED. A red build that has already shipped code is a bad
+  // thing to have to reason about later.
+  //
+  // No Build command is needed at all: the `build` hook below is wrangler's
+  // own, so it runs either way.
 
   // REQUIRED NOW THAT THIS WORKER RENDERS TEMPLATES (notify/needEmail.ts).
   // packages/templates/src/generated/precompiled.js is generated and
