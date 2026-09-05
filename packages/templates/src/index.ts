@@ -1,5 +1,5 @@
 export { render } from "./env";
-export { buildPageContext } from "./context";
+export { buildPageContext, setRuntimeIdentity } from "./context";
 export type { PageContext, PageContextOptions } from "./context";
 // url()/urlForLocale() moved to @givefood/urls (D7) -- import them from
 // there directly rather than through this package, so there is exactly

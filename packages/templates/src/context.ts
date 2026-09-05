@@ -13,6 +13,7 @@ export interface PageContext {
   flag_path: string;
   instance_id: string;
   version: string;
+  commit: string | null;
   app_name: string;
   domain: string;
   page_translatable: boolean;
@@ -36,12 +37,40 @@ const LANGUAGE_NAMES: Record<Locale, string> = {
   gd: "Gàidhlig",
 };
 
+// givefood/context_processors.py:22-29 filled instance_id and version from
+// two Coolify environment variables -- COOLIFY_CONTAINER_NAME (which
+// container served this) and SOURCE_COMMIT (which commit it was built
+// from), both truncated to 7 characters, both falling back to the string
+// "LOCALHOST". Neither environment variable exists on Workers, and until
+// 2026-09-05 this file just hardcoded "cf-worker" and "dev" in their
+// place, which made both debugcomment.njk lines pure noise: the same two
+// constants on every page of every deploy.
+//
+// The Workers equivalents are per-isolate, not per-request, so they are
+// set ONCE by middleware/runtimeIdentity.ts rather than threaded through
+// the ~60 buildPageContext() call sites. See that file for where each
+// value comes from and why caching it at module scope is safe.
+interface RuntimeIdentity {
+  instanceId: string;
+  version: string;
+  commit: string | null;
+}
+
+let runtimeIdentity: RuntimeIdentity | null = null;
+
+export function setRuntimeIdentity(identity: RuntimeIdentity): void {
+  runtimeIdentity = identity;
+}
+
+// Kept deliberately distinguishable from any real value: a page rendered
+// outside a request (a unit test, a script) says so rather than claiming
+// to have come from a colo that never saw it.
+const UNKNOWN_IDENTITY: RuntimeIdentity = { instanceId: "unknown", version: "unknown", commit: null };
+
 export interface PageContextOptions {
   path: string;
   querystring?: string;
   appName: string;
-  version?: string;
-  instanceId?: string;
   pageTranslatable?: boolean;
   headless?: boolean;
   isFlagPage?: boolean;
@@ -71,11 +100,14 @@ export function buildPageContext(options: PageContextOptions): PageContext {
       }))
     : [];
 
+  const identity = runtimeIdentity ?? UNKNOWN_IDENTITY;
+
   return {
     canonical_path: canonicalPath,
     flag_path: flagPath,
-    instance_id: options.instanceId ?? "cf-worker",
-    version: options.version ?? "dev",
+    instance_id: identity.instanceId,
+    version: identity.version,
+    commit: identity.commit,
     app_name: options.appName,
     domain: SITE_DOMAIN,
     page_translatable: options.pageTranslatable ?? false,

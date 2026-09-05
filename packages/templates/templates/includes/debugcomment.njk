@@ -14,7 +14,14 @@
 {% if inrobotstxt %}#{% else %}🔣{% endif %} Language direction {{ language_direction }}
 
 {% if inrobotstxt %}#{% else %}🐙{% endif %} Code https://github.com/givefood/givefood
-{% if inrobotstxt %}#{% else %}🐱{% endif %} Code version https://github.com/givefood/givefood/commit/{{ version }}
+{# Django built this URL straight from `version`, because there `version`
+   WAS the commit SHA (SOURCE_COMMIT). A Cloudflare Worker version id is a
+   UUID with no connection to a commit, so linking `version` here would
+   render a github.com/.../commit/<uuid> that 404s. `commit` is set only
+   when the deploy tagged the version with a real SHA -- see
+   middleware/runtimeIdentity.ts -- and the line is dropped otherwise. #}
+{% if commit %}{% if inrobotstxt %}#{% else %}🐱{% endif %} Code version https://github.com/givefood/givefood/commit/{{ commit }}
+{% endif %}
 
 {% if inrobotstxt %}# {% endif %}============================================
 {% if inrobotstxt %}# {% endif %}|  ,dP""8a "888888b,  d8b    "888b  ,888"  |

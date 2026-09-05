@@ -23,7 +23,7 @@ export async function adminPageContext(c: Context<AppEnv>, section: string): Pro
     // every `?v=` static cache-buster in page.njk. Nothing was passing one, so
     // context.ts's "dev" fallback applied on every deploy -- meaning a shipped
     // CSS/JS change kept being served under the same ?v=dev key.
-    ...buildPageContext({ path: c.req.path, appName: "gfadmin", version: c.env.CF_VERSION_METADATA?.id?.slice(0, 7) }),
+    ...buildPageContext({ path: c.req.path, appName: "gfadmin" }),
     render_time_ms: elapsedMs(c),
     section,
     admin_user: adminUser,

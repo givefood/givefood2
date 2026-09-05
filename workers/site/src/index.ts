@@ -4,6 +4,7 @@ import { LOCALES } from "@givefood/templates";
 import type { AppEnv } from "./types";
 import { noStore } from "./middleware/noStore";
 import { serverTiming } from "./middleware/serverTiming";
+import { runtimeIdentity } from "./middleware/runtimeIdentity";
 import { slugRedirect } from "./middleware/slugRedirect";
 import { resolveLanguage } from "./middleware/resolveLanguage";
 import { geoJsonPreload } from "./middleware/geoJsonPreload";
@@ -106,6 +107,7 @@ api2App.route("/", api2ConstituenciesApp);
 const app = new Hono<AppEnv>();
 
 app.use("*", serverTiming); // was RenderTime
+app.use("*", runtimeIdentity); // was context_processors.py's instance_id/version env reads
 app.use("*", slugRedirect); // was SlugRedirectMiddleware
 app.use("*", resolveLanguage); // was LocaleMiddleware + i18n_patterns
 app.use("*", geoJsonPreload); // was GeoJSONPreload (runs after routing)
