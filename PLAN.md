@@ -478,7 +478,7 @@ Agree these **before starting**. Each has a checkpoint, and freezing happens at 
 **The point of no return is the moment in Phase 7 when the first write lands in D1 that is not in Postgres** — the 00:45 mark in the cutover runbook, when the write freeze lifts.
 
 - **Before it:** stop the build, or don't launch. Nothing in production has changed, at any point, for any phase.
-- **After it:** rollback requires a reverse sync — built, rehearsed and timed at T-7 (§10.8.4, §10.10). Earlier drafts of this plan described three different rollback mechanisms and the runbook implemented none; that gap is closed.
+- **After it:** rollback means returning `www` to Django and losing whatever landed in D1 in the meantime. **There is no reverse sync — decided 2026-09-05, see §10.8.4.** The flip is a Custom Domain over an already-proxied record, so reversing it is minutes rather than hours, which is what bounds the loss.
 
 **The second and final point of no return is D+30**, when Postgres is stopped. Do not let that date slip past unnoticed — it is the last moment the old system can be restarted without a restore. The VPS itself is retained until **D+90**, because a charity's data problems surface on a reporting cadence, not a daily one.
 
@@ -5571,7 +5571,7 @@ Postgres passes both.
 
 **Under 9,000 rows a day, total.** A delta cycle is ~2 seconds of export plus one `.sql`
 file per table. That is what makes a ~20-minute write freeze possible, and it also makes
-the reverse sync (D1 → Postgres, for rollback) genuinely cheap — see the cutover section,
+what a reverse sync (D1 → Postgres, for rollback) would have cost — see §10.8.4, where that was decided against,
 which owns that mechanism.
 
 > ⚠️ **One ordering fix for the cutover, recorded here because it is a data-loss risk.**
@@ -11428,33 +11428,39 @@ Also: **run migration 0009 before extraction.** `givefood_charityyear` has no pr
 
 #### 10.8.4 The rollback mechanism, chosen once
 
-Earlier drafts specified three incompatible mechanisms across three documents and the runbook implemented none. **Pick one: the D1 → Postgres reverse sync.** It keeps Postgres continuously queryable, which is what makes a week-2 rollback a route flip rather than a reconstruction project.
+> 🚫 **DECIDED 2026-09-05, maintainer: NO REVERSE SYNC. It is not being built.**
+> Everything below this box is the design that was going to be built and is
+> kept only so the decision is legible. `tools/reverse_sync.py` does not
+> exist and no one should go looking for it.
 
-```python
-# tools/reverse_sync.py — D1 → Postgres, every 60s from T-0 until decommission.
-# Postgres is the fallback, so it must stay current. Measured write volume is
-# under 9,000 rows/day total, so this is small.
-for table, wm_col in DELTA_TABLES:
-    rows = d1_query(f'SELECT * FROM "{table}" WHERE {wm_col} > ? ORDER BY {wm_col}',
-                    [wm[table]])
-    for chunk in batched(rows, 500):
-        pg_upsert(table, chunk)                    # ON CONFLICT (id) DO UPDATE
-    if rows:
-        wm[table] = max(r[wm_col] for r in rows)
+**What rollback means without it.** Up to the flip, everything: Postgres is
+untouched by the port, and the flip itself is one line of `wrangler.jsonc`
+plus a deploy, reversed the same way. After the flip, rollback means
+returning `www` to Django and **accepting the loss of every write that
+landed in D1 while the Worker served traffic** — a subscriber who confirmed,
+an admin edit, a need published, an order recorded.
 
-# Full-reload tables (subscribers, charityyear, ...) — same list as §10.8.1
-for table in FULL_RELOAD_TABLES:
-    pg_replace(table, d1_query(f'SELECT * FROM "{table}"'))
+That is a deliberate trade, and it is a smaller one than it sounds for three
+reasons:
 
-# CRITICAL: a food bank created in D1 gets id max(rowid)+1 = 6,755,286,043,852,801
-# (legacy Google Datastore IDs). Advance the Postgres sequence past it or the
-# first post-rollback Django insert collides.
-pg_exec("""SELECT setval('givefood_foodbank_id_seq',
-             GREATEST((SELECT max(id) FROM givefood_foodbank),
-                      nextval('givefood_foodbank_id_seq')), true);""")
-```
+1. **The flip is fast to reverse.** `www.givefood.org.uk` is a Worker Custom
+   Domain over a record Cloudflare already proxies, so putting it back is a
+   config change with no DNS propagation to wait out. The rollback decision
+   can be made in minutes, not hours, which is what bounds the number of
+   lost writes.
+2. **The write volume is small.** Under 9,000 rows/day across every table,
+   most of it cron output that the next Django cron run regenerates anyway.
+   The irreplaceable subset is narrow: subscriber confirmations and admin
+   edits.
+3. **The rehearsal it would have needed is the expensive part.** A reverse
+   sync that has never run under stress at 3am is not a rollback path, it is
+   a second thing to debug during an incident. §10.8.4's own earlier draft
+   said as much about the forward runbook.
 
-**The reverse sync has the same delete-blindness as the forward sync**, so it uses the same full-reload list. Run `parity_tables.py --direction d1-to-pg` **nightly with a WhatsApp alarm on mismatch**. Keep it running for **four weeks minimum**.
+**What this means in practice:** the go/no-go at the flip is the real
+decision point, and the smoke tests before it are load-bearing rather than
+ceremonial. Keep Django running and read-only afterwards regardless — it
+costs nothing and it is the only fallback there is.
 
 ---
 
@@ -11500,8 +11506,8 @@ A one-person cutover is possible but not advised — the conductor must be free 
 | **00:05** | Purge everything | `curl -X POST ".../purge_cache" --data '{"purge_everything":true}'` | Operator |
 | **00:10** | **Smoke tests** (§10.9.6) | `pnpm smoke` | Observer |
 | **00:25** | **Strict parity** against the recorded baseline | `pnpm gfdiff --candidate https://www.givefood.org.uk --baseline-dir ./baseline-strict/ --mode strict` | Observer |
-| **00:40** | **Start the reverse sync.** ⚠️ This must be running *before* the freeze lifts. | `pnpm reverse-sync --interval 60 &` | Operator |
-| **00:45** | **Verify the reverse sync applied one cycle** — compare a known row in both databases. | `pnpm reverse-sync --verify-once` | Observer |
+| ~~00:40~~ | ~~Start the reverse sync~~ — **NOT BUILT, see §10.8.4.** Nothing replaces it; after the freeze lifts, D1 writes are one-way. | — | — |
+| ~~00:45~~ | ~~Verify the reverse sync applied one cycle~~ | — | — |
 | **00:50** | **Lift the write freeze.** ⚠️ **This is the point of no return.** Drain the WhatsApp Queue. | `wrangler versions deploy <D1>@100% --yes` (freeze version retired) | Conductor authorises |
 | **01:00** | Re-enable crons **as Cloudflare Cron Triggers**, not on the box | `wrangler triggers deploy` | Operator |
 | **01:15** | **Manually trigger one needcheck run and watch it end to end.** Highest-value smoke test in the runbook. | Queue dashboard + admin review queue | Conductor |
@@ -11561,7 +11567,6 @@ Add a banner to admin **GET** pages too, so nobody starts editing a form they ca
 - [ ] Strict parity on the preview: **zero failures**
 - [ ] Time Travel bookmark recorded, restore command pasted into the channel
 - [ ] **Rollback rehearsed this week and timed at under 5 minutes**
-- [ ] `reverse_sync.py` tested against the preview
 - [ ] All three people present and awake
 
 > **Any NO ⇒ abort, unfreeze, reschedule.** An aborted cutover costs one evening. A bad one costs the charity's data.
@@ -11581,7 +11586,6 @@ Add a banner to admin **GET** pages too, so nobody starts editing a form they ca
 11. A test subscribe → confirm → unsubscribe round trip completes
 12. `POST /needs/at/<slug>/hit/` returns **204** and the data point appears in AE
 13. Admin: sign in, open the review queue, open one need, publish it, confirm 3 translation jobs enqueue (`cy`/`ga`/`gd` — §2.7.1's 4-language decision, not Django's current 19)
-14. `pnpm reverse-sync --verify-once` shows that publish landed back in Postgres
 
 ---
 
@@ -11604,7 +11608,7 @@ Add a banner to admin **GET** pages too, so nobody starts editing a form they ca
 
 > This runbook previously carried a warning that it still assumed two designs already dropped elsewhere — a Hyperdrive-bound fallback version (never built; see §4, §6 D3) and per-phase route widening on the live zone (superseded by §10.1.1a's single cutover). Both are resolved now that Phase 7 is explicitly the single launch (§10.1.1a, §10.2.8) and every phase before it is built only against a disposable, non-authoritative D1 copy: the "hour-2 recovery version" below is simply whatever was deployed immediately before 23:00's freeze version — the last build built and proven against the proving-ground host, which by construction has never written anything to D1 that matters, because D1's real, launch-authoritative contents don't exist until WP 7.2's T-7 load. Nothing further needs re-scoping for this step to be correct as written.
 
-No writes have landed in D1 yet, or one reverse-sync cycle has already replayed them. Recovery: **seconds. Data loss: none.**
+No writes have landed in D1 yet. Recovery: **seconds. Data loss: none.** (The "or a reverse-sync cycle replayed them" half of this is gone — see §10.8.4.)
 
 ```bash
 export CF_API_TOKEN=...  ZONE=...  PG_URL=...
@@ -11638,11 +11642,11 @@ pnpm smoke --baseline-only
 
 #### 10.10.3 Day 2
 
-The reverse sync has been replaying D1 writes into Postgres for ~36 hours. **Verify before reverting**, then revert identically:
+⚠️ **At this point D1 has ~36 hours of writes that Postgres does not have, and nothing is replaying them (§10.8.4).** Reverting means losing them. Quantify first -- subscriber confirmations and admin edits are the irreplaceable part; cron output regenerates. Then revert identically:
 
 ```bash
-# 1. Stop the reverse sync cleanly and confirm it caught up
-pkill -f reverse_sync.py
+# 1. Quantify what is about to be lost (there is no reverse sync -- §10.8.4)
+#    Subscriber confirmations and admin edits are the irreplaceable part.
 pnpm etl:verify --direction d1-to-pg     # MUST be green, including EXCEPT both ways
 
 # 2. If green: exactly the six steps of §10.10.2.
@@ -11651,14 +11655,14 @@ pnpm etl:verify --direction d1-to-pg     # MUST be green, including EXCEPT both 
 pnpm etl:export-d1 --tables foodbankchange,foodbank,foodbanksubscriber --out ./recover/
 ```
 
-Recovery: **~30 minutes.** Data loss: none if the reverse sync is green.
+Recovery: **~30 minutes.** Data loss: **every D1 write since the flip** (§10.8.4).
 
 #### 10.10.4 Week 2
 
-Two weeks of admin edits, ~460 published needs, ~80,000 crawl items and ~14M hits exist only in D1 unless the reverse sync has been running. **This is why it is not optional and why its checksum must alarm.**
+Two weeks of admin edits, ~460 published needs, ~80,000 crawl items and ~14M hits exist only in D1, and **nothing is replaying them into Postgres** (§10.8.4). A week-2 rollback is therefore a data-loss event, not a route flip. Treat this window as the real commitment point: by D+7 the honest options are forward-fix or accept the loss.
 
 ```bash
-# A. If the nightly reverse-sync checksum has been green:
+# A. Accepting the loss of everything written since the flip:
 #    → the same route flip. Recovery ~30 minutes.
 
 # B. If it has been failing silently (this is what the nightly alarm prevents):
@@ -11689,7 +11693,7 @@ while read ID; do
 done
 ```
 
-**The rollback works because Postgres is never touched and Django is never stopped.** Everything up to the flip is additive; the flip is a version deploy; the rollback is the previous version plus a verified reverse sync.
+**The rollback works because Postgres is never touched and Django is never stopped** -- but it restores Postgres AS AT THE FLIP, not as at the rollback. Everything up to the flip is additive and reverses cleanly; after it, reversing costs whatever D1 has accumulated (§10.8.4).
 
 ---
 
@@ -11697,14 +11701,14 @@ done
 
 | Day | Watch | Alarm threshold |
 |---|---|---|
-| **D+0** | Hourly strict parity vs the recorded baseline; 5xx rate; needcheck completes; review queue populates; **reverse sync applying** | any strict failure, or any reverse-sync error |
+| **D+0** | Hourly strict parity vs the recorded baseline; 5xx rate; needcheck completes; review queue populates | any strict failure |
 | **D+1** | First full cron cycle: getarticles ×8, charityinfo, dump, prune. **Compare article and charity-year counts to the same weekday last week** — and specifically check `charityyear` for duplicates (§10.8.1). | ±20% |
 | **D+2** | Cache hit ratio by route family; D1 `rows_read`; Workers CPU-ms. **Any `EXPLAIN QUERY PLAN` showing `SCAN` is a billing incident, not just a slow page** — one unindexed scan of `postcode` is 1,795,944 billable rows. | hit ratio <85% on `/needs/at/*` |
 | **D+3** | **Subscriber notification round trip** — publish a need, confirm email + webpush + FCM + WhatsApp all deliver. Four independent channels, each can fail silently. | any channel silent |
 | **D+4** | Analytics Engine hit counts vs the last Postgres week. Expect *some* variance from sampling; a >15% gap means the beacon is misfiring, not sampling. | >15% |
 | **D+5** | Search Console: crawl errors, indexing, hreflang. 21 languages × 3,000 food banks is a lot of surface for an SEO regression to hide in. | any new error class |
 | **D+6** | Google Maps / Places / Geocoding console usage. Confirm map PNGs are being served from R2 and Static Maps calls have gone to ~zero. | any Static Maps traffic |
-| **D+7** | **The 7-day intensive window closes.** Reduce parity to daily. **Keep the reverse sync running.** | — |
+| **D+7** | **The 7-day intensive window closes.** Reduce parity to daily. Rollback is now a data-loss decision rather than a route flip (§10.8.4). | — |
 
 Run the **full tolerant parity corpus daily for the first week**, then weekly for a month.
 
@@ -11718,7 +11722,7 @@ Run the **full tolerant parity corpus daily for the first week**, then weekly fo
 |---|---|---|
 | **D+0** | Django read-only, still running. Postgres read-only, still running. Reverse sync running. | Rollback is a route flip. |
 | **D+7** | Intensive watch ends. **Django app stopped** (Coolify container down, **not deleted**). Postgres **still running and reachable**. Reverse sync **continues**. | Postgres is the only rollback path for a data problem discovered late. |
-| **D+30** | Matches D1's Time Travel retention. **Stop the reverse sync** and take a final `pg_dump -Fc` to **two** destinations: R2 (`archive/postgres-final-YYYYMMDD.dump`) and an offline copy **off Cloudflare entirely**. **Verify by restoring into a scratch Postgres and running row counts.** Only then stop Postgres. | Four weeks of reverse sync is the stated minimum. |
+| **D+30** | Matches D1's Time Travel retention. Take a final `pg_dump -Fc` to **two** destinations: R2 (`archive/postgres-final-YYYYMMDD.dump`) and an offline copy **off Cloudflare entirely**. **Verify by restoring into a scratch Postgres and running row counts.** Only then stop Postgres. | Postgres has been frozen at the flip since D+0 (§10.8.4), so this dump is the launch-day snapshot, not a current one. |
 | **D+90** | Delete the givefood database from the shared Postgres. Delete the `origin.givefood.org.uk` DNS record, the Docker image, the Coolify project. | A charity's data problems surface on a **reporting cadence, not a daily one.** A quarterly figure that looks wrong is the classic late discovery. |
 
 **Archive alongside the final dump** — things deliberately dropped that would otherwise be gone forever:
@@ -11765,9 +11769,9 @@ That is 2,562,501 `crawlitem` rows (only 171,415 of which move to D1), 41,625 ta
 **The point of no return is 00:50 on launch night**, when the write freeze lifts and the first write lands in D1 that is not in Postgres.
 
 - *Before it:* stop the build, or don't launch. Nothing in production has changed, at any point, for any phase.
-- *After it:* rollback requires the reverse sync (§10.10).
+- *After it:* rollback restores Postgres as at the flip and loses everything D1 has accepted since (§10.8.4).
 
-**Mitigation:** the reverse sync runs from 00:40 — ten minutes **before** the freeze lifts — and continues for four weeks, so a reverse migration stays mechanically possible throughout.
+**Mitigation:** none of the mechanical kind -- maintainer decision 2026-09-05, §10.8.4. What bounds the exposure instead is how fast the flip reverses: `www` is a Custom Domain over a record Cloudflare already proxies, so the decision is minutes rather than hours, and the smoke tests before the go/no-go are therefore load-bearing rather than ceremonial.
 
 **The second and final point of no return is D+30**, when Postgres is stopped. **Do not let that date slip past unnoticed** — it is the last moment the old system can be restarted without a restore. Put it in a calendar, with the verification-restore step attached.
 
