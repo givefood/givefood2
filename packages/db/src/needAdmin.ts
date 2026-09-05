@@ -1,5 +1,6 @@
 import type { Session } from "./types";
 import { mapNeedRow, type FoodbankChangeRow } from "./needs";
+import { pyNow } from "@givefood/models";
 
 // WP 6.4 (PLAN.md §10.2.7): the admin need-review queue's own D1 access --
 // distinct from needs.ts (the public API read path) and needcheck.ts (the
@@ -84,7 +85,7 @@ export async function getDiscrepancyById(session: Session, id: number): Promise<
 // requirement: every mutating admin route is POST-only from the day it's
 // written, not ported to GET and fixed up after).
 export async function setDiscrepancyStatus(session: Session, id: number, status: "Done" | "Invalid"): Promise<void> {
-  await session.prepare("UPDATE foodbankdiscrepancy SET status = ?, modified = ? WHERE id = ?").bind(status, new Date().toISOString(), id).run();
+  await session.prepare("UPDATE foodbankdiscrepancy SET status = ?, modified = ? WHERE id = ?").bind(status, pyNow(), id).run();
 }
 
 // gfadmin/views.py:431-442 needs_csv() -- frozen column order: id,
@@ -217,7 +218,7 @@ export async function setNeedPublished(session: Session, needId: string, publish
   const row = mapNeedRow(need as Record<string, unknown>);
   if (publish && row.foodbank_id === null) return "needs-foodbank";
 
-  const now = new Date().toISOString();
+  const now = pyNow();
   await session.prepare("UPDATE foodbankchange SET published = ?, modified = ? WHERE need_id = ?").bind(publish ? 1 : 0, now, needId).run();
   if (row.foodbank_id !== null) await recomputeFoodbankNeedFields(session, row.foodbank_id);
 
@@ -233,7 +234,7 @@ export async function setNeedNonpertinent(session: Session, needId: string): Pro
   if (!need) return null;
   const row = mapNeedRow(need as Record<string, unknown>);
 
-  const now = new Date().toISOString();
+  const now = pyNow();
   await session.prepare("UPDATE foodbankchange SET nonpertinent = 1, modified = ? WHERE need_id = ?").bind(now, needId).run();
   if (row.foodbank_id !== null) await recomputeFoodbankNeedFields(session, row.foodbank_id);
 
@@ -241,11 +242,11 @@ export async function setNeedNonpertinent(session: Session, needId: string): Pro
 }
 
 export async function setNeedCategorised(session: Session, needId: string): Promise<void> {
-  await session.prepare("UPDATE foodbankchange SET is_categorised = 1, modified = ? WHERE need_id = ?").bind(new Date().toISOString(), needId).run();
+  await session.prepare("UPDATE foodbankchange SET is_categorised = 1, modified = ? WHERE need_id = ?").bind(pyNow(), needId).run();
 }
 
 export async function setNeedNotified(session: Session, needId: string): Promise<void> {
-  const now = new Date().toISOString();
+  const now = pyNow();
   await session.prepare("UPDATE foodbankchange SET notified = ?, modified = ? WHERE need_id = ?").bind(now, now, needId).run();
 }
 
@@ -285,7 +286,7 @@ export async function updateNeedRawFields(session: Session, needId: string, para
   const need = await session.prepare("SELECT foodbank_id FROM foodbankchange WHERE need_id = ?").bind(needId).first<{ foodbank_id: number | null }>();
   if (!need) return false;
 
-  const now = new Date().toISOString();
+  const now = pyNow();
   await session
     .prepare("UPDATE foodbankchange SET change_text = ?, excess_change_text = ?, published = ?, foodbank_id = ?, modified = ? WHERE need_id = ?")
     .bind(params.changeText, params.excessChangeText, params.published ? 1 : 0, params.foodbankId, now, needId)

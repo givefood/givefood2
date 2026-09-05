@@ -5,6 +5,7 @@ import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
 import { weekKey } from "../../lib/isoWeek";
 import { adminPageContext } from "./pageContext";
+import { pyNow } from "@givefood/models";
 
 // gfadmin/urls/stats.py:6-11 -- the six stats pages hung off the Settings
 // page (gfadmin/views.py:2339-2535). All six are read-only GETs; none of
@@ -61,7 +62,7 @@ const roundedTo2dp = (value: number) => Number(value.toFixed(2));
 // value that already ends in "Z" becomes "...ZZ" -> Invalid Date -> a
 // "NaN-NaN" week key. Every subscriber row the port writes IS Z-suffixed
 // (packages/db/src/subscribers.ts:80/160/279 all use
-// new Date().toISOString()), while the pg-to-D1 import wrote the
+// pyNow()), while the pg-to-D1 import wrote the
 // space-separated, unsuffixed shape (tools/pg-to-d1/extract_core.py:313) --
 // this handles both. Kept local because lib/isoWeek.ts is shared with the
 // gfdash weekly dashboards (which carry the same latent bug against

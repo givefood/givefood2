@@ -1,4 +1,5 @@
 import type { Session } from "./types";
+import { pyNow } from "@givefood/models";
 
 // gfadmin/urls/stats.py:6-11 -- the six Settings-page stats views
 // (gfadmin/views.py:2339-2535). Everything here returns RAW counts, grams
@@ -33,7 +34,7 @@ export interface QuarterStats {
 // across BOTH stored timestamp shapes in this database -- the pg-to-D1
 // import wrote "YYYY-MM-DD HH:MM:SS.ffffff" (tools/pg-to-d1/
 // extract_core.py:313) while every row the port writes is
-// `new Date().toISOString()` ("YYYY-MM-DDTHH:MM:SS.sssZ"). Both sort
+// `pyNow()` ("YYYY-MM-DDTHH:MM:SS.sssZ"). Both sort
 // identically against a bare date prefix.
 //
 // The four SUMs replace views.py:2349-2358's Python accumulation over the

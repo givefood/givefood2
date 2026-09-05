@@ -1,4 +1,5 @@
 import type { Session } from "./types";
+import { pyNow } from "@givefood/models";
 
 // gfadmin/views.py:1594-1612 foodbank_addsub -- the admin's manual "paste a
 // list of addresses" bulk add. Kept out of subscribers.ts (which owns the
@@ -43,7 +44,7 @@ export async function insertConfirmedSubscribers(
   // package stamps -- see subscribers.ts's module comment on why that
   // differs from the migrated rows' Postgres-shaped format and why it does
   // not matter.
-  const created = new Date().toISOString();
+  const created = pyNow();
   const sql =
     "INSERT INTO foodbanksubscriber (created, foodbank_id, email, confirmed, sub_key, unsub_key) " +
     "VALUES (?, ?, ?, 1, ?, ?) ON CONFLICT(email, foodbank_id) DO NOTHING";

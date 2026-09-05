@@ -1,4 +1,5 @@
 import type { Session } from "./types";
+import { pyNow } from "@givefood/models";
 
 // gfwrite `email` (views.py:79-85) -- ConstituencySubscriber.save(). Write
 // -only: "Written by gfwrite/views.py:80-85, read by nothing, ever. No send
@@ -20,7 +21,7 @@ export async function insertConstituencySubscriber(
   // "T"-separated, millisecond-precision -- see subscribers.ts's own
   // comment on this exact convention for freshly-inserted (not migrated)
   // rows.
-  const created = new Date().toISOString();
+  const created = pyNow();
   await session
     .prepare(
       "INSERT INTO constituencysubscriber (created, email, name, parliamentary_constituency_id, parliamentary_constituency_name) VALUES (?, ?, ?, ?, ?)",

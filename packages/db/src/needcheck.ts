@@ -1,5 +1,6 @@
 import { type Session } from "./types";
 import { mapNeedRow, type FoodbankChangeRow } from "./needs";
+import { pyNow } from "@givefood/models";
 
 // WP 5.2 (PLAN.md §8.5): the needcheck pipeline's own D1 access -- the
 // cron handler (enqueueing one message per open food bank) and the
@@ -45,7 +46,7 @@ export async function findCrawlSetByRunId(session: Session, runId: string): Prom
 }
 
 export async function insertCrawlSet(session: Session, crawlType: string, runId: string | null): Promise<number> {
-  const now = new Date().toISOString();
+  const now = pyNow();
   const result = await session
     .prepare("INSERT INTO crawlset (crawl_type, run_id, start) VALUES (?1, ?2, ?3)")
     .bind(crawlType, runId, now)
@@ -70,7 +71,7 @@ export async function decrementCrawlSetRemaining(session: Session, crawlSetId: n
     .first<{ remaining: number }>();
   if (!row) return null;
   if (row.remaining === 0) {
-    await session.prepare("UPDATE crawlset SET finish = ?1 WHERE id = ?2").bind(new Date().toISOString(), crawlSetId).run();
+    await session.prepare("UPDATE crawlset SET finish = ?1 WHERE id = ?2").bind(pyNow(), crawlSetId).run();
   }
   return row.remaining;
 }
@@ -87,7 +88,7 @@ export async function decrementCrawlSetRemaining(session: Session, crawlSetId: n
 // exists only so RETURNING can hand back the existing row's id without
 // touching its `start`/`finish`.
 export async function insertCrawlItem(session: Session, params: { crawlSetId: number; crawlType: string; foodbankId: number; url: string | null }): Promise<number> {
-  const now = new Date().toISOString();
+  const now = pyNow();
   const row = await session
     .prepare(
       `INSERT INTO crawlitem (crawl_set_id, crawl_type, start, foodbank_id, url)
@@ -110,7 +111,7 @@ export async function insertCrawlItem(session: Session, params: { crawlSetId: nu
 export async function finishCrawlItem(session: Session, crawlItemId: number, needId: number | null): Promise<boolean> {
   const result = await session
     .prepare("UPDATE crawlitem SET finish = ?1, need_id = ?2 WHERE id = ?3 AND finish IS NULL")
-    .bind(new Date().toISOString(), needId, crawlItemId)
+    .bind(pyNow(), needId, crawlItemId)
     .run();
   return result.meta.changes > 0;
 }
@@ -154,7 +155,7 @@ export interface InsertFoodbankChangeParams {
 // exactly (the 18,943 NULL rows are pre-existing production data, not
 // something new rows should ever produce).
 export async function insertFoodbankChange(session: Session, params: InsertFoodbankChangeParams): Promise<number> {
-  const now = new Date().toISOString();
+  const now = pyNow();
   const needId = crypto.randomUUID().replace(/-/g, "");
   const result = await session
     .prepare(
@@ -182,7 +183,7 @@ export interface InsertFoodbankDiscrepancyParams {
 // attach a discrepancy to a specific FoodbankChange row for either of
 // these two cases, so need_id stays NULL here).
 export async function insertFoodbankDiscrepancy(session: Session, params: InsertFoodbankDiscrepancyParams): Promise<number> {
-  const now = new Date().toISOString();
+  const now = pyNow();
   const result = await session
     .prepare(
       `INSERT INTO foodbankdiscrepancy

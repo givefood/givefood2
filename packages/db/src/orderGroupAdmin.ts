@@ -1,5 +1,6 @@
 import type { Session } from "./types";
 import type { PageResult } from "./adminLists";
+import { pyNow } from "@givefood/models";
 
 // gfadmin/views.py:2767-2775 order_groups(), :2778-2807 order_group(),
 // :2810-2832 order_group_form() -- OrderGroup's read AND write paths.
@@ -139,7 +140,7 @@ export async function upsertOrderGroup(
 
   // TimestampedModel (givefood/models/base.py:12-19): `created` is
   // auto_now_add, `modified` is auto_now.
-  const now = new Date().toISOString();
+  const now = pyNow();
   if (existingId === undefined) {
     await session
       .prepare("INSERT INTO ordergroup (name, slug, public, key, created, modified) VALUES (?, ?, ?, ?, ?, ?)")

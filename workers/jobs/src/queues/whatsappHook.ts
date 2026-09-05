@@ -8,6 +8,7 @@ import {
 } from "@givefood/db";
 import type { Env } from "../../worker-configuration";
 import { sendWhatsappText } from "../notify/whatsappClient";
+import { pyNow } from "@givefood/models";
 
 // givefood/views.py:1366-1470 -- the command half of `whatsapp_hook`:
 // parsing `subscribe <slug>` / `unsubscribe <slug>` out of an inbound
@@ -149,7 +150,7 @@ async function subscribe(env: Env, phone: string, slug: string): Promise<void> {
     return;
   }
 
-  await insertWhatsappSubscriber(session, phone, foodbankId, new Date().toISOString());
+  await insertWhatsappSubscriber(session, phone, foodbankId, pyNow());
   await sendWhatsappText(
     env,
     phone,

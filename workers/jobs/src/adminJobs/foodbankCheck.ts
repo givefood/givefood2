@@ -2,6 +2,7 @@ import type { Env } from "../../worker-configuration";
 import { getFoodbankBySlug, getLocationsByFoodbankId, getDonationPointsByFoodbankId, markAdminJobRunning, markAdminJobDone, markAdminJobFailed } from "@givefood/db";
 import { geminiJsonCall } from "../lib/gemini";
 import { buildCheckPrompt, FOODBANK_CHECK_RESPONSE_SCHEMA, CHECK_USE_AI_FIELDS, type FoodbankCheckAiResponse } from "./checkPrompt";
+import { pyNow } from "@givefood/models";
 
 const BOT_USER_AGENT = "Mozilla/5.0 (compatible; GiveFoodBot/1.0; +https://www.givefood.org.uk/bot/)";
 
@@ -133,9 +134,9 @@ export async function handleFoodbankCheckJob(env: Env, jobId: string, foodbankSl
         pageTexts.push({ name: page.name, text: null });
         continue;
       }
-      const start = new Date().toISOString();
+      const start = pyNow();
       const text = await fetchPageBodyText(page.url);
-      const finish = new Date().toISOString();
+      const finish = pyNow();
       // gfadmin/views.py's CrawlItem bookkeeping -- crawl_type "check",
       // no crawl_set (matches Django: these check-crawls are never
       // grouped into a CrawlSet).

@@ -1,4 +1,5 @@
 import type { Session } from "./types";
+import { pyNow } from "@givefood/models";
 
 // WP 6.5: FoodbankLocationForm's write path (givefood/forms.py:150-164).
 // Django's own form.save() is just a 6-line `edited = now()` stamp on top
@@ -85,7 +86,7 @@ export interface UpsertLocationParams {
 export async function upsertLocation(session: Session, params: UpsertLocationParams, existingId: number | undefined): Promise<string> {
   const slug = slugify(params.name);
   const { latitude, longitude } = parseLatLng(params.latLng);
-  const now = new Date().toISOString();
+  const now = pyNow();
 
   if (existingId === undefined) {
     await session

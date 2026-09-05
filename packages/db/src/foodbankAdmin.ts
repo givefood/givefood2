@@ -1,4 +1,5 @@
 import type { Session } from "./types";
+import { pyNow } from "@givefood/models";
 
 // WP 6.6: gfadmin/views.py:1364 foodbank_delete -- Foodbank.delete()
 // (givefood/models/foodbank.py:598-623) manually cascades to every child
@@ -32,7 +33,7 @@ export async function deleteFoodbankCascade(session: Session, foodbankId: number
 // gfadmin/views.py:1300-1310 foodbank_touch -- bumps `edited` only
 // (`do_geoupdate=False`), no other field changes.
 export async function touchFoodbank(session: Session, id: number): Promise<void> {
-  const now = new Date().toISOString();
+  const now = pyNow();
   await session.prepare("UPDATE foodbank SET edited = ?, modified = ? WHERE id = ?").bind(now, now, id).run();
 }
 
@@ -149,7 +150,7 @@ export async function insertFoodbank(session: Session, fields: Record<string, st
   if (typeof name !== "string" || !name) throw new Error("name is required to create a food bank");
   const slug = slugify(name);
   const { latitude, longitude } = parseLatLng(typeof fields.lat_lng === "string" ? fields.lat_lng : "");
-  const now = new Date().toISOString();
+  const now = pyNow();
 
   const entries = Object.entries(fields);
   const columns = ["uuid", "slug", "latitude", "longitude", "no_locations", "days_between_needs", "created", "modified", ...entries.map(([k]) => k)];
@@ -190,7 +191,7 @@ export async function updateFoodbankFields(session: Session, id: number, fields:
   for (const [name] of entries) {
     if (!COLUMN_NAME_RE.test(name)) throw new Error(`refusing to update unexpected column: ${name}`);
   }
-  const now = new Date().toISOString();
+  const now = pyNow();
   const setSql = entries.map(([name]) => `${name} = ?`).join(", ");
   const values = entries.map(([, v]) => v);
 

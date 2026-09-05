@@ -1,4 +1,5 @@
 import type { Session } from "./types";
+import { pyNow } from "@givefood/models";
 
 // WP 6.8 (PLAN.md §9.4.4): the enqueue/poll backing store for
 // admin-triggered background work. See migrations/0013_admin_jobs.sql's
@@ -17,7 +18,7 @@ export interface AdminJobRow {
 }
 
 export async function insertAdminJob(session: Session, params: { id: string; kind: string; target: string | null }): Promise<void> {
-  const now = new Date().toISOString();
+  const now = pyNow();
   await session
     .prepare("INSERT INTO admin_job (id, kind, target, status, created) VALUES (?, ?, ?, 'queued', ?)")
     .bind(params.id, params.kind, params.target, now)
@@ -35,14 +36,14 @@ export async function markAdminJobRunning(session: Session, id: string): Promise
 export async function markAdminJobDone(session: Session, id: string, result: unknown): Promise<void> {
   await session
     .prepare("UPDATE admin_job SET status = 'done', result = ?, finished = ? WHERE id = ?")
-    .bind(JSON.stringify(result), new Date().toISOString(), id)
+    .bind(JSON.stringify(result), pyNow(), id)
     .run();
 }
 
 export async function markAdminJobFailed(session: Session, id: string, error: string): Promise<void> {
   await session
     .prepare("UPDATE admin_job SET status = 'failed', error = ?, finished = ? WHERE id = ?")
-    .bind(error, new Date().toISOString(), id)
+    .bind(error, pyNow(), id)
     .run();
 }
 

@@ -1,4 +1,5 @@
 import type { Session } from "./types";
+import { pyNow } from "@givefood/models";
 
 // WP 5.5 (PLAN.md §8.7): charityinfo's own D1 access -- the cron handler
 // (enqueueing one message per charity-numbered food bank, split by
@@ -96,7 +97,7 @@ export interface CharityYearInput {
 // fixed by fetching first (the caller only calls this once the years are
 // already in hand) and replacing atomically via one D1 batch.
 export async function replaceCharityYears(session: Session, foodbankId: number, years: CharityYearInput[]): Promise<void> {
-  const now = new Date().toISOString();
+  const now = pyNow();
   await session.batch([
     session.prepare("DELETE FROM charityyear WHERE foodbank_id = ?1").bind(foodbankId),
     ...years.map((y) =>

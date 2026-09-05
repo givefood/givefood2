@@ -1,5 +1,6 @@
 import type { Session } from "./types";
 import { recomputeFoodbankNeedFields } from "./needAdmin";
+import { pyNow } from "@givefood/models";
 
 // WP 6.8 "need-extras" (PLAN.md §10.2.7): the two need endpoints WP 6.4/6.5
 // left out of the admin --
@@ -68,7 +69,7 @@ export interface InsertedAdminNeed {
 // food bank is set -- the same fix needAdmin.ts's recomputeFoodbankNeedFields
 // comment already documents for the unpublish path.
 export async function insertAdminNeed(session: Session, params: InsertAdminNeedParams): Promise<InsertedAdminNeed> {
-  const now = new Date().toISOString();
+  const now = pyNow();
   const needId = crypto.randomUUID().replace(/-/g, "");
   const result = await session
     .prepare(

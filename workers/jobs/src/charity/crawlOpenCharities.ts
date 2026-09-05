@@ -1,5 +1,6 @@
 import { patchFoodbankCharity, replaceCharityYears, type CharityCrawlFoodbankRow, type Session } from "@givefood/db";
 import type { Env } from "../../worker-configuration";
+import { pyNow } from "@givefood/models";
 
 // ONE crawler for all three UK charity regulators, via opencharities.uk.
 // Replaces crawlEw.ts / crawlScotland.ts / crawlNi.ts, which called
@@ -207,7 +208,7 @@ export async function crawlOpenCharities(env: Env, session: Session, foodbank: C
     charity_objectives: objectivesFor(cc, data),
   };
 
-  await patchFoodbankCharity(session, foodbank.id, patch, new Date().toISOString());
+  await patchFoodbankCharity(session, foodbank.id, patch, pyNow());
 
   // PLAN.md §8.7.1's fix, unchanged: the rows are in hand before the old
   // ones are replaced, so a failed fetch never empties the table (Django's

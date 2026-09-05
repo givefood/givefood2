@@ -1,4 +1,5 @@
 import type { Session } from "./types";
+import { pyNow } from "@givefood/models";
 
 // WP 5.5 (PLAN.md §8.6): getarticles' own D1 access -- the cron handler
 // (enqueueing one message per RSS-carrying food bank) and the ARTICLES_Q
@@ -58,7 +59,7 @@ export interface InsertArticleParams {
 // unfeatured until an admin curates it. Returns whether this call actually
 // inserted a new row, for the caller's `foundNew` (-> decache) decision.
 export async function insertArticleIfNew(session: Session, params: InsertArticleParams): Promise<boolean> {
-  const now = new Date().toISOString();
+  const now = pyNow();
   const result = await session
     .prepare(
       `INSERT OR IGNORE INTO foodbankarticle

@@ -5,7 +5,7 @@ import {
   setWhatsappLastNotified,
   type Session,
 } from "@givefood/db";
-import { changeList } from "@givefood/models";
+import { changeList, pyNow } from "@givefood/models";
 import type { Env } from "../../worker-configuration";
 import { buildNeedTemplate, sendWhatsappTemplate } from "./whatsappClient";
 
@@ -73,7 +73,7 @@ export async function handleNotifyNeedWhatsApp(msg: NotifyNeedWhatsAppMessage, e
 
   // notifications.py:652-654 stamps last_notified per successful send.
   // One statement for the page's successes rather than one per subscriber.
-  if (notified.length > 0) await setWhatsappLastNotified(session, notified, new Date().toISOString());
+  if (notified.length > 0) await setWhatsappLastNotified(session, notified, pyNow());
 
   await env.JOBS_Q.send({ type: "notify-need-whatsapp", needId: msg.needId, afterId: lastId });
   console.log(`notify-need-whatsapp: need ${msg.needId} sent ${notified.length}/${subscribers.length}, next after id ${lastId}`);

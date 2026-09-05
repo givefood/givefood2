@@ -1,4 +1,5 @@
 import { coerceBooleans, type Session } from "./types";
+import { pyNow } from "@givefood/models";
 
 // WP 3.7. Query functions for the three D1 tables 0004_subscribers.sql
 // creates: foodbanksubscriber, webpushsubscription, mobilesubscriber --
@@ -17,7 +18,7 @@ import { coerceBooleans, type Session } from "./types";
 // already-created `Session`, propagated by the caller exactly like every
 // read-only query in this package, never a bare `env.DB.prepare()`.
 //
-// `created` columns are stamped here with `new Date().toISOString()` (a
+// `created` columns are stamped here with `pyNow()` (a
 // "T"-separated, millisecond-precision UTC string), not the
 // space-separated "YYYY-MM-DD HH:MM:SS.ffffff" format
 // tools/pg-to-d1/extract_core.py used for the one-off Postgres copy --
@@ -76,7 +77,7 @@ export interface InsertSubscriberParams {
 // hashing -- Web Crypto is a Worker-runtime concern, not a DB-layer one).
 // Returns the new row's id.
 export async function insertSubscriber(session: Session, params: InsertSubscriberParams): Promise<number> {
-  const created = new Date().toISOString();
+  const created = pyNow();
   const result = await session
     .prepare(
       "INSERT INTO foodbanksubscriber (created, foodbank_id, email, confirmed, sub_key, unsub_key) " +
@@ -156,7 +157,7 @@ export async function upsertWebpushSubscription(
     return { id: existing.id, created: false };
   }
 
-  const created = new Date().toISOString();
+  const created = pyNow();
   const result = await session
     .prepare(
       "INSERT INTO webpushsubscription (created, foodbank_id, endpoint, p256dh, auth, browser) VALUES (?, ?, ?, ?, ?, ?)",
@@ -275,7 +276,7 @@ export async function upsertMobileSubscriber(session: Session, params: UpsertMob
     return;
   }
 
-  const created = new Date().toISOString();
+  const created = pyNow();
   await session
     .prepare(
       "INSERT INTO mobilesubscriber (created, device_id, platform, timezone, locale, app_version, os_version, " +

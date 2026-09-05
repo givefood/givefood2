@@ -1,4 +1,5 @@
 import { translate } from "@givefood/templates";
+import { pyNow } from "@givefood/models";
 
 // Port of django.utils.timesince.timesince() (English locale only, the
 // only locale the JSON API ever serves -- see resolveLanguage.ts). Read
@@ -37,7 +38,7 @@ function parseUtc(s: string): Date {
   // the split result itself; midnight is the only sane reading of "just a
   // date" anyway.
   //
-  // A "Z" suffix (any app-written value: new Date().toISOString() always
+  // A "Z" suffix (any app-written value: pyNow() always
   // appends one) has to come off the WHOLE time part before splitting on
   // "." -- left in place, it either contaminates the fractional-seconds
   // digits (padEnd/slice keep the "Z" character, Number() of it is NaN) or,

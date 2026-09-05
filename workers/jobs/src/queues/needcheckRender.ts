@@ -13,7 +13,7 @@ import {
 import { buildNeedPrompt, type NeedPromptLastNeed } from "../needcheck/prompt";
 import { getMarkdown, scrapeBankTheFood, scrapeFacebook, scrapeTypeFor } from "../needcheck/scrape";
 import { extractNeed } from "../needcheck/openrouter";
-import { cleanFoodbankNeedText } from "@givefood/models";
+import { cleanFoodbankNeedText, pyNow } from "@givefood/models";
 import { decideNeedChange } from "../needcheck/decision";
 
 // PLAN.md §8.5.3: the needcheck RENDER_Q consumer, ported stage-for-stage
@@ -107,7 +107,7 @@ async function processOne(env: Env, msg: NeedcheckRenderMessage): Promise<void> 
     // crawlset.remaining a second time for one logical food bank.
     const closed = await finishCrawlItem(session, crawlItemId, needId);
     if (!closed) return;
-    await updateFoodbankLastNeedCheck(session, msg.foodbankId, new Date().toISOString());
+    await updateFoodbankLastNeedCheck(session, msg.foodbankId, pyNow());
     await decrementCrawlSetRemaining(session, msg.crawlSetId);
   };
 

@@ -1,4 +1,5 @@
 import type { Session } from "./types";
+import { pyDatetime } from "@givefood/models";
 
 // gfadmin/views.py:46-95 index()'s "stats" dict -- the dashboard's third
 // (Metrics) panel. tasks_24h/tasks_outstanding are NOT ported: Django reads
@@ -34,7 +35,14 @@ export interface AdminDashboardStats {
 }
 
 export async function getAdminDashboardStats(session: Session, now: Date): Promise<AdminDashboardStats> {
-  const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
+  // pyDatetime, not toISOString -- ticket #9. This threshold is compared
+  // against stored TEXT with `>=`, and an ISO string ("...T20:30:00.000Z")
+  // sorts AFTER every Django-format value from the same day ("... 20:30:00",
+  // space < T). So the ISO form silently excluded every same-day row rather
+  // than including it: measured at 31 of 46 rows dropped on foodbankchange
+  // for a 24-hour window. The counts on the admin dashboard were low by
+  // however many rows the pipeline had written since midnight.
+  const yesterday = pyDatetime(new Date(now.getTime() - 24 * 60 * 60 * 1000));
 
   const [oldestEdit, latestEdit, needCount24h, crawlCounts, oldestNeedCheck, latestNeedCheck, latestNeedCrawlSet] = await Promise.all([
     session.prepare("SELECT name, slug, edited FROM foodbank WHERE is_closed = 0 ORDER BY edited ASC LIMIT 1").first<FoodbankEditRow>(),

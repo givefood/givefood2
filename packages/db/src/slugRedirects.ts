@@ -1,5 +1,6 @@
 import type { Session } from "./types";
 import type { PageResult } from "./adminLists";
+import { pyNow } from "@givefood/models";
 
 // WP: slug redirects. The read/write paths behind gfadmin/views.py:2276-2308
 // (slug_redirects() and slug_redirect_form()), the model at
@@ -76,7 +77,7 @@ export interface UpsertSlugRedirectParams {
 // (givefood/models/base.py:12-19): set once, never touched on update.
 // `modified` is auto_now: stamped on every save.
 export async function upsertSlugRedirect(session: Session, params: UpsertSlugRedirectParams, existingId: number | undefined): Promise<void> {
-  const now = new Date().toISOString();
+  const now = pyNow();
   if (existingId === undefined) {
     await session
       .prepare("INSERT INTO slugredirect (old_slug, new_slug, created, modified) VALUES (?, ?, ?, ?)")

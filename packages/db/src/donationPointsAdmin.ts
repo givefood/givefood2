@@ -1,4 +1,5 @@
 import type { Session } from "./types";
+import { pyNow } from "@givefood/models";
 
 // WP 6.5: FoodbankDonationPointForm's write path (forms.py:172-186) --
 // same shape and same gap as locationsAdmin.ts's own comment: Django's
@@ -67,7 +68,7 @@ export async function upsertDonationPoint(session: Session, params: UpsertDonati
   const slug = slugify(params.name);
   const companySlug = params.company ? slugify(params.company) : null;
   const { latitude, longitude } = parseLatLng(params.latLng);
-  const now = new Date().toISOString();
+  const now = pyNow();
 
   if (existingId === undefined) {
     await session

@@ -9,6 +9,7 @@ import {
   updateFoodbankLastCrawl,
 } from "@givefood/db";
 import { parseFeed } from "../articles/feedParser";
+import { pyDatetime, pyNow } from "@givefood/models";
 
 // PLAN.md §8.6: the getarticles ARTICLES_Q consumer, ported from
 // crawlers.py:25-67 (foodbank_article_crawl). Unlike needcheck, Django has
@@ -69,7 +70,9 @@ async function processOne(env: Env, msg: ArticlesMessage): Promise<void> {
           foodbankId: msg.foodbankId,
           title: item.title.slice(0, 250), // crawlers.py:50's item.title[0:250]
           url: item.link,
-          publishedDate: item.publishedDate!.toISOString(), // parseFeed already filters out dateless items
+          // pyDatetime, not toISOString: this is a stored column shared with
+          // 17,235 ETL rows, and mixed formats break ORDER BY (ticket #9).
+          publishedDate: pyDatetime(item.publishedDate!), // parseFeed already filters out dateless items
         });
         if (inserted) foundNew = true;
       }
@@ -82,7 +85,7 @@ async function processOne(env: Env, msg: ArticlesMessage): Promise<void> {
     console.error(`articles: fetch failed for ${foodbank.rss_url}`, err);
   }
 
-  const now = new Date().toISOString();
+  const now = pyNow();
   await updateFoodbankLastCrawl(session, msg.foodbankId, now); // crawlers.py:58 stamps this unconditionally
   if (foundNew) await env.PURGE_Q.send({ tags: [foodbankTag(foodbank.slug), AGGREGATE_TAG] }); // crawlers.py:60's do_decache=True
 

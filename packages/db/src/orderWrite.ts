@@ -1,5 +1,6 @@
 import type { Session } from "./types";
 import { sortByName } from "./types";
+import { pyNow } from "@givefood/models";
 
 // WP 6.5b: the WRITE side of Order/OrderLine -- everything orderAdmin.ts's
 // own header comment deferred ("real mutations on an object whose own
@@ -35,7 +36,7 @@ import { sortByName } from "./types";
 // datetime` are both sorted on directly against those migrated rows
 // (adminLists.ts's getOrdersPage `ORDER BY o.<sort> DESC` and
 // getAllOrdersForCsv's `ORDER BY o.created DESC`, plus
-// order_delivery_datetime_idx). A `new Date().toISOString()` value --
+// order_delivery_datetime_idx). A `pyNow()` value --
 // which is what every other admin write path in this package uses, and
 // correctly so for columns nothing sorts against migrated data -- differs
 // from that at byte 11 ("T" 0x54 vs " " 0x20) and in its fractional

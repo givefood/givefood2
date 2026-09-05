@@ -1,8 +1,9 @@
 import type { Session } from "./types";
 import { mapNeedRow, type FoodbankChangeRow } from "./needs";
+import { pyNow } from "@givefood/models";
 
 // D1 timestamps written by this app's own code are always
-// new Date().toISOString() -- already "Z"-suffixed -- but this file's
+// pyNow() -- already "Z"-suffixed -- but this file's
 // duration math used to unconditionally append another "Z" before
 // parsing ("...Z" + "Z" = "...ZZ"), which `new Date()` silently turns
 // into an Invalid Date (getTime() = NaN) rather than throwing. Found
