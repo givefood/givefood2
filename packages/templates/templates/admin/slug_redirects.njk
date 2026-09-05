@@ -1,7 +1,13 @@
-{# gfadmin/templates/admin/slug_redirects.html (37 lines), plus the two
-   port-only additions described below. Its own template rather than the
-   shared admin/list.njk, because list.njk has no slot for the note about
-   propagation delay, which this is the one admin list that needs.
+{# gfadmin/templates/admin/slug_redirects.html (37 lines).
+
+   A save takes up to ~5 minutes to take effect -- middleware/
+   slugRedirect.ts memoises the map that long per warm isolate rather than
+   querying D1 on every food bank page view. That used to be stated on the
+   page; removed 2026-09-05 as implementation detail the admin does not
+   need. It is still worth knowing when a redirect "does not work" a
+   minute after saving it. Django's equivalent is worse and equally
+   unstated: givefood/utils/cache.py:12-32 caches the same map for 3600s
+   with nothing invalidating it on save.
 
    Django's table: 4 columns (Old Slug / New Slug / Created / Edit link),
    no count, no empty state, no pagination. The count, the "None" row and
@@ -18,21 +24,6 @@
 
     <div class="buttons">
       <a href="/admin/slug-redirect/new/" class="button is-link is-light">New Slug Redirect</a>
-    </div>
-
-    {# PORT ONLY -- no Django equivalent. Django's own admin says nothing
-       about propagation because its cache is invisible; this says it out
-       loud so nobody wonders whether a save "worked". Django caches the
-       same map for 3600s with nothing invalidating it on save
-       (givefood/utils/cache.py:12-32), so there a new redirect can take an
-       hour unless someone hits /admin/clearcache/. #}
-    <div class="notification is-light">
-      <p class="help">
-        Redirects are served from this table. A save goes live within about
-        five minutes rather than instantly -- middleware/slugRedirect.ts
-        memoises the map for that long per warm isolate, so it is not
-        querying D1 on every food bank page view.
-      </p>
     </div>
 
     <table class="table is-fullwidth is-hoverable">
