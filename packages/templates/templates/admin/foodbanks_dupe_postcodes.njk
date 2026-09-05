@@ -36,7 +36,7 @@
 <div class="columns">
   <div class="column is-three-quarters">
 
-    <h1 class="title">Duplicate Postcodes <span class="tag is-info is-normal is-light">{{ groups.length }}</span></h1>
+    <h2>Duplicate Postcodes <span class="tag is-info is-normal is-light">{{ groups.length }}</span></h2>
 
     {# The scope this paragraph states is Django's, unchanged: views.py:340-358 collects
        postcodes from get_all_foodbanks() + get_all_locations() only (donation points are
@@ -59,7 +59,7 @@
     {% endif %}
 
     {% for g in groups %}
-    <h3 class="title is-6" style="margin-bottom:4px">
+    <h3>
       <a href="/admin/search/?q={{ g.postcode | urlencode }}">{{ g.postcode }}</a>
       <span class="tag is-warning is-light">{{ g.places.length }}</span>
     </h3>

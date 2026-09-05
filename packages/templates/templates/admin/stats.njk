@@ -14,9 +14,13 @@
 {% block body %}
 <div class="columns">
   <div class="column">
-    {# Django's bare page-level <h2>, promoted to <h1 class="title"> to match
-       the port's own admin/list.njk and admin/query.njk. #}
-    <h1 class="title">{{ title }} Stats</h1>
+    {# A bare <h2>, like stats.html:9 and like every other page title in
+       this admin. These briefly carried Bulma's `title`/`is-N` classes,
+       which made admin headings visibly bigger and heavier than the Django
+       original: gf.css already styles h1/h2/h3 (h2 is 18px, normal weight,
+       with a 2px bottom rule) and Bulma's `.title` overrode all of it.
+       Reverted 2026-09-05. Do not add them back. #}
+    <h2>{{ title }} Stats</h2>
 
     <dl>
       {% for stat in stats %}

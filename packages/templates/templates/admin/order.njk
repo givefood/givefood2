@@ -77,7 +77,7 @@
     {% if order.need_id %}
     {# order.html:75 -- the link text is need_id_short, the first 7 chars
        (models/needs.py:81-82); the href keeps the full id. #}
-    <h2 class="title is-5">Need <a href="/admin/need/{{ order.need_id_str }}/">{{ order.need_id_short }}</a></h2>
+    <h2>Need <a href="/admin/need/{{ order.need_id_str }}/">{{ order.need_id_short }}</a></h2>
     <p>{{ order.need_change_text | linebreaksbr | safe }}</p>
     <dl>
       <dt>Found</dt>
@@ -90,7 +90,7 @@
     {% endif %}
 
     {% if order.foodbank_id %}
-    <h2 class="title is-5">Notification</h2>
+    <h2>Notification</h2>
     <p>
       {% if order.notification_email_sent %}
       <span style="color:green">&#10003;</span> Sent <time datetime="{{ order.notification_email_sent }}" title="{{ order.notification_email_sent|date("N j, Y, P") }}">{{ notification_email_sent_timesince }}</time>
@@ -111,7 +111,7 @@
     {# order.html:102-106's Danger Zone. Django labels the button "Cancel"
        while the URL and view are order_delete; kept as Delete here so the
        label matches what it does. #}
-    <h2 class="title is-5"><span class="mdi mdi-alert"></span> Danger Zone</h2>
+    <h2><span class="mdi mdi-alert"></span> Danger Zone</h2>
     <form action="/admin/order/{{ order.order_id }}/delete/" method="post"
           onsubmit="return confirm('Delete this order and all its lines? This cannot be undone.');">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">

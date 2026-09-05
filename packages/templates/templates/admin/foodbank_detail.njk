@@ -12,7 +12,7 @@
 {% macro extlink(href, text) %}<a href="{{ href }}" target="_blank" rel="noopener" class="newwindow"><img src="/static/img/newwindow.svg" alt="New window"></a> <a href="{{ href }}">{{ text }}</a>{% endmacro %}
 
 {% block body %}
-<h1 class="title">{{ foodbank.name }}</h1>
+<h1>{{ foodbank.name }}</h1>
 
 {% if foodbank.is_closed %}<span class="tag is-danger">Closed</span>{% endif %}
 
@@ -64,7 +64,7 @@
 
     {% if foodbank.notes %}<div class="box" style="margin-top:20px;">{{ foodbank.notes | linebreaksbr | safe }}</div>{% endif %}
 
-    <h3 class="title is-5">URLs</h3>
+    <h3>URLs</h3>
     <a href="/admin/foodbank/{{ foodbank.slug }}/edit/urls/" class="button is-link is-small is-pulled-right is-light">Edit</a>
     <dl>
       <dt>Website</dt>
@@ -78,7 +78,7 @@
       {% if foodbank.contacts_url %}<dt>Contacts URL</dt><dd>{{ extlink(foodbank.contacts_url, foodbank.contacts_url | friendly_url) }}</dd>{% endif %}
     </dl>
 
-    <h3 class="title is-5">Info</h3>
+    <h3>Info</h3>
     <dl>
       <dt>GF Info</dt>
       <dd>{{ extlink("/needs/at/" + foodbank.slug + "/", foodbank.slug) }}</dd>
@@ -106,7 +106,7 @@
       {% if foodbank.is_school %}<dt>Is school</dt><dd>&#9989; Yes</dd>{% endif %}
     </dl>
 
-    <h3 class="title is-5">Contacts</h3>
+    <h3>Contacts</h3>
     <a href="/admin/foodbank/{{ foodbank.slug }}/edit/email/" class="button is-link is-small is-pulled-right is-light">Edit Email</a>
     <a href="/admin/foodbank/{{ foodbank.slug }}/edit/phone/" class="button is-link is-small is-pulled-right is-light" style="margin-right:5px;">Edit Phone</a>
     <dl>
@@ -117,7 +117,7 @@
       {% if foodbank.delivery_phone_number %}<dt>Delivery phone</dt><dd><a href="tel:{{ foodbank.delivery_phone_number }}">{{ foodbank.delivery_phone_number | friendly_phone }}</a></dd>{% endif %}
     </dl>
 
-    <h3 class="title is-5">Politics</h3>
+    <h3>Politics</h3>
     <dl>
       <dt>Parl. Con.</dt><dd>{{ foodbank.parliamentary_constituency_name or "&nbsp;" | safe }}</dd>
       {% if foodbank.county %}<dt>County</dt><dd>{{ foodbank.county }}</dd>{% endif %}
@@ -126,7 +126,7 @@
       <dt>Country</dt><dd>{{ foodbank.country }}</dd>
     </dl>
 
-    <h3 class="title is-5">Stats</h3>
+    <h3>Stats</h3>
     <dl>
       <dt>Subscribers</dt><dd>{{ number_subscribers }}</dd>
       <dt>Days Between Needs</dt><dd>{{ foodbank.days_between_needs }}</dd>
@@ -143,7 +143,7 @@
       <dt>Donation Points</dt><dd>{{ counts.donation_points }}</dd>
     </dl>
 
-    <h3 class="title is-5">Dates</h3>
+    <h3>Dates</h3>
     <dl>
       <dt>Created</dt><dd>{{ foodbank.created|date("N j, Y, P") }}</dd>
       <dt>Modified</dt><dd>{{ foodbank.modified|date("N j, Y, P") }}</dd>
@@ -175,7 +175,7 @@
     {# foodbank.html:295-299's "Really Dangerous Zone". Django's other two
        danger zones there -- Resave Everything and Send RFI -- are deliberately
        not ported (the maintainer scoped both out), so this is the only one. #}
-    <h3 class="title is-5"><span class="mdi mdi-alert"></span> Really Dangerous Zone</h3>
+    <h3><span class="mdi mdi-alert"></span> Really Dangerous Zone</h3>
     <form action="/admin/foodbank/{{ foodbank.slug }}/delete/" method="post" data-name="{{ foodbank.name }}" onsubmit="return confirm('DELETE ' + this.dataset.name + '?');">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <button type="submit" class="button is-danger is-light">Delete {{ full_name }}</button>
@@ -194,7 +194,7 @@
        different number from this section, which always shows at least the
        Main address row -- an added "(0)" here read as contradicting the row
        directly beneath it. #}
-    <h3 class="title is-5">Locations</h3>
+    <h3>Locations</h3>
     {# foodbank.html:307-388 -- a THREE-cell table: label, detail, controls.
        Row 1 is the food bank's OWN main address (the only link into
        /admin/foodbank/<slug>/edit/address/ from this page), row 2 the
@@ -273,7 +273,7 @@
        the only entry point the need-creation form has, in either codebase. #}
     <a href="/admin/need/new/?foodbank={{ foodbank.slug }}" class="button is-link is-light is-pulled-right is-small">New Need</a>
 
-    <h3 class="title is-5">Latest Need</h3>
+    <h3>Latest Need</h3>
     {% if foodbank.latestNeed %}
       <p>
         {{ foodbank.latestNeed.input_method_emoji | safe }}

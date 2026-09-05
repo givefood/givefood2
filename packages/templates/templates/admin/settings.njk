@@ -3,7 +3,7 @@
 {% block title %}Settings{% endblock %}
 
 {% block body %}
-<h1 class="title">Settings</h1>
+<h2>Settings</h2>
 
 <div class="columns">
   <div class="column">
@@ -15,7 +15,7 @@
       <li><span class="mdi mdi-robot"></span> <a href="/admin/crawl-sets/">Crawl Sets</a></li>
     </ul>
 
-    <h3 class="title is-5">Stats</h3>
+    <h3>Stats</h3>
     <ul class="settings">
       <li>
         <span class="mdi mdi-calendar"></span> Dated Stats
@@ -32,7 +32,7 @@
       <li><span class="mdi mdi-food"></span> <a href="/admin/stats/needs/">Need Stats</a></li>
     </ul>
 
-    <h3 class="title is-5">User Data</h3>
+    <h3>User Data</h3>
     <ul class="settings">
       <li><span class="mdi mdi-email-outline"></span> <a href="/admin/subscriptions/">Subscriptions</a></li>
     </ul>
@@ -43,7 +43,7 @@
        it) but no Django template links it -- a repo-wide grep for `admin:map` under
        gfadmin/templates/ returns nothing -- and an unlinked page may as well not
        exist. #}
-    <h3 class="title is-5">Geo</h3>
+    <h3>Geo</h3>
     <ul class="settings">
       <li><span class="mdi mdi-bullhorn"></span> <a href="/admin/politics/">Parliamentary Constituencies</a></li>
       <li><span class="mdi mdi-city-variant"></span> <a href="/admin/places/">Places</a></li>
@@ -57,7 +57,7 @@
         - "Query Console" is port-only: Django has no equivalent view at any URL. See
           workers/site/src/routes/admin/query.ts and PLAN.md WP 6.10, which specifies
           it as POST-only, SELECT/EXPLAIN-only and row-capped. #}
-    <h3 class="title is-5">Data quality</h3>
+    <h3>Data quality</h3>
     <ul class="settings">
       <li><span class="mdi mdi-basket-off"></span> <a href="/admin/foodbanks/without_need/">Food Banks without a need</a></li>
       <li><span class="mdi mdi-database-search"></span> <a href="/admin/query/">Query Console</a></li>
@@ -67,7 +67,7 @@
        danger zone in the admin (foodbank.html:290, need.html:142, order.html:102) is
        sentence case. This is the one whose buttons act on the whole site rather than
        one record, so the casing is kept. #}
-    <h3 class="title is-5"><span class="mdi mdi-alert"></span> DANGER ZONE</h3>
+    <h3><span class="mdi mdi-alert"></span> DANGER ZONE</h3>
 
     {# routes/admin/clearCache.ts redirects back here with ?cache=<outcome>.
        The route narrows the querystring to this fixed four-value enum before

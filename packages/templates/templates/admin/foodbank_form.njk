@@ -15,7 +15,7 @@
 {% block body %}
 <div class="columns">
   <div class="column">
-    <h1 class="title">{{ title }}</h1>
+    <h2>{{ title }}</h2>
     <p class="subtitle">{{ foodbank.name }}{% if foodbank.slug %} -- <a href="/admin/foodbank/{{ foodbank.slug }}/">View</a>{% endif %}</p>
 
     {# A bound Django form re-renders with its errors inline (bulma/forms/

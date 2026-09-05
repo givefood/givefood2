@@ -31,7 +31,7 @@
   </div>
 
   <div class="column is-three-quarters">
-    <h2 class="title is-4">English</h2>
+    <h2>English</h2>
     <dl>
       <dt>Needs</dt>
       <dd>{{ need.change_text | linebreaksbr | safe }}</dd>
@@ -41,9 +41,9 @@
       {% endif %}
     </dl>
 
-    <h2 class="title is-4">Translations</h2>
+    <h2>Translations</h2>
     {% for translation in translations %}
-      <h3 class="title is-5">{{ translation.language }}</h3>
+      <h3>{{ translation.language }}</h3>
       <dl>
         <dt>Needs</dt>
         <dd>{{ translation.change_text | linebreaksbr | safe }}</dd>

@@ -6,7 +6,7 @@
 <div class="columns">
 
   <div class="column">
-    <h2 class="title is-4">Needs</h2>
+    <h2>Needs</h2>
 
     {% if unpublished_needs.length %}
     <form method="post" action="/admin/needs/delete-all/" onsubmit="return confirm('Delete all ' + {{ unpublished_needs.length }} + ' unreviewed needs?');">
@@ -16,17 +16,17 @@
     </form>
     {% endif %}
 
-    <h3 class="title is-5">Unpublished</h3>
+    <h3>Unpublished</h3>
     {% set needs = unpublished_needs %}
     {% include "admin/includes/needtable.njk" %}
 
-    <h3 class="title is-5">Published</h3>
+    <h3>Published</h3>
     {% set needs = published_needs %}
     {% include "admin/includes/needtable.njk" %}
   </div>
 
   <div class="column">
-    <h2 class="title is-4">Discrepancies</h2>
+    <h2>Discrepancies</h2>
     <table class="table is-fullwidth is-hoverable">
       <thead>
         <tr><th>Time</th><th>Foodbank</th><th></th><th></th><th></th></tr>
@@ -59,9 +59,9 @@
   </div>
 
   <div class="column">
-    <h2 class="title is-4">Metrics</h2>
+    <h2>Metrics</h2>
 
-    <h3 class="title is-5">Edits</h3>
+    <h3>Edits</h3>
     <dl>
       <dt>Oldest Edit</dt>
       <dd>
@@ -79,7 +79,7 @@
       </dd>
     </dl>
 
-    <h3 class="title is-5">Offline</h3>
+    <h3>Offline</h3>
     <dl>
       <dt>Oldest Need Check</dt>
       <dd>
@@ -109,7 +109,7 @@
       <dd>{{ stats.charity_check_24h }}</dd>
     </dl>
 
-    <h2 class="title is-4">Articles</h2>
+    <h2>Articles</h2>
     <table class="table is-narrow is-fullwidth">
       <tbody>
         {% for article in articles %}

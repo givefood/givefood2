@@ -24,7 +24,7 @@
 {% block body %}
 <div class="columns">
   <div class="column">
-    <h1 class="title">{{ title }}</h1>
+    <h2>{{ title }}</h2>
     <p>Read-only. Only <code>SELECT</code> and <code>EXPLAIN</code> statements are allowed, one at a time, and results are capped at {{ result_limit }} rows.</p>
 
     <form method="post">
@@ -46,11 +46,11 @@
     {% endif %}
 
     {% if ran %}
-      <h2 class="title is-5">Query plan</h2>
+      <h2>Query plan</h2>
       {{ resultTable(plan_columns, plan_rows) }}
 
       {% if show_results %}
-      <h2 class="title is-5">Results{% if truncated %} (truncated at {{ result_limit }} rows){% endif %}</h2>
+      <h2>Results{% if truncated %} (truncated at {{ result_limit }} rows){% endif %}</h2>
       {{ resultTable(result_columns, result_rows) }}
       {% endif %}
     {% endif %}

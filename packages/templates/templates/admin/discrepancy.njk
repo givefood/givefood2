@@ -6,9 +6,9 @@
 {% block body %}
 <div class="columns">
   <div class="column">
-    {# discrepancy.html:12's bare <h2>Discrepancy</h2>, promoted to <h1 class="title"> the way
-       every other ported admin page does (see stats.njk's own note). #}
-    <h1 class="title">Discrepancy</h1>
+    {# discrepancy.html:12's bare <h2>, unchanged -- see stats.njk's note on
+       why admin headings carry no Bulma classes. #}
+    <h2>Discrepancy</h2>
     <dl>
       <dt>Food Bank</dt>
       <dd>{% if foodbank %}<a href="/admin/foodbank/{{ foodbank.slug }}/">{{ discrepancy.foodbank_name }}</a>{% else %}{{ discrepancy.foodbank_name or "Unknown" }}{% endif %}</dd>
