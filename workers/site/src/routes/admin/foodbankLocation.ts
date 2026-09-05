@@ -67,7 +67,6 @@ export async function adminFoodbankLocationForm(c: Context<AppEnv>): Promise<Res
     title: existing ? `Edit ${foodbank.name} Food Bank Location` : `New ${foodbank.name} Food Bank Location`,
     fields: FOODBANK_LOCATION_FIELDS,
     data,
-    back_url: `/admin/foodbank/${foodbank.slug}/`,
     delete_url: existing ? `/admin/foodbank/${foodbank.slug}/location/${existing.slug}/delete/` : null,
     // admin/form.html:30-36 renders the food bank's own site beside the
     // fields so an admin can read from it while typing. `preview_field`

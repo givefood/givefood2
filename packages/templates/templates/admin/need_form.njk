@@ -19,7 +19,12 @@
 <div class="columns">
   <div class="column">
     <h2>Edit Need</h2>
-    <p><a href="/admin/need/{{ need.need_id }}/">&larr; Back</a></p>
+{# NO BACK LINK. Every admin form in this port used to carry a
+   "&larr; Back" above the fields; Django's own admin has none anywhere
+   (`grep -rn "&larr;" gfadmin/templates/admin/*.html` is empty), so these
+   were a port addition. Removed 2026-09-05, maintainer decision -- the
+   navbar and the browser both already go back, and a link that leaves an
+   edit form is worth less than the row it occupies. #}
 
     {# Django shows per-field errors inline (`{{ form|bulma }}`); this port
        validates in the route and surfaces the first failure as one banner,

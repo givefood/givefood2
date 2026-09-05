@@ -18,7 +18,7 @@
        the title, because the title is slugified into the form's class name
        below and admin.js matches those class names exactly. #}
     {% if subtitle %}<p class="subtitle">{{ subtitle }}</p>{% endif %}
-    {% if back_url %}<p><a href="{{ back_url }}">&larr; Back</a></p>{% endif %}
+{# No back link -- see admin/need_form.njk. #}
 
     {# A bound Django form re-renders with its errors inline (bulma/forms/
        field.html's `<span class="help is-danger">`); this port surfaces the

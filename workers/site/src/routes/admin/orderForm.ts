@@ -200,7 +200,6 @@ async function renderForm(
     page_title: pageTitle,
     // Django's generic admin/form.html has no Back link; this port's
     // generic_form.njk does, so follow the port's own convention.
-    back_url: order ? `/admin/order/${encodeURIComponent(order.order_id)}/` : "/admin/orders/",
     error,
     data,
     foodbanks,

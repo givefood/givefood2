@@ -45,7 +45,6 @@ export async function adminDonationPointForm(c: Context<AppEnv>): Promise<Respon
       subtitle: foodbank.name,
       fields: FOODBANK_DONATION_POINT_FIELDS,
       data,
-      back_url: `/admin/foodbank/${foodbank.slug}/`,
       delete_url: existing ? `/admin/foodbank/${foodbank.slug}/donationpoint/${existing.slug}/delete/` : null,
       error,
       // admin/form.html:30-36 renders the food bank's own site beside the

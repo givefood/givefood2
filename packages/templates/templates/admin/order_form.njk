@@ -29,7 +29,7 @@
 <div class="columns">
   <div class="column is-half">
     <h2>{{ page_title }}</h2>
-    {% if back_url %}<p><a href="{{ back_url }}">&larr; Back</a></p>{% endif %}
+{# No back link -- see admin/need_form.njk. #}
 
     {# A bound Django form re-renders with its errors inline; this port
        surfaces the first failure as one banner and preserves every submitted

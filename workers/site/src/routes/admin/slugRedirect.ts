@@ -127,7 +127,6 @@ export async function adminSlugRedirectForm(c: Context<AppEnv>): Promise<Respons
     title: existing ? "Edit Slug Redirect" : "New Slug Redirect", // views.py:2291/2294 verbatim
     fields: SLUG_REDIRECT_FIELDS,
     data: existing ?? {},
-    back_url: "/admin/slug-redirects/",
     // Django has NO delete for SlugRedirect -- only the list and this
     // form exist (verified: `grep -rn SlugRedirect --include="*.py"` hits
     // nothing but these two views, the imports and the tests). None is

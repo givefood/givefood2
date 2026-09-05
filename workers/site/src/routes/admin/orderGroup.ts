@@ -242,7 +242,6 @@ export async function adminOrderGroupForm(c: Context<AppEnv>): Promise<Response>
     title: existing ? `Edit ${existing.name}` : "New Order Group",
     fields: ORDER_GROUP_FIELDS,
     data: existing ?? {},
-    back_url: "/admin/order-groups/",
     // Django has no order_group delete view at all (gfadmin/urls/orders.py:
     // 16-19), and deleting a group would orphan every orders.order_group_id
     // pointing at it -- there is no FK to cascade or restrain it.

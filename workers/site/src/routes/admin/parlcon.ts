@@ -32,7 +32,6 @@ export async function adminParlconForm(c: Context<AppEnv>): Promise<Response> {
       fields: PARLCON_FIELDS,
       data,
       // Django's admin/form.html has no Back link either -- not an omission.
-      back_url: null,
       error,
     });
     return c.html(html, error ? 400 : 200);

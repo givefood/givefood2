@@ -37,7 +37,7 @@
   <div class="column">
     <h2>{{ page_title }}</h2>
     {% if form.foodbank_slug %}
-      <p><a href="/admin/foodbank/{{ form.foodbank_slug }}/">&larr; Back</a></p>
+{# No back link -- see admin/need_form.njk. #}
     {% endif %}
 
     {% if error %}
