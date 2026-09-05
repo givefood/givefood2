@@ -227,7 +227,21 @@ Three load-bearing reasons, all of which a redirect breaks:
 2. Templates request these paths through **Cloudflare Image Resizing on the same zone** — `gfwfbn/templates/wfbn/index.html:145-147` and 15 other `<picture>`/`<source>` elements across 5 templates prefix them with `https://www.givefood.org.uk/cdn-cgi/image/width=150,format=avif…`. A different hostname breaks the whole AVIF/WebP srcset pipeline.
 3. The URLs must remain valid canonical URLs.
 
-> ⚠️ **This interaction is unverified and there is a spike for it** ([§8.1](#81-the-three-phase-0-spikes), spike 3). Cloudflare's own troubleshooting documentation lists error 9524 — "The `/cdn-cgi/image/` resizing service could not perform resizing. This may happen when an **image URL is intercepted by a Worker**" — with the recommended workaround being to resize *inside* the Worker instead. Error 9403 additionally cautions against "Workers scoped to the entire domain `/*`", which is precisely this plan's topology. If the spike fails, either the Worker performs the transform itself via `fetch(..., {cf: {image: {...}}})` (which reinstates a ~$8/month Images cost), or all four widths used in the templates are precomputed and the `/cdn-cgi/image/` prefix is removed from the markup — a template change on pages the fidelity rule covers. **Run this spike before committing to Phase 1.**
+> ✅ **RESOLVED 2026-09-05 — spike 3 run, `/cdn-cgi/image/` works in front of the Worker. Option A. No fallback needed.** Measured against `beta.givefood.org.uk`, a Worker **Custom Domain**, using a real 600×400 PNG in R2:
+>
+> | request | result |
+> |---|---|
+> | `/needs/at/sid-valley/map.png` | `200 image/png` 35,778 b |
+> | `/cdn-cgi/image/width=150/needs/at/sid-valley/map.png` | `200 image/png` 8,935 b |
+> | `/cdn-cgi/image/width=150,format=avif/…` | `200 image/avif` 2,739 b |
+>
+> The resizing service intercepts ahead of the Worker, fetches the origin path back **through** the Worker, and transforms the result. No 9524, no 9403. (A missing object gives `ERROR 9404: Could not fetch the image — the server returned HTTP error 404`, which is itself proof the service reached the Worker and got a real answer from it.)
+>
+> The documented failure mode is real but is about **topology, not Workers as such**: 9403 names "Workers scoped to the entire domain `/*`" and 9524's own workaround is *"use a Custom Domain instead"*. So this plan's original topology — a `www.givefood.org.uk/*` pattern route — was the thing at risk, and the fix is one line: production is declared as a **Custom Domain**, exactly like beta. See `workers/site/wrangler.jsonc`. Do not convert it back to a pattern route.
+>
+> Consequently Option B (precompute 150/300/540/1080 into R2, strip the prefix from the markup) is **not** being built: it would reinstate a per-transform or storage cost, require re-implementing `Accept`-header format negotiation that the edge does for free, and churn 23 elements across six templates to reach the same pixels. Tracked and closed as givefood/givefood2#2.
+>
+> One template change did land: the 39 URLs across those elements were **same-origin-ised** (they hardcoded `https://www.givefood.org.uk`, as Django's did). On beta that had been silently loading images from the live Django site, which is why the interaction stayed unverified for so long — beta was never exercising its own image path.
 
 Note also that `gfwfbn/templates/wfbn/foodbank/locations.html:91-92` puts `/cdn-cgi/image/` in front of the Google Static Maps proxy PNGs too, so the same dependency applies to a fourth route family.
 
@@ -399,7 +413,7 @@ Run these **before any commitment**, in the first two weeks. Local D1 runs the s
 |---|---|---|---|
 | **1** | Does in-memory haversine reproduce production nearest-search **ordering and** `distance_m` to the integer? | Load the 8,721-point set; run 200 postcodes; diff against live `/api/2/foodbanks/search/` | **Abandon or descope.** Nearest-food-bank is the site's core function. Without it on D1, Postgres never leaves and goal 2 is unmet. |
 | **2** | Does D1 FTS5 `tokenize='trigram'` work **remotely** and serve `/aac/` substring matching, with correct escaping? | Create the virtual table locally *and* against `--remote`; test the real-world escaping cases | Prefix-only autocomplete (the code already gates substring at 3+ characters) with a documented quality loss, or a KV prefix index. |
-| **3** | Does `/cdn-cgi/image/` still resize a path served by a Worker route? | On a staging zone, put a Worker route on one photo path and request it through `/cdn-cgi/image/width=300,format=avif/<path>`. Test **both** the `/*` catch-all and a narrow `/needs/at/*/photo.jpg` route — they may behave differently | Either the Worker transforms via `fetch(..., {cf:{image:{}}})`, reinstating ~$8/month, or precompute all four template widths and remove the prefix from the markup — an HTML change under the fidelity rule. |
+| **3** | ~~Does `/cdn-cgi/image/` still resize a path served by a Worker route?~~ **✅ RUN 2026-09-05 — PASS, on a Custom Domain.** See [§5.1](#51-photo-urls-must-stay-on-the-main-domain) for measurements | Run against `beta.givefood.org.uk` with a real object in R2, not a staging zone: `width=150` → `200 image/png` 8,935 b, `width=150,format=avif` → `200 image/avif` 2,739 b | n/a — passed. The `/*` catch-all variant was **not** tested and is not being adopted: production is declared as a Custom Domain instead, which is Cloudflare's own documented workaround for 9524. |
 
 ```bash
 # Spike 2, in full — note the escaping that a bare bound parameter gets WRONG
@@ -421,11 +435,15 @@ wrangler d1 execute givefood-spike --remote --command \
 ```
 
 ```bash
-# Spike 3 — the /cdn-cgi/image/ interaction, on a staging zone
-curl -sI "https://staging.givefood.org.uk/cdn-cgi/image/width=300,format=avif/needs/at/<slug>/photo.jpg" \
-  | egrep -i '^(HTTP|content-type|cf-)'
-# Look for: 200 + image/avif  ->  PASS
-#           error 9524 / 9403 ->  FAIL, take the fallback in §5.1
+# Spike 3 — the /cdn-cgi/image/ interaction. RUN 2026-09-05: PASS.
+# Ran against beta (a Worker Custom Domain) rather than a staging zone, and
+# against map.png because it was the object actually present in R2.
+curl -s -o /dev/null -w '%{http_code} %{content_type} %{size_download}b\n' \
+  "https://beta.givefood.org.uk/cdn-cgi/image/width=150,format=avif/needs/at/sid-valley/map.png"
+# Got: 200 image/avif 2739b   (source PNG is 35778b)
+# A missing object gives "ERROR 9404: Could not fetch the image -- the server
+# returned HTTP error 404", which is itself proof the resizing service
+# reached the Worker. 9524/9403 did not occur.
 ```
 
 #### 8.2 Kill criteria
@@ -2611,17 +2629,21 @@ Cloudflare's own troubleshooting documentation names this interaction as a failu
 > **Error 9524** — "The `/cdn-cgi/image/` resizing service could not perform resizing. This may happen when an image URL is intercepted by a Worker." Recommended workaround: "Resize within the Worker instead of using `/cdn-cgi/image/`."
 > **Error 9403** — request loop; "Verify your Worker path and image path on the server do not overlap", cautioning specifically against "Workers scoped to the entire domain `/*`" — which is precisely the recommended topology in §3.1.
 
-**This is unverified and it is the first thing we ship.** It gets a spike (§3.11). Three outcomes, with designs:
+**RESOLVED 2026-09-05: outcome A.** The spike ran against `beta.givefood.org.uk` and `/cdn-cgi/image/` resized and format-converted correctly in front of the Worker (measurements in §5.1). The failure mode Cloudflare documents is about topology: 9403 names `/*`-scoped Workers, and 9524's own workaround is "use a Custom Domain instead". Production is therefore declared as a **Custom Domain**, not the `www.givefood.org.uk/*` pattern route this plan originally specified — one line in `wrangler.jsonc`, and the only change the spike forced. Templates keep the prefix; the 39 URLs were made same-origin so beta serves its own images instead of the live Django site's.
+
+The three outcomes as originally designed, for the record:
 
 | Outcome | Design |
 |---|---|
-| **A — it works** | Nothing changes. Templates untouched. |
+| **A — it works** ← **this one** | Nothing changes. Templates untouched. |
 | **B — it fails (recommended fallback, and arguably the better design anyway)** | Drop `/cdn-cgi/image/` from the 18 elements and precompute the exact widths the templates ask for (150, 300, 540, 1080) at ingest. `<img srcset="/needs/at/<slug>/photo.jpg 1080w, /needs/at/<slug>/photo.jpg?w=540 540w">`. This is an HTML change on five templates — same visual result, same classes, same DOM structure, so it falls inside "roughly the same HTML" — and it removes a Cloudflare product dependency, costs £0/month, and makes deploys cheaper. **Under the keep-it-simple constraint this may be preferable regardless of the spike result.** |
 | **C — last resort** | The Worker transforms via `fetch(sourceURL, { cf: { image: {...} } })` against a private R2 hostname to break the loop. Adds a hostname and reinstates the recurring Cloudflare Images cost. Only if A and B both fail. |
 
 #### Why not Cloudflare Images
 
-7,117 photos × 4 widths = 28,468 unique transformations. `format` is free (so AVIF/WebP negotiation costs nothing), but **a unique transformation is billed once per calendar month** — roughly $12/month in perpetuity, versus £0 for precomputing at ingest. Precompute.
+7,117 photos × 4 widths = 28,468 unique transformations. `format` is free (so AVIF/WebP negotiation costs nothing), but **a unique transformation is billed once per calendar month** — roughly $12/month in perpetuity, versus £0 for precomputing at ingest.
+
+This argued for precomputing (outcome B) *regardless* of the spike. It is not being acted on, deliberately: `/cdn-cgi/image/` is billed the same way whether the origin is Django or a Worker, so keeping it is cost-neutral against today, whereas outcome B is a real project — 23 elements across six templates, a variant-generation step at ingest, and `Accept`-header format negotiation re-implemented in the Worker to replace what `format=auto` does for free at the edge. If the transformation line becomes worth attacking it can be done later as its own piece of work, against a site that is already live and measurable. Migrating and optimising at the same time is how you lose the ability to tell which change broke the images.
 
 #### `place_has_photo` — a real behavioural change, not a mechanical port
 

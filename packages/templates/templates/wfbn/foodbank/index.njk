@@ -119,16 +119,41 @@
             {% endif %}
 
             {% if foodbank.place_has_photo and not foodbank.address_is_administrative %}
+              {# The `/cdn-cgi/image/` prefix here (and on 22 other elements
+                 across five more templates) is Cloudflare's URL-based image
+                 resizing, kept from Django. PLAN.md gated Phase 1 on whether
+                 it survives being put in front of a Worker -- Cloudflare
+                 documents errors 9524 ("an image URL is intercepted by a
+                 Worker") and 9403 ("Workers scoped to the entire domain
+                 /*") as exactly this failure -- and specified a fallback
+                 that precomputes fixed widths into R2 and drops the prefix
+                 (givefood/givefood2#2).
+
+                 Spike run 2026-09-05 against beta.givefood.org.uk, which is
+                 a Worker Custom Domain: it works. width=150 returned a
+                 resized PNG and width=150,format=avif returned AVIF, both
+                 200, both fetched back through the Worker. The failure mode
+                 is real but belongs to Workers on a `/*` ROUTE, not on a
+                 Custom Domain -- which is also the workaround Cloudflare's
+                 own troubleshooting page gives for 9524. wrangler.jsonc's
+                 production entry is a custom_domain for that reason; do not
+                 turn it back into a route pattern.
+
+                 The URLs are same-origin (they used to hardcode
+                 https://www.givefood.org.uk, as Django's did) so that beta
+                 exercises its own images rather than silently loading them
+                 from the live Django site, which is what made this
+                 untestable for so long. #}
               <div>
                 <picture>
                   {% if foodbank.latest_need_change_text == "Unknown" or foodbank.latest_need_change_text == "Nothing" %}
-                    <source type="image/avif" srcset="https://www.givefood.org.uk/cdn-cgi/image/width=540,format=avif{{ url('wfbn-generic:foodbank_photo', foodbank.slug) }} 540w, https://www.givefood.org.uk/cdn-cgi/image/width=1080,format=avif{{ url('wfbn-generic:foodbank_photo', foodbank.slug) }} 1080w" sizes="(max-width: 540px) 540px, 1080px">
-                    <source type="image/webp" srcset="https://www.givefood.org.uk/cdn-cgi/image/width=540,format=webp{{ url('wfbn-generic:foodbank_photo', foodbank.slug) }} 540w, https://www.givefood.org.uk/cdn-cgi/image/width=1080,format=webp{{ url('wfbn-generic:foodbank_photo', foodbank.slug) }} 1080w" sizes="(max-width: 540px) 540px, 1080px">
+                    <source type="image/avif" srcset="/cdn-cgi/image/width=540,format=avif{{ url('wfbn-generic:foodbank_photo', foodbank.slug) }} 540w, /cdn-cgi/image/width=1080,format=avif{{ url('wfbn-generic:foodbank_photo', foodbank.slug) }} 1080w" sizes="(max-width: 540px) 540px, 1080px">
+                    <source type="image/webp" srcset="/cdn-cgi/image/width=540,format=webp{{ url('wfbn-generic:foodbank_photo', foodbank.slug) }} 540w, /cdn-cgi/image/width=1080,format=webp{{ url('wfbn-generic:foodbank_photo', foodbank.slug) }} 1080w" sizes="(max-width: 540px) 540px, 1080px">
                     <img src="{{ url('wfbn-generic:foodbank_photo', foodbank.slug) }}" alt="{{ foodbank.name }}" loading="lazy" class="placephoto">
                   {% else %}
-                    <source srcset="https://www.givefood.org.uk/cdn-cgi/image/width=540,format=avif{{ url('wfbn-generic:foodbank_photo', foodbank.slug) }} 540w,https://www.givefood.org.uk/cdn-cgi/image/width=1080,format=avif{{ url('wfbn-generic:foodbank_photo', foodbank.slug) }} 1080w" type="image/avif" sizes="(max-width: 540px) 540px, 1080px">
-                    <source srcset="https://www.givefood.org.uk/cdn-cgi/image/width=540,format=webp{{ url('wfbn-generic:foodbank_photo', foodbank.slug) }} 540w,https://www.givefood.org.uk/cdn-cgi/image/width=1080,format=webp{{ url('wfbn-generic:foodbank_photo', foodbank.slug) }} 1080w" type="image/webp" sizes="(max-width: 540px) 540px, 1080px">
-                    <img src="https://www.givefood.org.uk/cdn-cgi/image/width=540{{ url('wfbn-generic:foodbank_photo', foodbank.slug) }}" alt="{{ foodbank.name }}" loading="lazy" class="placephoto">
+                    <source srcset="/cdn-cgi/image/width=540,format=avif{{ url('wfbn-generic:foodbank_photo', foodbank.slug) }} 540w,/cdn-cgi/image/width=1080,format=avif{{ url('wfbn-generic:foodbank_photo', foodbank.slug) }} 1080w" type="image/avif" sizes="(max-width: 540px) 540px, 1080px">
+                    <source srcset="/cdn-cgi/image/width=540,format=webp{{ url('wfbn-generic:foodbank_photo', foodbank.slug) }} 540w,/cdn-cgi/image/width=1080,format=webp{{ url('wfbn-generic:foodbank_photo', foodbank.slug) }} 1080w" type="image/webp" sizes="(max-width: 540px) 540px, 1080px">
+                    <img src="/cdn-cgi/image/width=540{{ url('wfbn-generic:foodbank_photo', foodbank.slug) }}" alt="{{ foodbank.name }}" loading="lazy" class="placephoto">
                   {% endif %}
                 </picture>
               </div>
