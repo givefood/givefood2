@@ -323,7 +323,7 @@ export async function adminIndex(c: Context<AppEnv>): Promise<Response> {
     discrepancies: discrepancies.map((d) => enrichDiscrepancyRow(d, now)),
     // admin/index.html:126 -- {{ article.title_captialised|truncatewords:10 }}
     // linked via {{ article.url_with_ref }} (givefood/models/articles.py:29-33,
-    // :34-52). Both helpers were already ported in lib/fields.ts and applied on
+    // :34-52). Both helpers were already ported in @givefood/models and applied on
     // every other article surface; the dashboard was the one that never used them.
     articles: articles.map((a) => ({ ...a, title_captialised: titleCapitalised(a.title), url_with_ref: urlWithRefFoodbank(a.url) })),
     stats: {

@@ -87,7 +87,7 @@ export async function adminFoodbankAddSub(c: Context<AppEnv>): Promise<Response>
       // Django validates nothing at all here: "not an email" is accepted
       // and stored. PLAN.md:9724 prescribes the fix ("validate each
       // address, dedupe against (email, foodbank), report per-line
-      // results"). EMAIL_RE is lib/fields.ts's shared validator, the same
+      // results"). EMAIL_RE is @givefood/models' shared validator, the same
       // one the public subscribe path (routes/wfbn/updates.ts) uses.
       if (!EMAIL_RE.test(email)) {
         invalid.push(line);

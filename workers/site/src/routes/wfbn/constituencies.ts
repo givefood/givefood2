@@ -93,7 +93,7 @@ export async function constituencySlugFromPostcode(postcode: string): Promise<st
 // non-ASCII outright -- of the 650 real 2024 constituency names, two need
 // this ("Ynys Môn" -> "ynys-mon", "Montgomeryshire and Glyndŵr" ->
 // "montgomeryshire-and-glyndwr"), verified directly against a real Django
-// install. lib/fields.ts's own slugify() does NOT do this either (it
+// install. @givefood/models' own slugify() does NOT do this either (it
 // treats non-ASCII as noise to hyphenate, not transliterate) -- not reused
 // here since it would be equally wrong for this specific need, and fixing
 // that shared, more-widely-relied-on function is a separate decision.

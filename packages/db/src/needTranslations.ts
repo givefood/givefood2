@@ -2,7 +2,7 @@ import type { Session } from "./types";
 
 // Not imported from @givefood/templates's own Locale type -- packages/db
 // stays free of a templates dependency (every other locale-typed function
-// across this codebase, e.g. lib/fields.ts's fullNameLocaleAware, inlines
+// across this codebase, e.g. @givefood/models' fullNameLocaleAware, inlines
 // this same 4-value union rather than importing it).
 type Locale = "en" | "cy" | "ga" | "gd";
 

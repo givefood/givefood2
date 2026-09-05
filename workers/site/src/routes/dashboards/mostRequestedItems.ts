@@ -17,7 +17,7 @@ const MS_PER_DAY = 86_400_000;
 
 // The three keyword sentinels views.py's `invalid_text` list excludes --
 // exact-string match, not substring, and NOT the same two-item list
-// no_items() in lib/fields.ts checks (that one deliberately omits
+// no_items() in @givefood/models checks (that one deliberately omits
 // "Facebook" -- see its own comment), so this is spelled out inline
 // rather than reusing that helper.
 const INVALID_TEXT = new Set(["Nothing", "Unknown", "Facebook"]);

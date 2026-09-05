@@ -58,7 +58,7 @@ function charityRegisterUrl(foodbank: FoodbankRow): string | null {
 // Django's slugify() strips punctuation rather than hyphenating it (e.g.
 // "Sainsbury's" -> "sainsburys", matching the real
 // /static/img/delivery_provider/icon/sainsburys.png filename) --
-// lib/fields.ts's own exported slugify() instead turns each punctuation
+// @givefood/models' own exported slugify() instead turns each punctuation
 // run into a "-" (for URL slugs, a different job), which would produce
 // "sainsbury-s" here and 404 the icon. Matches packages/db/src/
 // foodbankAdmin.ts's own local slugify(), used for the same
@@ -175,7 +175,7 @@ export async function adminFoodbankTab(c: Context<AppEnv>): Promise<Response> {
       return c.html(
         await render("admin/foodbank_tabs/articles.njk", {
           // title_captialised is Django's own (misspelled) FoodbankArticle method,
-          // articles.py:34-52 -- already ported as lib/fields.ts's titleCapitalised
+          // articles.py:34-52 -- already ported as @givefood/models' titleCapitalised
           // and applied on every other article surface, just never on this tab.
           articles: articles.map((a) => ({ ...a, title_captialised: titleCapitalised(a.title), published_date_timesince: `${timesince(a.published_date)} ago` })),
         }),
