@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import type { Context } from "hono";
 import { LOCALES } from "@givefood/templates";
 import type { AppEnv } from "./types";
 import { noStore } from "./middleware/noStore";
@@ -78,7 +79,7 @@ import { gfdashPricePerItemCategory } from "./routes/dashboards/pricePerItemCate
 import { writeIndex, writeConstituency, writeConstituencyByCode, writeEmail, writeSend, writeDone } from "./routes/write";
 import { adminSignIn, adminAuthStart, adminAuthReceiver, adminSignOut } from "./routes/admin/auth";
 import { adminApp, adminIndex } from "./routes/admin";
-import { notPortedPath, gone } from "./routes/notPortedYet";
+import { gone } from "./routes/notPortedYet";
 import { tryAppendSlashRedirect } from "./lib/appendSlash";
 import { render404 } from "./render404";
 import { render500 } from "./render500";
@@ -311,11 +312,18 @@ for (const locale of LOCALES) {
 
 // givefood `human` -- the Turnstile honeypot relay the subscribe form
 // posts through before its real target (givefood/urls.py:28, inside
-// i18n_patterns). @require_POST in Django -- POST only.
-app.post("/human/", humanRelay);
+// i18n_patterns). @require_POST in Django (views.py:1072) -- POST only.
+//
+// app.all + an explicit 405, not app.post: registering POST alone leaves
+// Hono answering a GET with whatever the fallthrough is (a 404, or worse
+// a 501 while the not-ported catch-all still existed), where @require_POST
+// answers 405. Same shape whatsappHook.ts:58 uses for the same reason.
+const humanMethodGate = async (c: Context<AppEnv>) =>
+  c.req.method === "POST" ? humanRelay(c) : new Response(null, { status: 405 });
+app.all("/human/", humanMethodGate);
 for (const locale of LOCALES) {
   if (locale === "en") continue;
-  app.post(`/${locale}/human/`, humanRelay);
+  app.all(`/${locale}/human/`, humanMethodGate);
 }
 
 // WP 4.1: the givefood root app's content pages -- all i18n-patterned
@@ -529,27 +537,20 @@ const OUT_OF_SCOPE = [
 ];
 for (const path of OUT_OF_SCOPE) app.all(path, (c) => c.notFound());
 
-// The genuine remaining gaps, named one path at a time rather than as
-// catch-all mounts over /needs, /api and / (which is what used to be
-// here). Everything NOT listed here now falls through to app.notFound()
-// below and gets a real 404 page -- see routes/notPortedYet.ts for why
-// answering 501 to a URL that does not exist in Django either is the
-// wrong answer on a live domain.
+// NOTHING IS 501 ANY MORE. There was a NOT_PORTED list here, and before
+// that three catch-all mounts over /needs, /api and / that answered 501 to
+// anything unmatched. As of 2026-09-05 every public URL in Django's own
+// patterns (givefood/urls.py, gfwfbn/urls/{generic,i18n}.py,
+// gfdash/urls.py) is either ported, or deliberately out of scope and 404s
+// in the block above. The catch-alls had been overstating the gap badly:
+// gfdash, /frag/ and all three API versions were fully ported the whole
+// time, and what the mounts were really catching was *invalid* paths under
+// those prefixes, reported as "unbuilt".
 //
-// Verified against Django's own URL patterns 2026-09-05 (givefood/urls.py,
-// gfwfbn/urls/{generic,i18n}.py, gfdash/urls.py) by probing beta: these
-// are what is left. gfdash, /frag/ and all three API versions turned out
-// to be fully ported, despite the catch-alls implying otherwise -- the
-// catch-alls were answering 501 for *invalid* dashboard/frag/api paths,
-// which read as "unbuilt" when it was really "no such URL".
-//
-// This list should only ever shrink. If one is missed, the cost is a 404
-// where a 501 was meant -- which is the right answer for a live site
-// anyway, so the failure mode points the safe way.
-const NOT_PORTED: Array<[string, string]> = [
-  ["/human/", "human-readable data page"],
-];
-for (const [path, what] of NOT_PORTED) app.all(path, notPortedPath(what));
+// routes/notPortedYet.ts still holds notPortedPath()/notPortedSubtree()
+// for the next gap that appears -- use them rather than a catch-all, and
+// only for a URL that genuinely exists in Django and is genuinely coming.
+// Anything else belongs in OUT_OF_SCOPE above (404) or nowhere at all.
 // gfdumps -- PERMANENTLY out of scope, not deferred: maintainer decision
 // 2026-09-02 (WP 5.6's Container-based dump-generation cron, and the
 // R2-served download/listing pages that depended on it, were dropped

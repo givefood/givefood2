@@ -6,6 +6,11 @@ import type { AppEnv } from "../types";
 // yet. 501 rather than 404 so a real gap stays unmistakably "not built"
 // rather than looking like a missing page.
 //
+// NOTHING CALLS THIS RIGHT NOW: as of 2026-09-05 the public URL surface is
+// fully ported or deliberately out of scope, so index.ts has no 501s left
+// at all. Kept because gaps recur (Phase 7 will open some), and because
+// the 501-vs-404 distinction below is the thing that keeps getting lost.
+//
 // EXACT PATHS ONLY, deliberately. This used to be a `notPortedYet()` that
 // mounted `app.all("*")` over a whole prefix -- including `/`, the entire
 // site -- which meant every URL that matched nothing real answered 501,
