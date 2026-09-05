@@ -5,6 +5,52 @@ let autocompleteDropdown = null;
 let autocompleteTimeout = null;
 let autocompleteAbortController = null;
 
+// Ticket 8, after ruurtjan.com's "p99 0ms autocomplete for 240 million
+// domain names": /aac/next/ returns the results for the current prefix plus
+// each character that might be typed next, so the NEXT keystroke can be
+// drawn from memory instead of waiting ~110-550ms for a round trip.
+//
+// hintQuery is the prefix those buckets were built for; hintNext maps an
+// UPPERCASED next character to its results. Both are cleared whenever the
+// user does anything the buckets cannot describe (deleting, pasting, jumping
+// somewhere else), because a stale hint would draw results for a prefix that
+// is no longer on screen.
+let hintQuery = null;
+let hintNext = null;
+let hintAbortController = null;
+
+// A hint is usable only for exactly one more character appended to the
+// prefix the buckets were built for -- not for a deletion, not for a paste
+// of several characters, not for an unrelated query.
+function takeHint(query) {
+    if (!hintQuery || !hintNext) return null;
+    if (query.length !== hintQuery.length + 1) return null;
+    if (!query.toUpperCase().startsWith(hintQuery.toUpperCase())) return null;
+    return hintNext[query.slice(-1).toUpperCase()] || null;
+}
+
+// Speculative, so it must never compete with the request the user is
+// actually waiting for: fired after it, at low priority, and any failure is
+// swallowed -- the only cost of not having a hint is the latency the site
+// had before this existed.
+function prefetchNext(query) {
+    if (hintAbortController) hintAbortController.abort();
+    hintAbortController = new AbortController();
+    fetch(`/aac/next/?q=${encodeURIComponent(query)}`, {
+        signal: hintAbortController.signal,
+        priority: 'low',
+        credentials: 'same-origin',
+    })
+        .then((response) => (response.ok ? response.json() : null))
+        .then((payload) => {
+            if (payload && payload.next) {
+                hintQuery = query;
+                hintNext = payload.next;
+            }
+        })
+        .catch(() => {});
+}
+
 /**
  * Initialize address autocomplete on page load
  */
@@ -60,12 +106,25 @@ function initAddressAutocomplete(addressField) {
             latLngField.value = '';
         }
 
-        // Only search if query has more than 2 characters
-        if (query.length > 2) {
+        // Ticket 10: two characters, not three. The server has always
+        // accepted two (searchAddressAutocomplete returns [] below
+        // `query.length < 2`); only this gate was stricter, so "Ely" or
+        // "SW" produced nothing until a third character arrived.
+        if (query.length > 1) {
+            // Ticket 8: if the last response carried a bucket for exactly
+            // this query, draw it NOW -- no network, no debounce. The real
+            // request still goes out below and replaces it; this only
+            // removes the blank gap while that happens.
+            const hint = takeHint(query);
+            if (hint) {
+                displayAutocomplete(hint, addressField, latLngField);
+            }
             autocompleteTimeout = setTimeout(() => {
                 fetchAutocomplete(query, addressField, latLngField);
             }, 100);
         } else {
+            hintQuery = null;
+            hintNext = null;
             hideAutocomplete(addressField);
         }
     });
@@ -121,6 +180,9 @@ async function fetchAutocomplete(query, addressField, latLngField) {
 
         const results = await response.json();
         displayAutocomplete(results, addressField, latLngField);
+
+        // Only after the real answer is rendered -- see prefetchNext().
+        prefetchNext(query);
     } catch (error) {
         // Ignore abort errors
         if (error.name === 'AbortError') {

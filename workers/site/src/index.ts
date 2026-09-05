@@ -54,7 +54,7 @@ import { sitemapXml } from "./routes/public/sitemaps";
 import { llmsTxt, securityTxt } from "./routes/public/textFiles";
 import { frag } from "./routes/public/frag";
 import { mdIndex, mdSitemapMd, mdSitemapXml } from "./routes/public/md";
-import { addressAutocomplete } from "./routes/public/aac";
+import { addressAutocomplete, addressAutocompleteNext } from "./routes/public/aac";
 import { mdFoodbank, mdFoodbankNearby } from "./routes/wfbn/md/foodbank";
 import { mdFoodbankLocation, mdFoodbankLocations } from "./routes/wfbn/md/locations";
 import { mdFoodbankDonationpoint, mdFoodbankDonationpoints } from "./routes/wfbn/md/donationpoints";
@@ -351,6 +351,11 @@ app.get("/news/", publicNews);
 app.get("/services/", publicServices);
 app.get("/privacy/", publicPrivacy);
 app.get("/aac/", addressAutocomplete);
+// Ticket 8: the speculative half of the autocomplete -- results for the
+// typed prefix plus each possible next character, so the next keystroke
+// renders with no round trip. Separate from /aac/ on purpose; see the
+// handler for why bundling them would slow down the request that matters.
+app.get("/aac/next/", addressAutocompleteNext);
 app.get("/annual-reports/", annualReportIndex);
 for (const locale of LOCALES) {
   if (locale === "en") continue;

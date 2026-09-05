@@ -107,3 +107,120 @@ export async function searchAddressAutocomplete(session: Session, rawQuery: stri
   const places = [...prefixRows, ...substringRows].slice(0, PLACE_LIMIT);
   return [...places, ...postcodeRows.slice(0, POSTCODE_LIMIT)];
 }
+
+// ===================== speculative next-character results =================
+// Ticket #8, the technique from ruurtjan.com's "p99 0ms autocomplete for 240
+// million domain names": as well as the results for what has been typed,
+// fetch the results for that prefix PLUS each character that might be typed
+// next, so the next keystroke renders from memory instead of waiting for a
+// round trip -- measured at 110-550ms against the live endpoint, which is
+// essentially the whole perceived latency of this control.
+//
+// DELIBERATELY A SEPARATE REQUEST from searchAddressAutocomplete(), not a
+// richer version of it. The first shape tried returned results and buckets
+// together, which is worse in exactly the place it matters: the buckets are
+// speculative and perhaps 10 KB, so bundling them puts a deep read and a
+// large serialisation IN FRONT of the answer the user is actually waiting
+// for. Split, the critical path keeps its ten-row limits and its ~750-byte
+// payload untouched, the two responses cache independently, and this one's
+// latency stops mattering because nothing is blocked on it.
+//
+// COMPUTED FROM ONE DEEPER READ, NOT ONE QUERY PER CHARACTER. Every result
+// for "LOND" is by definition already in the result set for "LON", so the
+// same three queries run once with a much larger LIMIT and the rows are
+// bucketed in JS by whichever character follows the prefix. Thirty-odd
+// candidate next characters therefore cost no extra round trips to D1.
+//
+// THE BUCKETS ARE A HINT, NOT AN ANSWER. The client still issues the real
+// request and replaces what it drew. Two known ways a bucket can be thinner
+// than the real response, both harmless because of that:
+//
+//   1. At a 2-character prefix the substring pass has not run (the trigram
+//      index cannot be consulted below 3 characters -- see
+//      searchPlaceSubstring), so those buckets carry prefix and postcode
+//      matches only.
+//   2. A bucket whose rows all sat beyond DEEP_LIMIT is empty rather than
+//      wrong; the client then just waits for the real response, which is the
+//      behaviour it had before this existed.
+const DEEP_LIMIT = 400;
+const NEXT_BUCKET_LIMIT = 8;
+const MAX_NEXT_BUCKETS = 40;
+
+// Every character that follows `prefix` in `haystack`, at any position. A
+// place name can contain the prefix more than once ("Weston super Weston"),
+// and the substring pass would match it for either continuation, so all of
+// them are collected rather than just the first.
+function nextCharsAfter(haystack: string, prefix: string): string[] {
+  const chars: string[] = [];
+  let from = 0;
+  for (;;) {
+    const at = haystack.indexOf(prefix, from);
+    if (at === -1) break;
+    const nextChar = haystack[at + prefix.length];
+    if (nextChar) chars.push(nextChar);
+    from = at + 1;
+  }
+  return chars;
+}
+
+function addToBucket(buckets: Map<string, AacResult[]>, key: string, row: AacResult): void {
+  const bucket = buckets.get(key);
+  if (bucket) {
+    if (bucket.length < NEXT_BUCKET_LIMIT && !bucket.includes(row)) bucket.push(row);
+    return;
+  }
+  if (buckets.size >= MAX_NEXT_BUCKETS) return;
+  buckets.set(key, [row]);
+}
+
+export async function searchAddressAutocompleteNext(
+  session: Session,
+  rawQuery: string,
+): Promise<Record<string, AacResult[]>> {
+  const query = rawQuery.trim();
+  if (query.length < 2 || query.length > MAX_QUERY_LENGTH) return {};
+
+  const upperQuery = query.toUpperCase();
+  const normalizedPostcode = upperQuery.replace(/ /g, "");
+
+  const [prefixRows, substringRows, postcodeRows] = await Promise.all([
+    searchPlacePrefix(session, upperQuery, DEEP_LIMIT),
+    query.length >= 3 ? searchPlaceSubstring(session, upperQuery, DEEP_LIMIT) : Promise.resolve<AacResult[]>([]),
+    searchPostcodes(session, normalizedPostcode, DEEP_LIMIT),
+  ]);
+
+  // Keyed on the UPPERCASED character the user would type next, because
+  // that is what the client has to look it up with; place rows are matched
+  // against the upper-cased name for the same reason.
+  const placeBuckets = new Map<string, AacResult[]>();
+  for (const row of prefixRows) {
+    const nextChar = row.n.toUpperCase()[upperQuery.length];
+    if (nextChar) addToBucket(placeBuckets, nextChar, row);
+  }
+  for (const row of substringRows) {
+    for (const nextChar of nextCharsAfter(row.n.toUpperCase(), upperQuery)) {
+      addToBucket(placeBuckets, nextChar, row);
+    }
+  }
+
+  // Postcode buckets are skipped when the query contains a space: the
+  // postcode index is searched on the space-stripped form, so the character
+  // following the prefix THERE is not the character the user types next.
+  // Rather than guess, the postcode half of those buckets is omitted and the
+  // real request supplies it.
+  const postcodeBuckets = new Map<string, AacResult[]>();
+  if (upperQuery === normalizedPostcode) {
+    for (const row of postcodeRows) {
+      const nextChar = row.n.replace(/ /g, "")[normalizedPostcode.length];
+      if (nextChar) addToBucket(postcodeBuckets, nextChar, row);
+    }
+  }
+
+  // Same ordering contract as the real response: places first, then codes.
+  const next: Record<string, AacResult[]> = {};
+  for (const key of new Set([...placeBuckets.keys(), ...postcodeBuckets.keys()])) {
+    const merged = [...(placeBuckets.get(key) ?? []), ...(postcodeBuckets.get(key) ?? [])];
+    if (merged.length) next[key] = merged.slice(0, NEXT_BUCKET_LIMIT);
+  }
+  return next;
+}
