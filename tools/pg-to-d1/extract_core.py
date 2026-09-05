@@ -95,6 +95,13 @@ NETWORK_RETRY_BASE_DELAY = 1.0
 # explicitly per table and stripped of dashes regardless of the Python type
 # psycopg2 happens to hand back. See PLAN.md §4.4's type-mapping rules.
 UUID_COLUMNS = {
+    # The four subscriber tables (2026-09-05) -- no uuid columns on any of
+    # them; entries are required because load_table indexes this dict
+    # directly and a missing key is a KeyError mid-run.
+    "mobilesubscriber": set(),
+    "webpushsubscription": set(),
+    "whatsappsubscriber": set(),
+    "constituencysubscriber": set(),
     "foodbank": {"uuid"},
     "foodbanklocation": {"uuid"},
     "foodbankdonationpoint": {"uuid"},
@@ -285,6 +292,34 @@ LAUNCH_GAP_TABLES = [
             'id', 'name', 'slug', 'public', '"key"', 'created', 'modified',
         ],
     }),
+    # THE FOUR SUBSCRIBER TABLES, added 2026-09-05. None of them was in any
+    # list here, and all four were empty in D1 while Postgres held 49/49/51/53
+    # rows -- so a launch would have silently dropped 202 subscribers across
+    # the mobile app, browser push, WhatsApp and the write-to-your-MP
+    # constituency list. An empty table looks exactly like a channel nobody
+    # uses, which is why nothing flagged it.
+    #
+    # foodbank_name is deliberately not carried on whatsappsubscriber (see
+    # migration 0020) -- same stale-cache reasoning as migration 0019.
+    #
+    # All four are full-reload tables at cutover, per PLAN.md §10.8.1: every
+    # one of them takes UPDATEs to existing rows with no watermark column
+    # (last_notified, last_contacted), which a delta sync cannot see.
+    ("givefood_mobilesubscriber", "mobilesubscriber", [
+        'id', 'created', 'device_id', 'platform', 'timezone', 'locale',
+        'app_version', 'os_version', 'device_model', 'sub_type', 'foodbank_id',
+        'donationpoint_id',
+    ]),
+    ("givefood_webpushsubscription", "webpushsubscription", [
+        'id', 'created', 'foodbank_id', 'endpoint', 'p256dh', 'auth', 'browser',
+    ]),
+    ("givefood_whatsappsubscriber", "whatsappsubscriber", [
+        'id', 'phone_number', 'foodbank_id', 'created', 'last_notified',
+    ]),
+    ("givefood_constituencysubscriber", "constituencysubscriber", [
+        'id', 'created', 'last_contacted', 'email', 'name',
+        'parliamentary_constituency_id', 'parliamentary_constituency_name',
+    ]),
     ("givefood_slugredirect", "slugredirect", [
         'id', 'old_slug', 'new_slug', 'created', 'modified',
     ]),
