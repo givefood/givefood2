@@ -466,6 +466,28 @@ app.get("/write/to/:slug/email/done/", writeDone);
 app.get("/what-food-banks-need/", (c) => c.redirect("/needs/", 302));
 app.get("/wp-login.php", (c) => c.redirect("https://www.youtube.com/watch?v=dQw4w9WgXcQ", 302));
 
+// OUT OF SCOPE -- 404, not 501, for the same reason /needs/at/place/ and
+// /dumps are: nothing is coming, so "not implemented" would be a standing
+// lie to every crawler that asks.
+//
+// The places sitemaps go with the browse-by-place page they index (see
+// that route's comment above: maintainer decision 2026-08-31, confirmed
+// 2026-09-01, which named sitemap_places*.xml as separately out of scope
+// too). PLAN.md §Q6 is the sizing behind it -- 5.58M URLs. The external
+// sitemap is a maintainer decision 2026-09-05. The place gazetteer DATA
+// stays either way: 253,584 rows plus the place_fts index, feeding /aac/.
+const OUT_OF_SCOPE = [
+  "/sitemap_external.xml",
+  "/sitemap_places.xml",
+  "/sitemap_places_index.xml",
+  // Whole-segment param: Hono will not match a param with literal text
+  // around it inside one segment, so "/sitemap_places_:page{[0-9]+}.xml"
+  // silently never fires -- prefix and extension both belong in the regex.
+  // (A param in a LATER segment is fine: /:countrySlug{...}/geo.json.)
+  "/:sitemapPage{sitemap_places_[0-9]+\\.xml}",
+];
+for (const path of OUT_OF_SCOPE) app.all(path, (c) => c.notFound());
+
 // The genuine remaining gaps, named one path at a time rather than as
 // catch-all mounts over /needs, /api and / (which is what used to be
 // here). Everything NOT listed here now falls through to app.notFound()
@@ -485,19 +507,6 @@ app.get("/wp-login.php", (c) => c.redirect("https://www.youtube.com/watch?v=dQw4
 // anyway, so the failure mode points the safe way.
 const NOT_PORTED: Array<[string, string]> = [
   ["/human/", "human-readable data page"],
-  ["/sitemap_external.xml", "external sitemap"],
-  ["/sitemap_places.xml", "places sitemap"],
-  ["/sitemap_places_index.xml", "places sitemap index"],
-  // The param has to be the WHOLE segment: Hono does not match a param
-  // with literal text around it inside one segment, so both
-  // "/sitemap_places_:page{[0-9]+}.xml" and
-  // "/sitemap_places_:page{[0-9]+\\.xml}" silently never fire (both
-  // 404'd on /sitemap_places_2.xml live, then confirmed against Hono
-  // directly). The literal prefix and the extension both belong inside
-  // the regex. A param in a LATER segment is fine, which is why
-  // /:countrySlug{...}/geo.json above works. Not "/sitemap_places_*",
-  // which would also swallow non-numeric junk that should 404.
-  ["/:sitemapPage{sitemap_places_[0-9]+\\.xml}", "paged places sitemap"],
   ["/firebase-messaging-sw.js", "Firebase messaging service worker"],
   ["/tests/maplibre/", "maplibre test page"],
   ["/needs/manifest.json", "gfwfbn manifest"],
