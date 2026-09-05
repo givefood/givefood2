@@ -92,6 +92,14 @@ UPLOAD_THREADS = 12
 # flush of a 200-row batch). 9 columns per row, so 11 rows is 99 parameters.
 D1_BATCH_ROWS = 11
 
+# api.cloudflare.com rate-limits per account across every endpoint, so the
+# R2 uploads and the D1 inserts share one budget -- see Throttle below for
+# how that was discovered. 6,812 photos plus ~620 metadata inserts is ~7,400
+# requests, so this is roughly a 15-minute run.
+RATE_LIMIT_PER_SEC = 8.0
+RATE_LIMIT_RETRIES = 6
+RATE_LIMIT_BACKOFF = 20.0  # seconds, multiplied by the attempt number
+
 # The three URL shapes gfwfbn/urls/generic.py:12-17 registers, and therefore
 # the three R2 keys routes/media.ts derives ("media" + url.pathname). Both
 # child tables carry a denormalised foodbank_slug, so none of these needs to
@@ -133,6 +141,74 @@ QUERIES = [
 ]
 
 
+class Throttle:
+    """One token bucket across BOTH the R2 uploads and the D1 inserts.
+
+    They are not separate budgets: R2 objects and D1 queries are the same
+    api.cloudflare.com, and its per-account rate limit counts them together.
+    Running 12 upload threads flat out plus a D1 insert every 11 photos
+    sailed past it and the run died on
+    `429 {"code":971,"message":"Please wait and consider throttling your
+    request speed"}` -- from D1, though R2 had been answering the same way
+    earlier for the same reason.
+
+    RATE is deliberately below what a burst achieves (36 uploads went
+    through at 11/s quite happily). Bursts are not the constraint; the
+    5-minute window is."""
+
+    def __init__(self, rate):
+        self.min_interval = 1.0 / rate
+        self.next_at = 0.0
+        self.lock = threading.Lock()
+
+    def wait(self):
+        with self.lock:
+            now = time.monotonic()
+            if now < self.next_at:
+                delay = self.next_at - now
+            else:
+                delay = 0.0
+                self.next_at = now
+            self.next_at += self.min_interval
+        if delay:
+            time.sleep(delay)
+
+
+THROTTLE = Throttle(RATE_LIMIT_PER_SEC)
+
+
+def d1_insert(token_box, sql, params, _retries=0):
+    """d1_query with the throttle and 429 handling extract_core's own
+    version does not have -- it retries 500/7500 and network errors but
+    treats 429 as fatal, which is what ended the first full run."""
+    THROTTLE.wait()
+    try:
+        return d1_query(token_box, sql, params)
+    except RuntimeError as exc:
+        if "429" in str(exc) and _retries < RATE_LIMIT_RETRIES:
+            time.sleep(RATE_LIMIT_BACKOFF * (_retries + 1))
+            return d1_insert(token_box, sql, params, _retries + 1)
+        raise
+
+
+def already_loaded_ids(token_box):
+    """placephoto.id is Django's own givefood_placephoto.id, so a re-run can
+    skip every photo already in D1 without a HEAD per object -- which would
+    double the request count this script is trying to stay under."""
+    loaded = set()
+    offset = 0
+    while True:
+        THROTTLE.wait()
+        resp = d1_query(
+            token_box, "SELECT id FROM placephoto ORDER BY id LIMIT 5000 OFFSET ?", [offset]
+        )
+        rows = resp["result"][0]["results"]
+        loaded.update(r["id"] for r in rows)
+        if len(rows) < 5000:
+            return loaded
+        offset += 5000
+
+
 def r2_put(token_box, key, body, content_type, _retried=False, _network_retries=0):
     """PUT one object. Mirrors d1_query's retry policy: one token refresh on
     401/403 (wrangler rotates its token and a long run outlives a snapshot),
@@ -144,6 +220,7 @@ def r2_put(token_box, key, body, content_type, _retried=False, _network_retries=
         url, data=body, method="PUT",
         headers={"Authorization": "Bearer %s" % token_box.get(), "Content-Type": content_type},
     )
+    THROTTLE.wait()
     try:
         with urllib.request.urlopen(req, timeout=120) as resp:
             payload = json.loads(resp.read())
@@ -154,6 +231,9 @@ def r2_put(token_box, key, body, content_type, _retried=False, _network_retries=
         if e.code in (401, 403) and not _retried:
             token_box.refresh()
             return r2_put(token_box, key, body, content_type, True, _network_retries)
+        if e.code == 429 and _network_retries < RATE_LIMIT_RETRIES:
+            time.sleep(RATE_LIMIT_BACKOFF * (_network_retries + 1))
+            return r2_put(token_box, key, body, content_type, _retried, _network_retries + 1)
         if e.code >= 500 and _network_retries < MAX_NETWORK_RETRIES:
             time.sleep(NETWORK_RETRY_BASE_DELAY * (2 ** _network_retries))
             return r2_put(token_box, key, body, content_type, _retried, _network_retries + 1)
@@ -180,7 +260,7 @@ def insert_d1_rows(token_box, rows):
     params = []
     for r in rows:
         params.extend(r)
-    resp = d1_query(token_box, sql, params)
+    resp = d1_insert(token_box, sql, params)
     if not resp.get("success"):
         raise RuntimeError("D1 insert failed: %s" % resp.get("errors"))
 
@@ -203,7 +283,13 @@ def main():
         port=5432, options="-c default_transaction_read_only=on -c statement_timeout=600000",
     )
 
-    counts = {"uploaded": 0, "bytes": 0, "failed": 0}
+    skip_ids = set()
+    if not dry_run:
+        skip_ids = already_loaded_ids(token_box)
+        if skip_ids:
+            print("resuming: %d photos already loaded, skipping those" % len(skip_ids), flush=True)
+
+    counts = {"uploaded": 0, "bytes": 0, "failed": 0, "skipped": 0}
     lock = threading.Lock()
     t0 = time.monotonic()
 
@@ -221,6 +307,10 @@ def main():
 
         def upload(row):
             pid, place_id, photo_ref, attribs, created, modified, blob, key = row
+            if pid in skip_ids:
+                with lock:
+                    counts["skipped"] += 1
+                return None
             data = bytes(blob)
             if dry_run:
                 with lock:
@@ -273,9 +363,9 @@ def main():
         cur.close()
 
     elapsed = time.monotonic() - t0
-    print("\n%s: %d photos, %.2f GB, %d failed, %.0fs"
-          % ("DRY RUN" if dry_run else "DONE", counts["uploaded"],
-             counts["bytes"] / 1e9, counts["failed"], elapsed), flush=True)
+    print("\n%s: %d photos, %.2f GB, %d skipped (already loaded), %d failed, %.0fs"
+          % ("DRY RUN" if dry_run else "DONE", counts["uploaded"], counts["bytes"] / 1e9,
+             counts["skipped"], counts["failed"], elapsed), flush=True)
 
     if not dry_run:
         resp = d1_query(token_box, "SELECT COUNT(*) AS n, SUM(bytes) AS b FROM placephoto")
