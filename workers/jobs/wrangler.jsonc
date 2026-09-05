@@ -15,6 +15,23 @@
   // builtins internally.
   "compatibility_flags": ["nodejs_compat"],
 
+  // WORKERS BUILDS MUST TARGET THIS DIRECTORY, not the repo root. A plain
+  // `npx wrangler deploy` from the root fails outright:
+  //
+  //   ✘ [ERROR] The Cloudflare application detection logic has been run in
+  //     the root of a workspace instead of targeting a specific project.
+  //
+  // This is a pnpm workspace with two Workers, so wrangler refuses to guess
+  // which one is meant. Every build failed this way until 2026-09-05.
+  // Either set the build's Root directory to `workers/jobs`, or give it a
+  // deploy command that names this file explicitly:
+  //
+  //   npx wrangler deploy -c workers/jobs/wrangler.jsonc
+  //
+  // (verified from the repo root with --dry-run). Both are dashboard-side
+  // settings and cannot be committed, which is exactly why the requirement
+  // is written down here.
+
   // REQUIRED NOW THAT THIS WORKER RENDERS TEMPLATES (notify/needEmail.ts).
   // packages/templates/src/generated/precompiled.js is generated and
   // gitignored, so without this the bundle cannot resolve it -- and
