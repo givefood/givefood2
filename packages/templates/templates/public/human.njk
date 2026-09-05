@@ -19,7 +19,24 @@
 
             <p>{% blocktrans %}Sorry, but we just have to check you are a human...{% endblocktrans %}</p>
 
-            <form action="{{ domain }}{{ target }}" method="post">
+            {# RELATIVE, deliberately. Django hardcodes
+               `action="https://www.givefood.org.uk{{ target }}"`
+               (public/human.html:23) and the port's first pass generalised
+               that to `{{ domain }}{{ target }}` -- which resolves to the
+               same absolute www URL, because `domain` is SITE_DOMAIN.
+
+               On the live site that is self-referential and harmless. On
+               beta it is not: submitting the flag or register-foodbank form
+               here rendered a relay that POSTed at PRODUCTION DJANGO, so
+               those two forms could not be tested before cutover and any
+               attempt to test them filed a real flag against the live site.
+
+               A relative action posts back to whichever host served the
+               page -- correct on beta, on localhost, and on www after the
+               cutover. Nothing needed the absolute form: the
+               apex-to-www canonicalisation it might have been standing in
+               for is a zone Redirect Rule (PLAN.md §3.5). #}
+            <form action="{{ target }}" method="post">
 
                 <div class="cf-turnstile" data-sitekey="{{ turnstile_sitekey }}" data-action="{{ action }}" data-callback="turnstilecallback"></div>
                 <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
