@@ -1,0 +1,46 @@
+{# gfwfbn/templates/wfbn/emails/confirm.html -- the "click to confirm your
+   email address" mail, sent by routes/wfbn/updates.ts on subscribe.
+
+   IT EXTENDS THE SHELL, as Django's does. It previously did not: updates.ts
+   built three bare <p> strings inline, on the reasoning that the chrome was
+   "not built yet" -- but emails/page.njk has been ported since, and a
+   multipart mail whose HTML part is indistinguishable from its text part
+   looks, in an inbox, exactly like a mail that sent no HTML at all. Which
+   is how this was reported.
+
+   Django hardcodes https://www.givefood.org.uk into every link here; the
+   port passes `confirm_url` and `foodbank_url` in already built from
+   SITE_DOMAIN, so the same absolute URLs come out without the literal
+   domain being restated in a template. #}
+{% extends "emails/page.njk" %}
+
+{% block body %}
+
+    <p>Please click the button below to confirm your email address and get updates from {{ foodbank_name }} food bank.</p>
+
+    {# Django's btn/btn-primary table wrapper, kept verbatim: nested
+       presentation tables are how a button survives Outlook, and page.njk
+       carries the matching styles. #}
+    <table role="presentation" border="0" cellpadding="0" cellspacing="0" class="btn btn-primary">
+        <tbody>
+            <tr>
+            <td align="left">
+                <table role="presentation" border="0" cellpadding="0" cellspacing="0">
+                <tbody>
+                    <tr>
+                    <td> <a href="{{ confirm_url }}" target="_blank">Confirm my email address</a> </td>
+                    </tr>
+                </tbody>
+                </table>
+            </td>
+            </tr>
+        </tbody>
+    </table>
+
+    <p></p>
+    <p></p>
+    <p></p>
+    <p></p>
+    <p>If you're not expecting this email then please ignore it.</p>
+
+{% endblock %}

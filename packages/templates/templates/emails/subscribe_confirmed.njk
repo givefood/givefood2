@@ -1,0 +1,20 @@
+{# gfwfbn/templates/wfbn/emails/confirmed.html -- the "thanks, you're
+   subscribed" mail. Same story as subscribe_confirm.njk: it extends the
+   shell now rather than being assembled as a bare string. #}
+{% extends "emails/page.njk" %}
+
+{% block body %}
+
+    <p>Thanks for confirming your email address.</p>
+    <p>We'll send you a list of items being requested whenever {{ foodbank_full_name }} updates them. In the meantime, here are some useful links...</p>
+
+    <p>
+        🔗 You can find more details <a href="{{ foodbank_url }}">about the food bank</a><br>
+        {% if has_donation_points %}
+            🛒 View the foodbank's <a href="{{ donationpoints_url }}">donation points</a><br>
+        {% endif %}
+        🗺️ See other <a href="{{ nearby_url }}">nearby food banks</a><br>
+        🗳️ Explain to your MP that food banks shouldn't exist by <a href="{{ write_url }}">taking political action</a>
+    </p>
+
+{% endblock %}

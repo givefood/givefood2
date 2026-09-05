@@ -43,32 +43,31 @@ async function generateSubUnsubKeys(salt: string): Promise<{ subKey: string; uns
 }
 
 // wfbn/emails/confirm.txt / confirm.html, ported verbatim (copy and
-// links) -- the admin/emails/page.html chrome those two extend isn't
-// ported (out of scope, not built yet), so this emits the body content
-// on its own rather than inside that shell.
-function confirmEmailBodies(siteDomain: string, foodbankName: string, foodbankSlug: string, subKey: string): { text: string; html: string } {
+// links). Both now render through emails/page.njk, the same shell their
+// Django originals extend -- see emails/subscribe_confirm.njk. They used to
+// be assembled as bare <p> strings, on the reasoning that the shell was not
+// ported; it has been since, and a multipart mail whose HTML part looks
+// identical to its text part reads, in an inbox, exactly like a mail that
+// sent no HTML at all.
+function confirmEmailText(siteDomain: string, foodbankName: string, foodbankSlug: string, subKey: string): { text: string; confirmUrl: string } {
   const confirmUrl = `${siteDomain}${url("wfbn:updates", foodbankSlug, "confirm")}?key=${subKey}`;
   const text =
     `Please link the button below to confirm your email address and get updates from ${foodbankName} food bank.\n\n` +
     `${confirmUrl}\n\n` +
     `If you're not expecting this email then please ignore it.`;
-  const html =
-    `<p>Please click the button below to confirm your email address and get updates from ${foodbankName} food bank.</p>` +
-    `<p><a href="${confirmUrl}">Confirm my email address</a></p>` +
-    `<p>If you're not expecting this email then please ignore it.</p>`;
-  return { text, html };
+  return { text, confirmUrl };
 }
 
 // wfbn/emails/confirmed.txt / confirmed.html, ported verbatim -- the
 // "updates them updates them." double-up in confirm.txt's source is a
 // real typo in the Django template, preserved rather than "fixed" (the
 // .html sibling only says it once, also preserved as-is).
-function confirmedEmailBodies(
+function confirmedEmailText(
   siteDomain: string,
   fullName: string,
   foodbankSlug: string,
   hasDonationPoints: boolean,
-): { text: string; html: string } {
+): { text: string; foodbankUrl: string; donationPointsUrl: string; nearbyUrl: string; writeUrl: string } {
   const foodbankUrl = `${siteDomain}${url("wfbn:foodbank", foodbankSlug)}`;
   const donationPointsUrl = `${siteDomain}${url("wfbn:foodbank_donationpoints", foodbankSlug)}`;
   const nearbyUrl = `${siteDomain}${url("wfbn:foodbank_nearby", foodbankSlug)}`;
@@ -81,17 +80,7 @@ function confirmedEmailBodies(
     `🗺️ See other nearby food banks ${nearbyUrl}\n` +
     `🗳️ Explain to your MP that food banks shouldn't exist by taking political action ${writeUrl}`;
 
-  const html =
-    `<p>Thanks for confirming your email address.</p>` +
-    `<p>We'll send you a list of items being requested whenever ${fullName} updates them. In the meantime, here are some useful links...</p>` +
-    `<p>` +
-    `🔗 You can find more details <a href="${foodbankUrl}">about the food bank</a><br>` +
-    (hasDonationPoints ? `🛒 View the foodbank's <a href="${donationPointsUrl}">donation points</a><br>` : "") +
-    `🗺️ See other <a href="${nearbyUrl}">nearby food banks</a><br>` +
-    `🗳️ Explain to your MP that food banks shouldn't exist by <a href="${writeUrl}">taking political action</a>` +
-    `</p>`;
-
-  return { text, html };
+  return { text, foodbankUrl, donationPointsUrl, nearbyUrl, writeUrl };
 }
 
 export async function wfbnFoodbankUpdates(c: Context<AppEnv>): Promise<Response> {
@@ -168,7 +157,8 @@ export async function wfbnFoodbankUpdates(c: Context<AppEnv>): Promise<Response>
       if (!inserted) {
         message = "Sorry! That email address is already subscribed to that food bank.";
       } else {
-        const { text, html } = confirmEmailBodies(c.env.SITE_DOMAIN, foodbank.name, foodbank.slug, subKey);
+        const { text, confirmUrl } = confirmEmailText(c.env.SITE_DOMAIN, foodbank.name, foodbank.slug, subKey);
+        const html = await render("emails/subscribe_confirm.njk", { foodbank_name: foodbank.name, confirm_url: confirmUrl });
         await sendEmailShared(c, { to: emailRaw, subject: "Confirm your Give Food subscription", textBody: text, htmlBody: html });
 
         message =
@@ -192,7 +182,16 @@ export async function wfbnFoodbankUpdates(c: Context<AppEnv>): Promise<Response>
       // 0 ("no/unknown donation points"), matching Django's own `if
       // foodbank.no_donation_points:`. `!== 0` would wrongly treat a null
       // (genuinely unknown count) as "has donation points".
-      const { text, html } = confirmedEmailBodies(c.env.SITE_DOMAIN, fullName, foodbank.slug, Boolean(foodbank.no_donation_points));
+      const links = confirmedEmailText(c.env.SITE_DOMAIN, fullName, foodbank.slug, Boolean(foodbank.no_donation_points));
+      const text = links.text;
+      const html = await render("emails/subscribe_confirmed.njk", {
+        foodbank_full_name: fullName,
+        foodbank_url: links.foodbankUrl,
+        donationpoints_url: links.donationPointsUrl,
+        nearby_url: links.nearbyUrl,
+        write_url: links.writeUrl,
+        has_donation_points: Boolean(foodbank.no_donation_points),
+      });
       await sendEmailShared(c, {
         to: sub.email,
         subject: `Thank you for confirming your subscription to ${foodbank.name} Food Bank`,
