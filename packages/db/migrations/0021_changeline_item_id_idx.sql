@@ -1,0 +1,33 @@
+-- ================ 0021_changeline_item_id_idx.sql =========================
+-- The index the categorise page's suggestion lookup actually needs.
+--
+-- getLatestLineForItem() (packages/db/src/needLines.ts) runs
+--   SELECT * FROM foodbankchangeline WHERE item = ? ORDER BY id DESC LIMIT 1
+-- once per line of the need being categorised, reproducing Django's
+-- `.filter(item__in=...).annotate(latest_id=Max('id'))`
+-- (gfadmin/views.py:2062-2067).
+--
+-- 0003 already added foodbankchangeline_item_created_idx ON (item, created
+-- DESC). That index CANNOT serve this query: it orders by `created`, the
+-- query orders by `id`. SQLite used it to find the item's rows and then
+-- sorted them, which means reading every row for that item -- measured
+-- 2026-09-05 at 5,735 rows read for one lookup of "Tinned Soup" (2,867
+-- lines) against a 333,208-row table. The categorise page issues one
+-- lookup per line, so a 13-item need read roughly 75,000 rows to render a
+-- form. That page 500'd under concurrent write load while an ETL reload
+-- was touching the same table.
+--
+-- With (item, id DESC) the lookup is a single index seek: the first entry
+-- for the item IS the answer, so LIMIT 1 stops immediately.
+--
+-- `created` is NOT a substitute for `id` here, which is why this is a new
+-- index rather than a rewritten query: FoodbankChangeLine.created is
+-- copied from the parent need's `created` (needs.py:374), so every line of
+-- one need shares a timestamp and ordering by it is ambiguous within a
+-- need. Django orders by id; so do we.
+--
+-- The older (item, created DESC) index is left in place: adminStats and
+-- the item dashboards do order by created, and dropping it is a separate
+-- question from adding this one.
+
+CREATE INDEX foodbankchangeline_item_id_idx ON foodbankchangeline(item, id DESC);

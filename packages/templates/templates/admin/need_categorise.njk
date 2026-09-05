@@ -51,7 +51,11 @@
             <td>
               <input type="hidden" name="orig_item_{{ loop.index0 }}" value="{{ line.item }}">
               <input type="hidden" name="type_{{ loop.index0 }}" value="{{ line.type }}">
-              <div class="select is-small">
+              {# is-fullwidth, and not is-small: the category names are the
+                 longest strings on this page and a narrow box truncated
+                 them mid-word. The item input beside it stays is-small --
+                 it holds short text and the reviewer rarely edits it. #}
+              <div class="select is-fullwidth">
                 <select name="category_{{ loop.index0 }}">
                   <option value="">-- choose --</option>
                   {% for category in categories %}

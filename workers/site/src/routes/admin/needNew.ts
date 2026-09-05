@@ -1,5 +1,6 @@
 import type { Context } from "hono";
 import { getFoodbankBySlug, getOpenFoodbankOptions, insertAdminNeed } from "@givefood/db";
+import { cleanFoodbankNeedText } from "@givefood/models";
 import { render } from "@givefood/templates";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
@@ -80,23 +81,32 @@ export async function adminNeedNew(c: Context<AppEnv>): Promise<Response> {
     const csrfToken = typeof body.csrf_token === "string" ? body.csrf_token : undefined;
     if (!(await verifyCsrf(c, c.env.CSRF_SECRET, csrfToken))) return c.text("Forbidden", 403);
 
-    // UNCLEANED TEXT, stated rather than hidden: Django's
-    // FoodbankChange.save() runs clean_foodbank_need_text() over
-    // change_text and excess_change_text on EVERY write, the form path
-    // included (givefood/models/needs.py:295-297). This port does not, here
-    // or on the edit path (needAdmin.ts's updateNeedRawFields) -- the
-    // function lives in workers/jobs/src/needcheck/textClean.ts and the site
-    // Worker must not import workers/jobs/src (this codebase's Worker
-    // isolation rule, restated at routes/admin/foodbankForceCrawl.ts:19-22).
-    // The fix is to MOVE it into packages/db and re-point
-    // queues/needcheckRender.ts's import, which touches two files this
-    // change could not edit -- see the WP 6.8 wiring notes. Consequence
-    // until then: a hand-typed list keeps its blank lines, double spaces and
-    // "Uht" spelling where Django would have normalised them.
+    // CLEANED, matching Django's FoodbankChange.save(), which runs
+    // clean_foodbank_need_text() over change_text and excess_change_text on
+    // EVERY write including the form path (givefood/models/needs.py:295-297).
+    //
+    // This used to be skipped here, with a comment explaining that the
+    // function lived in workers/jobs/src and the site Worker may not import
+    // it. That was true, and the consequence was worse than the comment
+    // predicted: it said a hand-typed list "keeps its blank lines, double
+    // spaces and Uht spelling", but the real damage was LINE ENDINGS. A
+    // browser submits <textarea> content with CRLF (HTML spec), Django's
+    // clean() normalises it away via splitlines()/'\n'.join(), and this
+    // didn't -- so a need typed in the admin was stored with \r\n.
+    //
+    // Every downstream reader splits on "\n", which leaves a trailing \r on
+    // every line but the last, and those readers compare item text against
+    // `foodbankchangeline.item` (which never contains \r in any of its
+    // 333,208 rows). So the categorise page's suggestions silently missed
+    // for every item except the last one -- ticket #6, diagnosed 2026-09-05
+    // from a need where 12 of 13 items offered no category and the final one
+    // did. The function now lives in @givefood/models, importable by both
+    // Workers, which is the fix the old comment named.
     const form: NeedFormValues = {
       foodbank_slug: typeof body.foodbank_slug === "string" ? body.foodbank_slug.trim() : "",
-      change_text: typeof body.change_text === "string" ? body.change_text : "",
-      excess_change_text: typeof body.excess_change_text === "string" ? body.excess_change_text : "",
+      change_text: typeof body.change_text === "string" ? await cleanFoodbankNeedText(body.change_text) : "",
+      excess_change_text:
+        typeof body.excess_change_text === "string" ? await cleanFoodbankNeedText(body.excess_change_text) : "",
       published: !!body.published,
     };
 

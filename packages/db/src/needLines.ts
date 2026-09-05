@@ -89,6 +89,17 @@ export async function getChangeLinesForNeed(session: Session, needId: number): P
 // per-request round-trip budget concern here (this runs once per distinct
 // item on a category-suggestion page, not a hot path).
 export async function getLatestLineForItem(session: Session, item: string): Promise<NeedLineRow | null> {
+  // ORDER BY id DESC, matching Django's `.annotate(latest_id=Max('id'))`
+  // (gfadmin/views.py:2062-2067) -- NOT `created`, which is copied from the
+  // need and so ties across every line of one need.
+  //
+  // Served by foodbankchangeline_item_id_idx (migration 0021). Before that
+  // index the only (item, ...) index was on `(item, created DESC)`, which
+  // this query's ORDER BY cannot use: SQLite matched `item` from the index
+  // then sorted the matches by id, reading EVERY row for that item --
+  // measured at 5,735 rows read for a single lookup of "Tinned Soup", and
+  // the categorise page issues one lookup per line. A 13-item need read
+  // ~75,000 rows to render.
   const row = await session.prepare("SELECT * FROM foodbankchangeline WHERE item = ? ORDER BY id DESC LIMIT 1").bind(item).first<NeedLineRow>();
   return row ?? null;
 }

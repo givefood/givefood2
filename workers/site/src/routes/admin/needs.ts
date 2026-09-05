@@ -27,6 +27,7 @@ import {
   type FoodbankChangeRow,
   setNeedNotified,} from "@givefood/db";
 import { render } from "@givefood/templates";
+import { cleanFoodbankNeedText } from "@givefood/models";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
 import { AGGREGATE_TAG, foodbankTag } from "@givefood/urls";
@@ -459,8 +460,15 @@ export async function adminNeedEditForm(c: Context<AppEnv>): Promise<Response> {
     const csrfToken = typeof body.csrf_token === "string" ? body.csrf_token : undefined;
     if (!(await verifyCsrf(c, c.env.CSRF_SECRET, csrfToken))) return c.text("Forbidden", 403);
 
-    const changeText = typeof body.change_text === "string" ? body.change_text : "";
-    const excessChangeText = typeof body.excess_change_text === "string" && body.excess_change_text.trim() !== "" ? body.excess_change_text : null;
+    // Cleaned on the way in, same as the create path and same as Django's
+    // FoodbankChange.save() -- see routes/admin/needNew.ts for what skipping
+    // it did to the categorise page's suggestions (ticket #6). A <textarea>
+    // posts CRLF; foodbankchangeline.item never contains CR.
+    const changeText = typeof body.change_text === "string" ? await cleanFoodbankNeedText(body.change_text) : "";
+    const excessChangeText =
+      typeof body.excess_change_text === "string" && body.excess_change_text.trim() !== ""
+        ? await cleanFoodbankNeedText(body.excess_change_text)
+        : null;
     const published = !!body.published;
     const formValues = { change_text: changeText, excess_change_text: excessChangeText, published };
 

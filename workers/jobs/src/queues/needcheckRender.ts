@@ -13,7 +13,7 @@ import {
 import { buildNeedPrompt, type NeedPromptLastNeed } from "../needcheck/prompt";
 import { getMarkdown, scrapeBankTheFood, scrapeFacebook, scrapeTypeFor } from "../needcheck/scrape";
 import { extractNeed } from "../needcheck/openrouter";
-import { cleanFoodbankNeedText } from "../needcheck/textClean";
+import { cleanFoodbankNeedText } from "@givefood/models";
 import { decideNeedChange } from "../needcheck/decision";
 
 // PLAN.md §8.5.3: the needcheck RENDER_Q consumer, ported stage-for-stage

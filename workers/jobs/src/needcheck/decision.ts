@@ -1,4 +1,4 @@
-import { keysEqual, needItemsKey } from "./textClean";
+import { keysEqual, needItemsKey } from "@givefood/models";
 
 // crawlers.py:486-538, stages 8-9 of the pipeline (PLAN.md §8.5.3) --
 // extracted as a pure function (no D1/network access) so it can be unit

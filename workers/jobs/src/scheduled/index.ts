@@ -48,6 +48,35 @@ export async function handleScheduled(
   ctx.waitUntil(handler(env, event.scheduledTime));
 }
 
+// The idempotency key for one cron FIRING, from the scheduled time.
+//
+// MUST INCLUDE THE TIME, not just the date. It used to be
+// `.toISOString().slice(0, 10)` -- YYYY-MM-DD -- in all three fan-out
+// crons, which is correct only for a cron that fires once a day.
+// getarticles fires eight times a day ("20 8-22/2 * * *"), so all eight
+// firings computed the SAME runId: the first created the crawl set and
+// the other seven found it, logged "duplicate cron delivery, skipping",
+// and enqueued nothing at all. The article crawl therefore ran ONCE A DAY
+// instead of eight times from the day this Worker went live -- confirmed
+// against crawlset, which held exactly one `article` row per day
+// (2026-09-04 10:20, 2026-09-05 08:20) where there should have been eight.
+//
+// Nothing failed loudly, because skipping is a legitimate outcome here:
+// Cloudflare delivers Cron Triggers at least once, and this guard exists
+// precisely so a genuine duplicate delivery no-ops. A duplicate delivery
+// and the next scheduled firing were indistinguishable.
+//
+// Minute precision keeps that duplicate-delivery guard working -- a
+// redelivery carries the SAME scheduledTime, so it still collides -- while
+// making consecutive firings distinct for any cron down to once a minute.
+// Applied to all three fan-out crons, not just getarticles: needcheck and
+// charityinfo are daily today and were unaffected, but docs/crons.md
+// records needcheck as having been "45 7,11,15,19" (four times daily), and
+// restoring that would silently reintroduce exactly this bug.
+function cronRunId(prefix: string, scheduledTime: number): string {
+  return `${prefix}-${new Date(scheduledTime).toISOString().slice(0, 16)}`;
+}
+
 // Idempotent CrawlSet creation, shared by every fan-out cron (needcheck,
 // getarticles, charityinfo): find-by-run_id first (the common case --
 // PLAN.md §8.5.2/§8.5.5), and on the rare genuinely-concurrent duplicate
@@ -115,7 +144,7 @@ async function recordEnqueueFailure(session: Session, label: string, missed: num
 // everything else.
 async function needcheck(env: Env, scheduledTime: number): Promise<void> {
   const session = env.DB.withSession("first-unconstrained");
-  const runId = `needcheck-${new Date(scheduledTime).toISOString().slice(0, 10)}`;
+  const runId = cronRunId("needcheck", scheduledTime);
   const crawlSetId = await getOrCreateCrawlSet(session, "need", runId, "needcheck");
   if (crawlSetId === null) return;
 
@@ -156,7 +185,7 @@ async function needcheck(env: Env, scheduledTime: number): Promise<void> {
 // remaining, chunked enqueue -- targeting every food bank with an RSS feed.
 async function getArticles(env: Env, scheduledTime: number): Promise<void> {
   const session = env.DB.withSession("first-unconstrained");
-  const runId = `articles-${new Date(scheduledTime).toISOString().slice(0, 10)}`;
+  const runId = cronRunId("articles", scheduledTime);
   const crawlSetId = await getOrCreateCrawlSet(session, "article", runId, "articles");
   if (crawlSetId === null) return;
 
@@ -184,7 +213,7 @@ async function getArticles(env: Env, scheduledTime: number): Promise<void> {
 // regardless of which queue actually processed a given food bank.
 async function charityInfo(env: Env, scheduledTime: number): Promise<void> {
   const session = env.DB.withSession("first-unconstrained");
-  const runId = `charity-${new Date(scheduledTime).toISOString().slice(0, 10)}`;
+  const runId = cronRunId("charity", scheduledTime);
   const crawlSetId = await getOrCreateCrawlSet(session, "charity", runId, "charityinfo");
   if (crawlSetId === null) return;
 

@@ -308,3 +308,10 @@ export function mapArticleRow(a: { foodbank_slug: string; foodbank_name: string 
     published_date: a.published_date,
   };
 }
+
+// givefood/utils/text.py -- clean_foodbank_need_text() and need_items_key().
+// Lives here, not in workers/jobs, because BOTH Workers need it: the jobs
+// Worker cleans what needcheck scrapes, and the site Worker must clean what
+// the admin forms submit (see routes/admin/needNew.ts). Django gets this for
+// free by cleaning inside FoodbankChange.save().
+export * from "./textClean";

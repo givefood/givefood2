@@ -303,13 +303,41 @@ export async function updateNeedRawFields(session: Session, needId: string, para
 // distinct foodbank_id among the deleted rows gets recomputed once, not
 // once per deleted need -- a queue backlog often holds several stale needs
 // for the same food bank, and Set() dedupes that down to one write each.
+// CHUNKED AT 90 IDS, because D1 caps a statement at 100 bound parameters.
+// This used to bind the whole list into one `need_id IN (?, ?, ...)`, which
+// worked until the review queue grew past 100 and then 500'd -- reported
+// 2026-09-05 with 116 unreviewed needs on the dashboard, which is exactly
+// the situation the "Delete all" button exists for. The failure mode was
+// the worst kind: fine in testing, broken precisely when the queue was big
+// enough for anyone to want the button.
+//
+// 90, not 100, for headroom -- nothing else binds here, but a chunk size
+// equal to the hard limit leaves no room for a future extra predicate.
+//
+// NOT ATOMIC across chunks. A failure partway through leaves the earlier
+// chunks deleted; the alternative (one D1 batch) has the same parameter
+// cap per statement and would need the same chunking anyway. Deleting
+// needs is idempotent -- re-running the action deletes whatever survived --
+// so partial progress is recoverable in a way that a stuck 500 is not.
+const DELETE_CHUNK = 90;
+
 export async function deleteNeedsByUuids(session: Session, needIds: readonly string[]): Promise<void> {
   if (needIds.length === 0) return;
-  const placeholders = needIds.map(() => "?").join(", ");
-  const affected = await session
-    .prepare(`SELECT DISTINCT foodbank_id FROM foodbankchange WHERE need_id IN (${placeholders}) AND foodbank_id IS NOT NULL`)
-    .bind(...needIds)
-    .all<{ foodbank_id: number }>();
-  await session.prepare(`DELETE FROM foodbankchange WHERE need_id IN (${placeholders})`).bind(...needIds).run();
-  for (const { foodbank_id } of affected.results) await recomputeFoodbankNeedFields(session, foodbank_id);
+
+  const affectedFoodbanks = new Set<number>();
+  for (let i = 0; i < needIds.length; i += DELETE_CHUNK) {
+    const chunk = needIds.slice(i, i + DELETE_CHUNK);
+    const placeholders = chunk.map(() => "?").join(", ");
+    const affected = await session
+      .prepare(`SELECT DISTINCT foodbank_id FROM foodbankchange WHERE need_id IN (${placeholders}) AND foodbank_id IS NOT NULL`)
+      .bind(...chunk)
+      .all<{ foodbank_id: number }>();
+    for (const { foodbank_id } of affected.results) affectedFoodbanks.add(foodbank_id);
+    await session.prepare(`DELETE FROM foodbankchange WHERE need_id IN (${placeholders})`).bind(...chunk).run();
+  }
+
+  // Deduped across chunks and recomputed once per food bank: a bulk delete
+  // routinely hits the same food bank several times, and this is the
+  // expensive half (two queries plus an UPDATE each).
+  for (const foodbankId of affectedFoodbanks) await recomputeFoodbankNeedFields(session, foodbankId);
 }
