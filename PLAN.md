@@ -239,9 +239,20 @@ Three load-bearing reasons, all of which a redirect breaks:
 >
 > The documented failure mode is real but is about **topology, not Workers as such**: 9403 names "Workers scoped to the entire domain `/*`" and 9524's own workaround is *"use a Custom Domain instead"*. So this plan's original topology — a `www.givefood.org.uk/*` pattern route — was the thing at risk, and the fix is one line: production is declared as a **Custom Domain**, exactly like beta. See `workers/site/wrangler.jsonc`. Do not convert it back to a pattern route.
 >
-> Consequently Option B (precompute 150/300/540/1080 into R2, strip the prefix from the markup) is **not** being built: it would reinstate a per-transform or storage cost, require re-implementing `Accept`-header format negotiation that the edge does for free, and churn 23 elements across six templates to reach the same pixels. Tracked and closed as givefood/givefood2#2.
+> **The prefix was then dropped anyway, maintainer decision the same day.** Not because it fails — it does not — but because the URL should be the resource plus a parameter rather than the resource behind a Cloudflare-internal path. The 23 elements now emit `/needs/at/<slug>/photo.jpg?s=540&f=avif`, and `routes/media.ts` does the transform. Neither Option B nor Option C: no precomputed variants, no extra hostname.
 >
-> One template change did land: the 39 URLs across those elements were **same-origin-ised** (they hardcoded `https://www.givefood.org.uk`, as Django's did). On beta that had been silently loading images from the live Django site, which is why the interaction stayed unverified for so long — beta was never exercising its own image path.
+> | | |
+> |---|---|
+> | **URL contract** | `?s=<width>` from an allowlist of 150/300/540/1080; optional `&f=avif\|webp\|jpeg\|png`. Anything else is a **400**, not a silent full-size response — an arbitrary `?s=` is an unbounded number of billed unique transformations anyone can mint by editing a URL. Django's own `foodbank_map()` rejects an out-of-range size the same way (`gfwfbn/views.py:440-446`). |
+> | **Mechanism** | `fetch(src, {cf:{image:{width, format}}})` — the same transformation engine `/cdn-cgi/image/` was using. **Not** the Images binding: `env.IMAGES` returns *"IMAGES_TRANSFORM_ERROR 9432: Bad request: The Images Binding is not available using legacy billing"* on this account. The binding stays declared in `wrangler.jsonc` for whenever that changes. |
+> | **Loop guard** | The subrequest goes back to this same Worker, which is the shape error 9403 describes. It carries a `__raw` marker that `serveMedia()` checks *before* parsing `?s=`, so it can never re-enter the transform branch — a guard that does not depend on whether Cloudflare re-runs Workers on a resizing subrequest. |
+> | **Format** | Explicit in the URL, not negotiated from `Accept`. An `Accept`-negotiated response needs `Vary: Accept` to cache correctly, which Cloudflare does not honour for images unless the zone's "Vary for images" setting is on; getting that wrong serves AVIF to a browser that cannot decode it, from cache, for as long as the object lives. |
+> | **ETag** | The transform's own ETag plus the variant, so two variants of one photo are never interchangeable to a cache. `If-None-Match` → 304 verified live. |
+> | **Cache-Control** | `public, max-age=31536000, immutable` on variants — a derived image has no `cacheControl` of its own, and the ETag moves when the source does. |
+>
+> Measured on beta after the switch, source PNG 35,778 b: `?s=150` → 8,935 b, `?s=300` → 23,032 b, `?s=150&f=avif` → 2,739 b `image/avif`, `?s=1080&f=webp` → 29,004 b `image/webp`. `?s=999`, `?s=abc`, `?f=` without `?s=`, and `&f=gif` all 400.
+>
+> The URLs were also **same-origin-ised** (they hardcoded `https://www.givefood.org.uk`, as Django's did). On beta that had been silently loading images from the live Django site, which is why this interaction stayed unverified for so long — beta was never exercising its own image path at all.
 
 Note also that `gfwfbn/templates/wfbn/foodbank/locations.html:91-92` puts `/cdn-cgi/image/` in front of the Google Static Maps proxy PNGs too, so the same dependency applies to a fourth route family.
 

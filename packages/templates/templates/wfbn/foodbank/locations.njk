@@ -78,9 +78,9 @@
                 {% if location.place_has_photo and not location.boundary_geojson %}
                   <a href="{{ url('wfbn:foodbank_location', foodbank.slug, location.slug) }}">
                     <picture>
-                      <source srcset="/cdn-cgi/image/width=150,format=avif{{ url('wfbn-generic:foodbank_location_photo', foodbank.slug, location.slug) }} 150w, /cdn-cgi/image/width=300,format=avif{{ url('wfbn-generic:foodbank_location_photo', foodbank.slug, location.slug) }} 300w" type="image/avif" sizes="150px">
-                      <source srcset="/cdn-cgi/image/width=150,format=webp{{ url('wfbn-generic:foodbank_location_photo', foodbank.slug, location.slug) }} 150w, /cdn-cgi/image/width=300,format=webp{{ url('wfbn-generic:foodbank_location_photo', foodbank.slug, location.slug) }} 300w" type="image/webp" sizes="150px">
-                      <img src="/cdn-cgi/image/width=300{{ url('wfbn-generic:foodbank_location_photo', foodbank.slug, location.slug) }}" alt="{{ location.name }}" loading="lazy" class="placephoto {% if language_direction == 'ltr' %}is-pulled-right{% else %}is-pulled-left{% endif %}" style="width:150px;clear:left">
+                      <source srcset="{{ url('wfbn-generic:foodbank_location_photo', foodbank.slug, location.slug) }}?s=150&amp;f=avif 150w, {{ url('wfbn-generic:foodbank_location_photo', foodbank.slug, location.slug) }}?s=300&amp;f=avif 300w" type="image/avif" sizes="150px">
+                      <source srcset="{{ url('wfbn-generic:foodbank_location_photo', foodbank.slug, location.slug) }}?s=150&amp;f=webp 150w, {{ url('wfbn-generic:foodbank_location_photo', foodbank.slug, location.slug) }}?s=300&amp;f=webp 300w" type="image/webp" sizes="150px">
+                      <img src="{{ url('wfbn-generic:foodbank_location_photo', foodbank.slug, location.slug) }}?s=300" alt="{{ location.name }}" loading="lazy" class="placephoto {% if language_direction == 'ltr' %}is-pulled-right{% else %}is-pulled-left{% endif %}" style="width:150px;clear:left">
                     </picture>
                   </a>
                 {% endif %}

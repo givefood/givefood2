@@ -12,6 +12,8 @@ export interface Env {
   GEO: R2Bucket;
   STATIC_MEDIA: R2Bucket;
   ASSETS: Fetcher;
+  // Cloudflare Images transform binding -- routes/media.ts's ?s= resizing.
+  IMAGES: ImagesBinding;
   SESSIONS: KVNamespace;
   DATA: KVNamespace;
   HITS: AnalyticsEngineDataset;

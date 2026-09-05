@@ -65,16 +65,20 @@
   //   { "pattern": "www.givefood.org.uk", "custom_domain": true }
   //
   // A CUSTOM DOMAIN, NOT the `www.givefood.org.uk/*` pattern route this used
-  // to say. That is not cosmetic and it is not reversible without breaking
-  // images: 23 <picture>/<img> elements across six wfbn templates serve
-  // photos and Static Maps PNGs through Cloudflare's `/cdn-cgi/image/`
-  // resizing, and Cloudflare documents error 9403 for "Workers scoped to the
-  // entire domain /*" and error 9524 for "an image URL is intercepted by a
-  // Worker", giving "use a Custom Domain instead" as the workaround for the
-  // latter. Verified 2026-09-05 against beta (a custom domain): width=150
-  // resizes and format=avif converts, both 200, both fetched back through
-  // the Worker. See givefood/givefood2#2 and the comment in
-  // wfbn/foodbank/index.njk.
+  // to say. Cloudflare documents error 9403 for "Workers scoped to the entire
+  // domain /*" and error 9524 for "an image URL is intercepted by a Worker",
+  // giving "use a Custom Domain instead" as the workaround for the latter --
+  // and routes/media.ts's `?s=` resizing makes a `cf.image` subrequest back to
+  // this same hostname, which is exactly the shape 9403 describes. That
+  // subrequest carries its own recursion guard so it does not depend on the
+  // topology, but there is no reason to pick the shape Cloudflare warns about
+  // when the one it recommends is what beta already runs. See
+  // givefood/givefood2#2.
+
+  // Cloudflare Images transform binding. routes/media.ts uses it to answer
+  // `?s=<width>` on the photo routes -- see that file for the URL contract
+  // and for why the templates no longer go through `/cdn-cgi/image/`.
+  "images": { "binding": "IMAGES" },
 
   // Workers Cache. NOT optional on a catch-all route -- see PLAN.md §3.6.
   // Tiered, collapses concurrent misses, and serves hits WITHOUT

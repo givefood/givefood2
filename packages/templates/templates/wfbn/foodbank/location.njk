@@ -111,9 +111,9 @@
             {% if location.place_has_photo and not location.boundary_geojson %}
               <div>
                 <picture>
-                  <source srcset="/cdn-cgi/image/format=avif,width=540{{ url('wfbn-generic:foodbank_location_photo', foodbank.slug, location.slug) }} 540w, /cdn-cgi/image/format=avif,width=1080{{ url('wfbn-generic:foodbank_location_photo', foodbank.slug, location.slug) }} 1080w" type="image/avif" sizes="(max-width: 540px) 540px, 1080px">
-                  <source srcset="/cdn-cgi/image/format=webp,width=540{{ url('wfbn-generic:foodbank_location_photo', foodbank.slug, location.slug) }} 540w, /cdn-cgi/image/format=webp,width=1080{{ url('wfbn-generic:foodbank_location_photo', foodbank.slug, location.slug) }} 1080w" type="image/webp" sizes="(max-width: 540px) 540px, 1080px">
-                  <img src="/cdn-cgi/image/width=1080{{ url('wfbn-generic:foodbank_location_photo', foodbank.slug, location.slug) }}" alt="{{ location.name }}" loading="lazy" class="placephoto">
+                  <source srcset="{{ url('wfbn-generic:foodbank_location_photo', foodbank.slug, location.slug) }}?s=540&amp;f=avif 540w, {{ url('wfbn-generic:foodbank_location_photo', foodbank.slug, location.slug) }}?s=1080&amp;f=avif 1080w" type="image/avif" sizes="(max-width: 540px) 540px, 1080px">
+                  <source srcset="{{ url('wfbn-generic:foodbank_location_photo', foodbank.slug, location.slug) }}?s=540&amp;f=webp 540w, {{ url('wfbn-generic:foodbank_location_photo', foodbank.slug, location.slug) }}?s=1080&amp;f=webp 1080w" type="image/webp" sizes="(max-width: 540px) 540px, 1080px">
+                  <img src="{{ url('wfbn-generic:foodbank_location_photo', foodbank.slug, location.slug) }}?s=1080" alt="{{ location.name }}" loading="lazy" class="placephoto">
                 </picture>
               </div>
             {% endif %}

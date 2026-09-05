@@ -145,9 +145,9 @@
                     {% if donationpoint.place_has_photo %}
                       <a href="{{ dp_url }}">
                         <picture>
-                          <source srcset="/cdn-cgi/image/width=150,format=avif{{ dp_photo_url }} 150w, /cdn-cgi/image/width=300,format=avif{{ dp_photo_url }} 300w" type="image/avif" sizes="150px">
-                          <source srcset="/cdn-cgi/image/width=150,format=webp{{ dp_photo_url }} 150w, /cdn-cgi/image/width=300,format=webp{{ dp_photo_url }} 300w" type="image/webp" sizes="150px">
-                          <img src="/cdn-cgi/image/width=300{{ dp_photo_url }}" alt="{{ donationpoint.name }}" loading="lazy" class="placephoto" style="width:150px;" sizes="150px">
+                          <source srcset="{{ dp_photo_url }}?s=150&amp;f=avif 150w, {{ dp_photo_url }}?s=300&amp;f=avif 300w" type="image/avif" sizes="150px">
+                          <source srcset="{{ dp_photo_url }}?s=150&amp;f=webp 150w, {{ dp_photo_url }}?s=300&amp;f=webp 300w" type="image/webp" sizes="150px">
+                          <img src="{{ dp_photo_url }}?s=300" alt="{{ donationpoint.name }}" loading="lazy" class="placephoto" style="width:150px;" sizes="150px">
                         </picture>
                       </a>
                     {% endif %}
