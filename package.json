@@ -9,6 +9,7 @@
     "dev:site": "pnpm --filter @givefood/site dev",
     "dev:jobs": "pnpm --filter @givefood/jobs dev",
     "typecheck": "pnpm -r typecheck",
+    "verify:webpush": "packages/templates/node_modules/.bin/tsx tools/webpush-vector/verify.ts",
     "test": "pnpm -r test"
   },
   "devDependencies": {

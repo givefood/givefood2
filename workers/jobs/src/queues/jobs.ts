@@ -5,6 +5,9 @@ import { handleTranslateNeed, type TranslateNeedMessage } from "./translateNeed"
 import { handleFoodbankCheckJob } from "../adminJobs/foodbankCheck";
 import { handleOrderLinesJob } from "../adminJobs/orderLines";
 import { handleNotifyNeedEmail, type NotifyNeedEmailMessage } from "../notify/needEmail";
+import { handleNotifyNeedFirebase, type NotifyNeedFirebaseMessage } from "../notify/needFirebase";
+import { handleNotifyNeedWebPush, type NotifyNeedWebPushMessage } from "../notify/needWebPush";
+import { handleNotifyNeedWhatsApp, type NotifyNeedWhatsAppMessage } from "../notify/needWhatsApp";
 
 // Consumer for the "jobs" queue (binding JOBS_Q) -- admin-triggered and
 // on-miss work, per PLAN.md §3.3's binding map: "article crawl,
@@ -55,6 +58,20 @@ async function dispatch(body: JobMessage, env: Env): Promise<void> {
       // rather than one that cannot finish. See notify/needEmail.ts.
       return handleNotifyNeedEmail(body as unknown as NotifyNeedEmailMessage, env);
     }
+    // gfadmin/views.py:1999-2006's other three channels. Each self-pages
+    // the same way the email one does, except Firebase -- which addresses
+    // a topic, so it is one call with no subscriber list to walk.
+    //
+    // Each handler catches its own send failures and returns, so a channel
+    // whose credentials are missing or whose upstream is down does not
+    // retry the message and does not take the other channels down with
+    // it. That is Django's behaviour too: all four are separate tasks.
+    case "notify-need-firebase":
+      return handleNotifyNeedFirebase(body as unknown as NotifyNeedFirebaseMessage, env);
+    case "notify-need-webpush":
+      return handleNotifyNeedWebPush(body as unknown as NotifyNeedWebPushMessage, env);
+    case "notify-need-whatsapp":
+      return handleNotifyNeedWhatsApp(body as unknown as NotifyNeedWhatsAppMessage, env);
     default:
       throw new Error(`unknown job type: ${body.type}`);
   }

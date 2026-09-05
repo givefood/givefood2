@@ -130,12 +130,17 @@ export interface NeedSubscriberCounts {
 // would populate a table like this is still unbuilt), not a bug in this
 // query.
 export async function getNeedSubscriberCounts(session: Session, foodbankId: number): Promise<NeedSubscriberCounts> {
-  const [email, webpush, mobile] = await Promise.all([
+  const [email, webpush, mobile, whatsapp] = await Promise.all([
     session.prepare("SELECT COUNT(*) AS n FROM foodbanksubscriber WHERE foodbank_id = ? AND confirmed = 1").bind(foodbankId).first<{ n: number }>(),
     session.prepare("SELECT COUNT(*) AS n FROM webpushsubscription WHERE foodbank_id = ?").bind(foodbankId).first<{ n: number }>(),
     session.prepare("SELECT COUNT(*) AS n FROM mobilesubscriber WHERE foodbank_id = ?").bind(foodbankId).first<{ n: number }>(),
+    // Was hardcoded to 0 while the whatsappsubscriber table did not exist
+    // (migration 0020 creates it). The admin's Notify confirmation shows
+    // these counts, so a hardcoded 0 was not merely cosmetic -- it said
+    // "nobody is subscribed" about 51 people who are.
+    session.prepare("SELECT COUNT(*) AS n FROM whatsappsubscriber WHERE foodbank_id = ?").bind(foodbankId).first<{ n: number }>(),
   ]);
-  return { email: email?.n ?? 0, webpush: webpush?.n ?? 0, mobile: mobile?.n ?? 0, whatsapp: 0 };
+  return { email: email?.n ?? 0, webpush: webpush?.n ?? 0, mobile: mobile?.n ?? 0, whatsapp: whatsapp?.n ?? 0 };
 }
 
 export interface NeedCrawlSetRow {

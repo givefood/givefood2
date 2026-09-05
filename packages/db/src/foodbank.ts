@@ -205,6 +205,22 @@ export async function getFoodbankSlugAndUrlById(session: Session, id: number): P
   return row ?? null;
 }
 
+// gfadmin/views.py:1984-1986 -- need_notifications kicks off an article
+// crawl before it notifies anyone, guarded on `if foodbank.rss_url`. It
+// has a `need`, so it holds a foodbank_id and not a slug; this is the
+// same one-row projection as the two above, with the two fields the
+// ARTICLES_Q message needs plus the field the guard reads.
+export async function getFoodbankRssCrawlTargetById(
+  session: Session,
+  id: number,
+): Promise<{ id: number; slug: string; rss_url: string | null } | null> {
+  const row = await session
+    .prepare("SELECT id, slug, rss_url FROM foodbank WHERE id = ?")
+    .bind(id)
+    .first<{ id: number; slug: string; rss_url: string | null }>();
+  return row ?? null;
+}
+
 // wfbn-generic `mobsub`/`delete_mobsub` -- the mobile app's shipped
 // contract identifies a food bank by `Foodbank.uuid`, not by slug (see
 // `get_object_or_404(Foodbank, uuid=foodbank_uuid)` in

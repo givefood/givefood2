@@ -12,6 +12,9 @@ import {
   deleteNeedByUuid,
   deleteNeedsByUuids,
   getFoodbankSlugById,
+  getFoodbankRssCrawlTargetById,
+  insertCrawlSet,
+  setCrawlSetExpected,
   getChangeLinesForNeed,
   getLatestLineForItem,
   upsertNeedLine,
@@ -202,19 +205,18 @@ async function handlePublishTransition(c: Context<AppEnv>, publish: boolean): Pr
   return c.redirect(`/admin/need/${needId}/`, 302);
 }
 
-// gfadmin/views.py:1993-1997's "Notify" action, the email channel of it.
+// gfadmin/views.py:1993-2006's "Notify" action -- all four channels.
 // Django loops over confirmed subscribers IN THE REQUEST and enqueues one
-// django-task per email; this enqueues ONE message and the jobs Worker
-// pages through the subscribers itself (workers/jobs/src/notify/
-// needEmail.ts), because a Worker cannot make hundreds of Postmark calls
-// inside one request.
+// django-task per email, then enqueues one task each for Firebase, web
+// push and WhatsApp; this enqueues ONE message per channel and the jobs
+// Worker pages through the subscribers itself (workers/jobs/src/notify/),
+// because a Worker cannot make hundreds of upstream calls inside one
+// request.
 //
-// Django also stamps need.notified and fires Firebase, web push and
-// WhatsApp from the same action. `notified` is stamped here; the other
-// three channels remain unbuilt (PLAN.md WP 6.4b -- no whatsappsubscriber
-// table exists, and web push needs RFC 8291 hand-rolled in WebCrypto), so
-// this action is honestly labelled "Notify by email" in the admin rather
-// than pretending to be all four.
+// FOUR SEPARATE MESSAGES, not one that fans out. Django's four tasks fail
+// independently, and so do these: a WhatsApp token that has expired must
+// not stop the 5,855 emails, and a food bank with no push subscribers must
+// not make the email send look like a failure.
 export async function adminNeedNotify(c: Context<AppEnv>): Promise<Response> {
   if (!(await requireCsrf(c))) return c.text("Forbidden", 403);
   const needId = c.req.param("id")!;
@@ -227,7 +229,25 @@ export async function adminNeedNotify(c: Context<AppEnv>): Promise<Response> {
   if (!need.published) return c.text("Cannot notify subscribers about an unpublished need", 400);
   if (need.foodbank_id === null) return c.text("Cannot notify: this need has no food bank", 400);
 
-  await c.env.JOBS_Q.send({ type: "notify-need-email", needId: need.id, afterId: 0 });
+  // views.py:1984-1986, the part of this action that is not a
+  // notification at all: notifying is the moment a food bank's own news
+  // feed is most likely to have something new on it, so the article crawl
+  // is kicked off alongside. Guarded on rss_url exactly as Django is, and
+  // as adminFoodbankForceArticleCrawl already is.
+  const foodbank = await getFoodbankRssCrawlTargetById(db, need.foodbank_id);
+  if (foodbank?.rss_url) {
+    const crawlSetId = await insertCrawlSet(db, "article", null);
+    await setCrawlSetExpected(db, crawlSetId, 1);
+    await c.env.ARTICLES_Q.send({ crawlSetId, foodbankId: foodbank.id, slug: foodbank.slug });
+  }
+
+  await c.env.JOBS_Q.sendBatch([
+    { body: { type: "notify-need-email", needId: need.id, afterId: 0 } },
+    // No afterId: FCM addresses a topic, so there is nothing to page.
+    { body: { type: "notify-need-firebase", needId: need.id } },
+    { body: { type: "notify-need-webpush", needId: need.id, afterId: 0 } },
+    { body: { type: "notify-need-whatsapp", needId: need.id, afterId: 0 } },
+  ]);
   await setNeedNotified(db, needId);
 
   return c.redirect(`/admin/need/${needId}/`, 302);
