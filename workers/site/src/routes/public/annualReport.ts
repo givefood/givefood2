@@ -36,7 +36,6 @@ export async function annualReportIndex(c: Context<AppEnv>): Promise<Response> {
 
   const context = buildPageContext({
     path: c.req.path,
-    appName: "givefood",
     pageTranslatable: true,
     locale,
     unprefixedPath: c.get("pathAfterPrefix"),
@@ -66,7 +65,6 @@ export async function annualReport(c: Context<AppEnv>): Promise<Response> {
 
   const context = buildPageContext({
     path: c.req.path,
-    appName: "givefood",
     pageTranslatable: true,
     locale,
     unprefixedPath: c.get("pathAfterPrefix"),

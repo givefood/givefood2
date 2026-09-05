@@ -44,7 +44,7 @@ import { constituencySlugFromPostcode, mpPhotoUrl } from "../wfbn/constituencies
 // text.
 
 function pageContext(c: Context<AppEnv>, path: string) {
-  return { ...buildPageContext({ path, appName: "gfwrite" }), render_time_ms: elapsedMs(c) };
+  return { ...buildPageContext({ path }), render_time_ms: elapsedMs(c) };
 }
 
 // ParliamentaryConstituency.foodbank_names() (political.py:139-146) --

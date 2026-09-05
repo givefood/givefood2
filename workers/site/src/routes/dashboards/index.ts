@@ -4,7 +4,7 @@ import type { AppEnv } from "../../types";
 import { elapsedMs } from "../../middleware/serverTiming";
 
 function pageContext(c: Context<AppEnv>) {
-  return { ...buildPageContext({ path: c.req.path, appName: "gfdash" }), render_time_ms: elapsedMs(c) };
+  return { ...buildPageContext({ path: c.req.path }), render_time_ms: elapsedMs(c) };
 }
 
 // gfdash `index` (views.py:21-23) -- fully static, no DB reads at all: a

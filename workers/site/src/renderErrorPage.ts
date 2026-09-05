@@ -13,7 +13,6 @@ export async function renderErrorPage(c: Context<AppEnv>, templateName: string):
 
   const context = buildPageContext({
     path: c.req.path,
-    appName: "givefood",
     pageTranslatable: true,
     locale,
     unprefixedPath: c.get("pathAfterPrefix"),

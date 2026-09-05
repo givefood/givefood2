@@ -32,7 +32,7 @@ export async function adminSignIn(c: Context<AppEnv>): Promise<Response> {
 
   const session = await getAdminSession(c);
   const html = await render("admin/sign_in.njk", {
-    ...buildPageContext({ path: c.req.path, appName: "gfadmin" }),
+    ...buildPageContext({ path: c.req.path }),
     admin_user: session,
     next,
   });

@@ -16,7 +16,6 @@ import { elapsedMs } from "../../middleware/serverTiming";
 export async function publicServices(c: Context<AppEnv>): Promise<Response> {
   const context = buildPageContext({
     path: c.req.path,
-    appName: "givefood",
     pageTranslatable: false,
   });
 

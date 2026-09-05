@@ -8,7 +8,7 @@ import { noItems } from "../../lib/fields";
 import { parseD1Timestamp, weekKey } from "../../lib/isoWeek";
 
 function pageContext(c: Context<AppEnv>) {
-  return { ...buildPageContext({ path: c.req.path, appName: "gfdash" }), render_time_ms: elapsedMs(c) };
+  return { ...buildPageContext({ path: c.req.path }), render_time_ms: elapsedMs(c) };
 }
 
 interface WeekCount {

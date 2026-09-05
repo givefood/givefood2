@@ -10,14 +10,13 @@ import { elapsedMs } from "../middleware/serverTiming";
 // gfapi2's index + docs pages. Each is a straight `render()` through the
 // same page.njk every other page extends -- see packages/templates.
 
-function pageContext(c: Context<AppEnv>, appName: string) {
-  const context = buildPageContext({ path: c.req.path, appName });
-  return { ...context, render_time_ms: elapsedMs(c) };
+function pageContext(c: Context<AppEnv>) {
+  return { ...buildPageContext({ path: c.req.path }), render_time_ms: elapsedMs(c) };
 }
 
 // gfapi1 `api` (GET /api/1/) -- static doc page, no DB reads.
 export async function api1Index(c: Context<AppEnv>): Promise<Response> {
-  return c.html(await render("api1.njk", pageContext(c, "gfapi1")));
+  return c.html(await render("api1.njk", pageContext(c)));
 }
 
 // gfapi2 `index` (GET /api/2/). The real page's "Dumps" table (dumps were
@@ -25,7 +24,7 @@ export async function api1Index(c: Context<AppEnv>): Promise<Response> {
 // decision 2026-09-02: dropped entirely rather than built. See index.njk's
 // own comment and PLAN.md §8.8.
 export async function api2Index(c: Context<AppEnv>): Promise<Response> {
-  return c.html(await render("api2/index.njk", pageContext(c, "gfapi2")));
+  return c.html(await render("api2/index.njk", pageContext(c)));
 }
 
 // gfapi2/views.py:33-40 -- static, verbatim from the Python source.
@@ -60,7 +59,7 @@ export async function api2Docs(c: Context<AppEnv>): Promise<Response> {
 
   return c.html(
     await render("api2/docs.njk", {
-      ...pageContext(c, "gfapi2"),
+      ...pageContext(c),
       api_formats: API_FORMATS,
       eg_foodbanks: EG_FOODBANKS,
       eg_searches: EG_SEARCHES,

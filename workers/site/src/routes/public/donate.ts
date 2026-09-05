@@ -14,7 +14,6 @@ export async function publicDonate(c: Context<AppEnv>): Promise<Response> {
 
   const context = buildPageContext({
     path: c.req.path,
-    appName: "givefood",
     pageTranslatable: true,
     locale,
     unprefixedPath: c.get("pathAfterPrefix"),

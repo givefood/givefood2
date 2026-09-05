@@ -20,7 +20,6 @@ export async function publicAboutUs(c: Context<AppEnv>): Promise<Response> {
 
   const context = buildPageContext({
     path: c.req.path,
-    appName: "givefood",
     pageTranslatable: true,
     locale,
     unprefixedPath: c.get("pathAfterPrefix"),
@@ -44,7 +43,6 @@ export async function publicApps(c: Context<AppEnv>): Promise<Response> {
 
   const context = buildPageContext({
     path: c.req.path,
-    appName: "givefood",
     pageTranslatable: true,
     locale,
     unprefixedPath: c.get("pathAfterPrefix"),
@@ -76,7 +74,6 @@ export async function publicBot(c: Context<AppEnv>): Promise<Response> {
 
   const context = buildPageContext({
     path: c.req.path,
-    appName: "givefood",
     pageTranslatable: true,
     locale,
     unprefixedPath: c.get("pathAfterPrefix"),

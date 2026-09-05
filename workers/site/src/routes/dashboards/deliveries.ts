@@ -7,7 +7,7 @@ import { dbSession } from "../../lib/session";
 import { elapsedMs } from "../../middleware/serverTiming";
 
 function pageContext(c: Context<AppEnv>) {
-  return { ...buildPageContext({ path: c.req.path, appName: "gfdash" }), render_time_ms: elapsedMs(c) };
+  return { ...buildPageContext({ path: c.req.path }), render_time_ms: elapsedMs(c) };
 }
 
 // gfdash/urls.py's `re_path(r'^deliveries/(count|items|weight|calories)/$',

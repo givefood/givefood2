@@ -63,7 +63,6 @@ export async function wfbnFoodbank(c: Context<AppEnv>): Promise<Response> {
 
   const context = buildPageContext({
     path: c.req.path,
-    appName: "gfwfbn",
     pageTranslatable: true,
     locale,
     unprefixedPath: c.get("pathAfterPrefix"),

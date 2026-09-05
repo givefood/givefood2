@@ -10,7 +10,7 @@ import { elapsedMs } from "../../middleware/serverTiming";
 // template. Same pageContext shape as apiDocs.ts, hardcoded to "gfdash"
 // since every dash page uses the one app name.
 function pageContext(c: Context<AppEnv>) {
-  return { ...buildPageContext({ path: c.req.path, appName: "gfdash" }), render_time_ms: elapsedMs(c) };
+  return { ...buildPageContext({ path: c.req.path }), render_time_ms: elapsedMs(c) };
 }
 
 // gfdash `bean_pasta_index` (views.py:382-391) -- Django's raw-SQL query is

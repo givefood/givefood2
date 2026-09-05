@@ -9,7 +9,7 @@ import { mapArticleRow } from "../../lib/fields";
 const LIMIT = 200;
 
 function pageContext(c: Context<AppEnv>) {
-  return { ...buildPageContext({ path: c.req.path, appName: "gfdash" }), render_time_ms: elapsedMs(c) };
+  return { ...buildPageContext({ path: c.req.path }), render_time_ms: elapsedMs(c) };
 }
 
 // gfdash `articles` (views.py:234-241) -- the 200 most recently published

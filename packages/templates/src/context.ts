@@ -15,7 +15,6 @@ export interface PageContext {
   instance_id: string;
   version: string;
   commit: string | null;
-  app_name: string;
   domain: string;
   page_translatable: boolean;
   languages: Array<{ code: string; name: string; url: string }>;
@@ -72,7 +71,6 @@ const UNKNOWN_IDENTITY: RuntimeIdentity = { colo: "unknown", instanceId: "unknow
 export interface PageContextOptions {
   path: string;
   querystring?: string;
-  appName: string;
   pageTranslatable?: boolean;
   headless?: boolean;
   isFlagPage?: boolean;
@@ -111,7 +109,6 @@ export function buildPageContext(options: PageContextOptions): PageContext {
     instance_id: identity.instanceId,
     version: identity.version,
     commit: identity.commit,
-    app_name: options.appName,
     domain: SITE_DOMAIN,
     page_translatable: options.pageTranslatable ?? false,
     languages,

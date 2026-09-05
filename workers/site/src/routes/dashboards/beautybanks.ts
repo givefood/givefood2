@@ -14,7 +14,7 @@ const TIME_SINCE_DAYS = 28;
 const MS_PER_DAY = 86_400_000;
 
 function pageContext(c: Context<AppEnv>) {
-  return { ...buildPageContext({ path: c.req.path, appName: "gfdash" }), render_time_ms: elapsedMs(c) };
+  return { ...buildPageContext({ path: c.req.path }), render_time_ms: elapsedMs(c) };
 }
 
 // filter_change_text() (givefood/utils/text.py:138-148) -- lines of

@@ -33,7 +33,6 @@ export async function wfbnFoodbankNews(c: Context<AppEnv>): Promise<Response> {
 
   const context = buildPageContext({
     path: c.req.path,
-    appName: "gfwfbn",
     pageTranslatable: true,
     locale,
     unprefixedPath: c.get("pathAfterPrefix"),
@@ -74,7 +73,6 @@ export async function wfbnFoodbankCharity(c: Context<AppEnv>): Promise<Response>
 
   const context = buildPageContext({
     path: c.req.path,
-    appName: "gfwfbn",
     pageTranslatable: true,
     locale,
     unprefixedPath: c.get("pathAfterPrefix"),

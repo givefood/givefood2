@@ -42,7 +42,6 @@ export async function humanRelay(c: Context<AppEnv>): Promise<Response> {
   // directly (it's a same-request auto-submit relay, not browsed to).
   const context = buildPageContext({
     path: c.req.path,
-    appName: "givefood",
     pageTranslatable: true,
     headless: true,
     locale,

@@ -69,7 +69,6 @@ async function rss(c: Context<AppEnv>, slug: string | undefined): Promise<Respon
 
   const context = buildPageContext({
     path: c.req.path,
-    appName: "gfwfbn",
     pageTranslatable: true,
     locale,
     unprefixedPath: c.get("pathAfterPrefix"),

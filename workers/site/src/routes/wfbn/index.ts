@@ -139,7 +139,6 @@ export async function wfbnIndex(c: Context<AppEnv>): Promise<Response> {
   const context = buildPageContext({
     path: c.req.path,
     querystring: new URL(c.req.url).search.slice(1),
-    appName: "gfwfbn",
     pageTranslatable: true,
     locale,
     unprefixedPath: c.get("pathAfterPrefix"),

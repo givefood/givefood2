@@ -32,7 +32,7 @@ import { verifyHumanGate } from "./humanGate";
 // writeSend's send_failed convention.
 function pageContext(c: Context<AppEnv>, path: string, locale: "en" | "cy" | "ga" | "gd") {
   return {
-    ...buildPageContext({ path, appName: "givefood", pageTranslatable: true, locale, unprefixedPath: c.get("pathAfterPrefix") }),
+    ...buildPageContext({ path, pageTranslatable: true, locale, unprefixedPath: c.get("pathAfterPrefix") }),
     render_time_ms: elapsedMs(c),
   };
 }

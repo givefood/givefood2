@@ -25,7 +25,7 @@ import { verifyHumanGate } from "./humanGate";
 // not behaviour to preserve").
 function pageContext(c: Context<AppEnv>, path: string, locale: "en" | "cy" | "ga" | "gd") {
   return {
-    ...buildPageContext({ path, appName: "givefood", pageTranslatable: true, locale, unprefixedPath: c.get("pathAfterPrefix"), isFlagPage: true }),
+    ...buildPageContext({ path, pageTranslatable: true, locale, unprefixedPath: c.get("pathAfterPrefix"), isFlagPage: true }),
     render_time_ms: elapsedMs(c),
   };
 }
