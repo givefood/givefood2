@@ -457,6 +457,15 @@ app.all("/write/to/:slug/email/", writeEmail); // writeEmail itself 404s anythin
 app.all("/write/to/:slug/email/send/", writeSend); // writeSend itself 405s anything but POST (R5)
 app.get("/write/to/:slug/email/done/", writeDone);
 
+// givefood/urls.py:78,81 -- two bare RedirectViews. 302, not 301: neither
+// passes permanent=True, and RedirectView.permanent has defaulted to False
+// since Django 1.9. (The 301 at /dashboard/price-per-kg/ above is a
+// permanent one, hence the difference.) The Rick Astley target is
+// givefood/const/general.py:147's RICK_ASTLEY, inlined rather than given a
+// consts module of its own for a single use.
+app.get("/what-food-banks-need/", (c) => c.redirect("/needs/", 302));
+app.get("/wp-login.php", (c) => c.redirect("https://www.youtube.com/watch?v=dQw4w9WgXcQ", 302));
+
 // The genuine remaining gaps, named one path at a time rather than as
 // catch-all mounts over /needs, /api and / (which is what used to be
 // here). Everything NOT listed here now falls through to app.notFound()
@@ -491,8 +500,6 @@ const NOT_PORTED: Array<[string, string]> = [
   ["/:sitemapPage{sitemap_places_[0-9]+\\.xml}", "paged places sitemap"],
   ["/firebase-messaging-sw.js", "Firebase messaging service worker"],
   ["/tests/maplibre/", "maplibre test page"],
-  ["/what-food-banks-need/", "legacy redirect to /needs/"],
-  ["/wp-login.php", "the Rick Astley redirect"],
   ["/needs/manifest.json", "gfwfbn manifest"],
   ["/needs/tt-old-data/", "gfwfbn tt-old-data"],
 ];
