@@ -484,6 +484,19 @@ const OUT_OF_SCOPE = [
   // decision instead of an oversight -- which is the whole reason this
   // block exists. Worth deleting its Django view and template too.
   "/tests/maplibre/",
+  // givefood/urls.py:68 -> views.service_worker. Dead in Django, not just
+  // unported -- re-verified 2026-09-05 before dropping it: the only
+  // serviceWorker.register() call in either repo is for /sw.js
+  // (givefood/static/js/webpush.js:111), nothing anywhere references
+  // firebase-messaging-sw.js, and there is no client-side Firebase
+  // messaging code at all (no getMessaging, no firebase.messaging). The
+  // site moved from Firebase push to VAPID -- Django's own
+  // vapid_service_worker docstring says so ("This replaces Firebase-based
+  // web push with standard Web Push API") -- and this view is what was
+  // left behind. /sw.js, the one actually registered, is ported and served
+  // static from dist/static/sw.js. Porting this would have meant six
+  // Firebase web-config values for a file no browser requests.
+  "/firebase-messaging-sw.js",
   "/sitemap_external.xml",
   "/sitemap_places.xml",
   "/sitemap_places_index.xml",
@@ -514,7 +527,6 @@ for (const path of OUT_OF_SCOPE) app.all(path, (c) => c.notFound());
 // anyway, so the failure mode points the safe way.
 const NOT_PORTED: Array<[string, string]> = [
   ["/human/", "human-readable data page"],
-  ["/firebase-messaging-sw.js", "Firebase messaging service worker"],
   ["/needs/manifest.json", "gfwfbn manifest"],
   ["/needs/tt-old-data/", "gfwfbn tt-old-data"],
 ];
