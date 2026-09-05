@@ -205,6 +205,19 @@ app.get("/needs/in/constituencies/", wfbnConstituencies);
 // gfwfbn/urls/i18n.py:44 -- a bare, slug-less RedirectView back to the
 // plural index (an old/hand-typed singular URL), not a page of its own.
 app.get("/needs/in/constituency/", (c) => c.redirect("/needs/in/constituencies/", 302));
+// gfwfbn/urls/i18n.py:14 -- RedirectView to the ROOT manifest, and the one
+// place in this file that is a 301 rather than a 302, because it is the
+// one that passes permanent=True. Nothing generates this URL: both
+// page.html and page.njk resolve the manifest by NAME
+// ({% url 'manifest' %} / url('manifest')), which gives the absolute
+// /manifest.json, so no browser follows a relative path into it. Ported
+// anyway rather than 404'd because it costs a line and a PWA installed
+// against the old URL would still be asking for it.
+//
+// Target is /manifest.json unprefixed even from the locale variants
+// below: Django's url= is the literal string '/manifest.json', and
+// RedirectView does no locale-aware reversing on it.
+app.get("/needs/manifest.json", (c) => c.redirect("/manifest.json", 301));
 app.get("/needs/in/constituency/:slug/mp_photo_threefour.png", wfbnMpPhotoRedirect);
 app.get("/needs/in/constituency/:slug/", wfbnConstituency);
 // :locslug is a generic catch-all at the same path depth as every literal
@@ -245,6 +258,7 @@ for (const locale of LOCALES) {
   app.get(`/${locale}/needs/rss.xml`, wfbnRss);
   app.get(`/${locale}/needs/at/:slug/rss.xml`, wfbnFoodbankRss);
   app.get(`/${locale}/needs/getlocation/`, wfbnGetLocation);
+  app.get(`/${locale}/needs/manifest.json`, (c) => c.redirect("/manifest.json", 301));
   app.get(`/${locale}/needs/at/:slug/locations/`, wfbnFoodbankLocations);
   app.get(`/${locale}/needs/at/:slug/donationpoints/`, wfbnFoodbankDonationpoints);
   app.get(`/${locale}/needs/at/:slug/donationpoint/:dpslug/`, wfbnFoodbankDonationpoint);
@@ -527,7 +541,6 @@ for (const path of OUT_OF_SCOPE) app.all(path, (c) => c.notFound());
 // anyway, so the failure mode points the safe way.
 const NOT_PORTED: Array<[string, string]> = [
   ["/human/", "human-readable data page"],
-  ["/needs/manifest.json", "gfwfbn manifest"],
   ["/needs/tt-old-data/", "gfwfbn tt-old-data"],
 ];
 for (const [path, what] of NOT_PORTED) app.all(path, notPortedPath(what));
