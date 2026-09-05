@@ -21,7 +21,7 @@ import type { AppEnv } from "../types";
 // need a request (cf.colo) or a binding (env), and neither is reachable at
 // module scope -- Workers disallows I/O and crypto in the global scope.
 
-let identity: { instanceId: string; version: string; commit: string | null } | null = null;
+let identity: { colo: string; instanceId: string; version: string; commit: string | null } | null = null;
 
 // Django used COOLIFY_CONTAINER_NAME[:7], which answered "which of the
 // running containers served this?" -- useful when one instance is
@@ -32,16 +32,17 @@ let identity: { instanceId: string; version: string; commit: string | null } | n
 // tells you whether two page loads came from the same isolate, which is
 // the actual question Django's container name was answering.
 //
-// Prefixed with the colo, because "where" is the more common Workers
-// question and it costs nothing: e.g. "LHR/3f9a2c1".
-function mintInstanceId(colo: string | undefined): string {
+// The colo it ran in is a separate line in debugcomment.njk rather than a
+// prefix on this one: it answers "where", not "which", and unlike the
+// isolate id it is a real value read off the request rather than an
+// invented one.
+function mintInstanceId(): string {
   const bytes = new Uint8Array(4);
   crypto.getRandomValues(bytes);
-  const suffix = [...bytes]
+  return [...bytes]
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("")
     .slice(0, 7);
-  return colo ? `${colo}/${suffix}` : suffix;
 }
 
 // SOURCE_COMMIT[:7] in Django -- the git commit the running code was built
@@ -71,7 +72,8 @@ function readVersion(meta: { id?: string; tag?: string } | undefined): { version
 export const runtimeIdentity: MiddlewareHandler<AppEnv> = async (c, next) => {
   if (!identity) {
     const { version, commit } = readVersion(c.env.CF_VERSION_METADATA);
-    identity = { instanceId: mintInstanceId(c.req.raw.cf?.colo as string | undefined), version, commit };
+    const colo = (c.req.raw.cf?.colo as string | undefined) ?? "unknown";
+    identity = { colo, instanceId: mintInstanceId(), version, commit };
     setRuntimeIdentity(identity);
   }
   await next();

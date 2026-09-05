@@ -11,6 +11,7 @@ import type { Locale } from "./i18n";
 export interface PageContext {
   canonical_path: string;
   flag_path: string;
+  colo: string;
   instance_id: string;
   version: string;
   commit: string | null;
@@ -51,6 +52,7 @@ const LANGUAGE_NAMES: Record<Locale, string> = {
 // the ~60 buildPageContext() call sites. See that file for where each
 // value comes from and why caching it at module scope is safe.
 interface RuntimeIdentity {
+  colo: string;
   instanceId: string;
   version: string;
   commit: string | null;
@@ -65,7 +67,7 @@ export function setRuntimeIdentity(identity: RuntimeIdentity): void {
 // Kept deliberately distinguishable from any real value: a page rendered
 // outside a request (a unit test, a script) says so rather than claiming
 // to have come from a colo that never saw it.
-const UNKNOWN_IDENTITY: RuntimeIdentity = { instanceId: "unknown", version: "unknown", commit: null };
+const UNKNOWN_IDENTITY: RuntimeIdentity = { colo: "unknown", instanceId: "unknown", version: "unknown", commit: null };
 
 export interface PageContextOptions {
   path: string;
@@ -105,6 +107,7 @@ export function buildPageContext(options: PageContextOptions): PageContext {
   return {
     canonical_path: canonicalPath,
     flag_path: flagPath,
+    colo: identity.colo,
     instance_id: identity.instanceId,
     version: identity.version,
     commit: identity.commit,
