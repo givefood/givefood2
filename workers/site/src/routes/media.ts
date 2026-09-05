@@ -91,6 +91,28 @@ function parseVariant(url: URL): Variant | null | "bad" {
   return { width, format: f };
 }
 
+// A miss: enqueue the backfill and 404 now. The Google Places / Static Maps
+// / Browser Rendering call NEVER happens inside the user's request.
+//
+// THE CACHE-CONTROL IS THE POINT. This used to be a bare `c.body(null, 404)`
+// with no cache directive, so the 404 took the zone default and was cached
+// at the edge -- which defeats the entire backfill-on-miss design: the first
+// visitor triggers the fill, the object lands in R2 seconds later, and every
+// subsequent visitor keeps getting the cached 404 until it expires. Observed
+// directly on map.png: `404` with `cf-cache-status: HIT` while the PNG was
+// already in R2, and `200` the instant a cache-busting query string was
+// added.
+//
+// 10 seconds rather than no-store: it still collapses the thundering herd
+// that a popular missing image would otherwise send at the queue, but it is
+// short enough that a backfill which takes a few seconds becomes visible
+// almost immediately. A permanently missing object costs one queue message
+// per 10s per colo, which is why the consumer must be idempotent.
+function missing(c: Context<AppEnv>, key: string): Response {
+  c.executionCtx.waitUntil(c.env.JOBS_Q.send({ type: "media-backfill", key }));
+  return c.body(null, 404, { "cache-control": "public, max-age=10" });
+}
+
 // The marker serveVariant() puts on its own subrequest. Checked before
 // anything else so a subrequest is always answered with the stored object,
 // never re-entered into the transform branch.
@@ -125,14 +147,7 @@ async function serveMedia(c: Context<AppEnv>) {
     : {};
   const obj = await c.env.MEDIA.get(key, { onlyIf, range: c.req.raw.headers });
 
-  if (obj === null) {
-    // Missing object. Enqueue a backfill and 404 now -- the Google Places /
-    // Static Maps / Browser Rendering call NEVER happens in the user's request.
-    c.executionCtx.waitUntil(
-      c.env.JOBS_Q.send({ type: "media-backfill", key }),
-    );
-    return c.body(null, 404);
-  }
+  if (obj === null) return missing(c, key);
 
   if (!("body" in obj)) {
     // onlyIf matched -- the caller already has the current bytes.
@@ -175,7 +190,10 @@ async function serveVariant(c: Context<AppEnv>, variant: Variant): Promise<Respo
   // enqueued the backfill on its way to producing it, so there is nothing
   // extra to do here.
   if (!res.ok) {
-    if (res.status === 404) return c.body(null, 404);
+    // The subrequest went through serveMedia's unresized branch, so the
+    // backfill is already enqueued and the short TTL reasoning applies here
+    // too -- do not let a variant 404 outlive the object it is waiting for.
+    if (res.status === 404) return c.body(null, 404, { "cache-control": "public, max-age=10" });
     // Any other failure (an undecodable source, a transform error) is better
     // answered with the original than with a broken <img>: correct pixels,
     // wrong size. Fetch it without the cf.image option.

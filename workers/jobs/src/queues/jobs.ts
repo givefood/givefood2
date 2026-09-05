@@ -1,5 +1,6 @@
 import type { Env } from "../../worker-configuration";
 import { backfillMapImage, isMapImageKey } from "../mediaBackfill/mapImage";
+import { backfillPlacePhoto, isPlacePhotoKey } from "../mediaBackfill/placePhoto";
 import { handleTranslateNeed, type TranslateNeedMessage } from "./translateNeed";
 import { handleFoodbankCheckJob } from "../adminJobs/foodbankCheck";
 import { handleOrderLinesJob } from "../adminJobs/orderLines";
@@ -54,16 +55,27 @@ async function dispatch(body: JobMessage, env: Env): Promise<void> {
 // PLAN.md §3.7: on an R2 miss, fetch/generate the object (Google Places
 // photo, Static Maps, s2 favicon, or a Browser Rendering screenshot
 // depending on which route the key came from) and PUT it into MEDIA with
-// the httpMetadata/customMetadata shape §3.7 specifies. Only the Static
-// Maps family (map.png) is implemented so far -- photo.jpg/favicon.png/
-// screenshots still throw, same as before, until their own fetch/generate
-// logic is built.
+// the httpMetadata/customMetadata shape §3.7 specifies.
+//
+// map.png and photo.jpg are implemented. favicon.png never will be from
+// here -- routes/wfbn/favicon.ts fetches Google's keyless favicon service
+// live and caches the response, because there is no billed-API-call reason
+// to keep it out of the request path (see that file). screenshots/*.png
+// still throws.
+//
+// A photo.jpg miss is expected to be RARE: Django's existing 7,122 photos
+// were bulk-loaded into R2 from its own PlacePhoto table by
+// tools/pg-to-r2/load_photos.py, so this path is for places created since.
 async function handleMediaBackfill(
   message: { type: "media-backfill"; key: string },
   env: Env,
 ): Promise<void> {
   if (isMapImageKey(message.key)) {
     await backfillMapImage(env, message.key);
+    return;
+  }
+  if (isPlacePhotoKey(message.key)) {
+    await backfillPlacePhoto(env, message.key);
     return;
   }
   throw new Error(`media-backfill: not implemented (key=${message.key})`);

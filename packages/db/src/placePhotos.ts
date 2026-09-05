@@ -6,13 +6,13 @@ import type { Session } from "./types";
 // migration 0018_placephoto.sql (PLAN.md's own DDL from :2505-2515)
 // discharges.
 //
-// STANDING CAVEAT, true at the time of writing: nothing writes to
-// `placephoto` yet. workers/jobs/src/queues/jobs.ts:60 throws
-// "media-backfill: not implemented" for every key that isn't a map image, so
-// a photo.jpg miss never inserts a row. Every function here is therefore
-// correct but currently returns nothing -- the admin tab is gated on a
-// non-zero count so it simply doesn't appear until the backfill consumer
-// starts recording rows.
+// The caveat that used to stand here -- "nothing writes to `placephoto`
+// yet" -- was discharged on 2026-09-05. Two things write to it now:
+// tools/pg-to-r2/load_photos.py, which copied Django's existing 7,122
+// photos into R2 and their metadata here, and
+// workers/jobs/src/mediaBackfill/placePhoto.ts, the queue consumer that
+// fills in places created since. The admin photos tab is still gated on a
+// non-zero count, but the count is no longer always zero.
 
 export type PlaceKind = "foodbank" | "location" | "donationpoint";
 
@@ -143,12 +143,11 @@ export async function deletePlacePhoto(session: Session, photoId: number): Promi
 // calls) and re-inserting an identical row. So Django's "Delete" button is a
 // cache bust, not a delete -- the photo is back on the next page view.
 //
-// Clearing the flag is half of making it a real delete. The other half is
-// the media-backfill queue consumer honouring it: serveMedia
-// (workers/site/src/routes/media.ts:58-64) currently enqueues a backfill on
-// ANY R2 miss with no such check. Until that consumer exists and skips a
-// backfill when place_has_photo is 0, this is still a refresh, and the
-// admin UI says so rather than promising otherwise.
+// Clearing the flag is half of making it a real delete. The other half
+// landed 2026-09-05: workers/jobs/src/mediaBackfill/placePhoto.ts checks
+// place_has_photo and returns without fetching when it is 0. serveMedia
+// still enqueues a backfill on any R2 miss -- it has no reason to know --
+// but the consumer now declines to buy the photo back. Delete is a delete.
 //
 // `table` comes from getOwnedPhoto's own CASE expression (a fixed
 // three-value literal), never from a request -- SQLite cannot bind a table
@@ -170,4 +169,50 @@ export async function getFoodbankPhotoCount(session: Session, foodbankId: number
   `;
   const row = await session.prepare(sql).bind(foodbankId).first<{ n: number }>();
   return row?.n ?? 0;
+}
+
+// Written by the media-backfill queue consumer
+// (workers/jobs/src/mediaBackfill/placePhoto.ts) after it has fetched a
+// photo from Google Places and PUT it into R2. Nothing else writes here --
+// the bulk load of Django's existing 7,122 photos goes in over the D1 HTTP
+// API from tools/pg-to-r2/load_photos.py, not through this.
+//
+// ON CONFLICT(place_id), not INSERT OR REPLACE: `id` is the row's identity
+// for the admin's photo-delete route (getOwnedPhoto/deletePlacePhoto above
+// both take one), and REPLACE deletes and reinserts, which would hand the
+// same photo a new id every time a backfill re-ran. photo_ref also carries a
+// UNIQUE index; a collision there is left to throw rather than be swallowed,
+// because it means two places claim one Google photo reference and that is
+// worth seeing in the DLQ rather than silently resolving.
+//
+// `md5` is R2's own etag for the object. R2 computes MD5 for a single-part
+// upload and returns it as the etag, which is the same value
+// load_photos.py's hashlib.md5 produces -- and is the only way to get one
+// inside a Worker, since SubtleCrypto offers SHA family digests only.
+export interface PlacePhotoUpsert {
+  placeId: string;
+  photoRef: string | null;
+  htmlAttributions: string;
+  r2Key: string;
+  bytes: number;
+  md5: string;
+}
+
+export async function upsertPlacePhoto(session: Session, photo: PlacePhotoUpsert): Promise<void> {
+  const sql = `
+    INSERT INTO placephoto
+      (place_id, photo_ref, html_attributions, r2_key, bytes, md5, created, modified)
+    VALUES (?1, ?2, ?3, ?4, ?5, ?6, datetime('now'), datetime('now'))
+    ON CONFLICT(place_id) DO UPDATE SET
+      photo_ref = excluded.photo_ref,
+      html_attributions = excluded.html_attributions,
+      r2_key = excluded.r2_key,
+      bytes = excluded.bytes,
+      md5 = excluded.md5,
+      modified = excluded.modified
+  `;
+  await session
+    .prepare(sql)
+    .bind(photo.placeId, photo.photoRef, photo.htmlAttributions, photo.r2Key, photo.bytes, photo.md5)
+    .run();
 }

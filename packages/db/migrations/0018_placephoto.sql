@@ -29,13 +29,13 @@
 -- is no such behaviour today, and whether there should be is a separate
 -- compliance question PLAN.md already flags for the maintainer.
 --
--- NOTE FOR WHOEVER LANDS THE PHOTO BACKFILL: nothing writes to this table
--- yet. workers/jobs/src/queues/jobs.ts:60 still throws
--- "media-backfill: not implemented" for every key that is not a map image,
--- so photo.jpg misses never produce a row here. Until that consumer is
--- built and inserts one row per fetched photo, this table stays empty and
--- the admin photos tab renders nothing -- which is why foodbank_detail.njk
--- gates the tab trigger on `counts.photos` rather than showing an empty tab.
+-- POPULATED 2026-09-05 (comment updated, DDL untouched): the backfill this
+-- note was waiting for exists. tools/pg-to-r2/load_photos.py loaded the
+-- 7,122 photos Django already held, and
+-- workers/jobs/src/mediaBackfill/placePhoto.ts fills in places created
+-- since. `md5` is R2's etag for the object, which for a single-part upload
+-- is its MD5 -- the same value load_photos.py computes with hashlib, and
+-- the only one obtainable inside a Worker (SubtleCrypto has no MD5).
 CREATE TABLE placephoto (
   id                INTEGER PRIMARY KEY,
   place_id          TEXT,            -- the lookup key; 0 NULLs in production
