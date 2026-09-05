@@ -146,7 +146,7 @@ export async function getEditStats(session: Session): Promise<EditStats> {
     session.prepare(
       `SELECT COUNT(*) AS locations,
               SUM(CASE WHEN is_donation_point = 1 THEN 1 ELSE 0 END) AS location_donation_points
-       FROM foodbanklocation`,
+       FROM foodbanklocation_full`,
     ),
     session.prepare("SELECT COUNT(*) AS donation_points FROM foodbankdonationpoint"),
     // views.py:2409-2413's four separate COUNTs over 95k rows become one

@@ -131,8 +131,8 @@ export interface NeedOptionRow {
 export async function getNeedOptionsForFoodbank(session: Session, foodbankId: number | null, limit = 200): Promise<NeedOptionRow[]> {
   const sql =
     foodbankId === null
-      ? "SELECT id, need_id, foodbank_name, created FROM foodbankchange ORDER BY created DESC LIMIT ?"
-      : "SELECT id, need_id, foodbank_name, created FROM foodbankchange WHERE foodbank_id = ? ORDER BY created DESC LIMIT ?";
+      ? "SELECT id, need_id, foodbank_name, created FROM foodbankchange_full ORDER BY created DESC LIMIT ?"
+      : "SELECT id, need_id, foodbank_name, created FROM foodbankchange_full WHERE foodbank_id = ? ORDER BY created DESC LIMIT ?";
   const statement = foodbankId === null ? session.prepare(sql).bind(limit) : session.prepare(sql).bind(foodbankId, limit);
   const result = await statement.all<NeedOptionRow>();
   return result.results;

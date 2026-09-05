@@ -144,7 +144,7 @@ export async function getLocationsPage(
   const [countRow, result] = await Promise.all([
     session.prepare("SELECT COUNT(*) AS n FROM foodbanklocation").first<{ n: number }>(),
     session
-      .prepare(`SELECT * FROM foodbanklocation ORDER BY ${sortColumn} ${direction === "desc" ? "DESC" : "ASC"} LIMIT ? OFFSET ?`)
+      .prepare(`SELECT * FROM foodbanklocation_full ORDER BY ${sortColumn} ${direction === "desc" ? "DESC" : "ASC"} LIMIT ? OFFSET ?`)
       .bind(pageSize, offset)
       .all(),
   ]);
@@ -166,7 +166,7 @@ export async function getDonationPointsPage(
   const [countRow, result] = await Promise.all([
     session.prepare("SELECT COUNT(*) AS n FROM foodbankdonationpoint").first<{ n: number }>(),
     session
-      .prepare(`SELECT * FROM foodbankdonationpoint ORDER BY ${sort} ${direction === "desc" ? "DESC" : "ASC"} LIMIT ? OFFSET ?`)
+      .prepare(`SELECT * FROM foodbankdonationpoint_full ORDER BY ${sort} ${direction === "desc" ? "DESC" : "ASC"} LIMIT ? OFFSET ?`)
       .bind(pageSize, offset)
       .all(),
   ]);
@@ -314,7 +314,7 @@ export interface DashboardArticleRow {
 export async function getRecentArticlesForAdmin(session: Session, limit: number): Promise<DashboardArticleRow[]> {
   const result = await session
     .prepare(
-      "SELECT a.id, a.foodbank_name, f.slug AS foodbank_slug, a.title, a.url, a.published_date, a.featured " +
+      "SELECT a.id, f.name AS foodbank_name, f.slug AS foodbank_slug, a.title, a.url, a.published_date, a.featured " +
         "FROM foodbankarticle a LEFT JOIN foodbank f ON f.id = a.foodbank_id ORDER BY a.published_date DESC LIMIT ?",
     )
     .bind(limit)
@@ -524,7 +524,7 @@ export async function getNeedsPage(session: Session, page: number, pageSize: num
     session.prepare("SELECT COUNT(*) AS n FROM foodbankchange").first<{ n: number }>(),
     session
       .prepare(
-        `SELECT n.id, n.need_id, n.foodbank_name, f.slug AS foodbank_slug, n.change_text, n.excess_change_text,
+        `SELECT n.id, n.need_id, f.name AS foodbank_name, f.slug AS foodbank_slug, n.change_text, n.excess_change_text,
                 n.published, n.is_categorised, n.input_method, n.created, n.modified
          FROM foodbankchange n
          LEFT JOIN foodbank f ON f.id = n.foodbank_id

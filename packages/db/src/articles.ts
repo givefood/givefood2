@@ -44,7 +44,6 @@ export async function getFoodbankForArticleCrawl(session: Session, foodbankId: n
 
 export interface InsertArticleParams {
   foodbankId: number;
-  foodbankName: string;
   title: string;
   url: string;
   publishedDate: string;
@@ -63,10 +62,10 @@ export async function insertArticleIfNew(session: Session, params: InsertArticle
   const result = await session
     .prepare(
       `INSERT OR IGNORE INTO foodbankarticle
-         (foodbank_id, foodbank_name, title, url, published_date, featured)
-       VALUES (?1, ?2, ?3, ?4, ?5, 0)`,
+         (foodbank_id, title, url, published_date, featured)
+       VALUES (?1, ?2, ?3, ?4, 0)`,
     )
-    .bind(params.foodbankId, params.foodbankName, params.title, params.url, params.publishedDate)
+    .bind(params.foodbankId, params.title, params.url, params.publishedDate)
     .run();
   return result.meta.changes > 0;
 }

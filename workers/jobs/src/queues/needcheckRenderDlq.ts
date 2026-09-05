@@ -22,7 +22,6 @@ export async function handleNeedcheckRenderDlq(batch: MessageBatch<NeedcheckRend
     try {
       await insertFoodbankDiscrepancy(session, {
         foodbankId: message.body.foodbankId,
-        foodbankName: message.body.name,
         url: message.body.url,
         discrepancyType: "website",
         discrepancyText: `Need check repeatedly failed for ${message.body.url} and was dead-lettered after exhausting retries`,

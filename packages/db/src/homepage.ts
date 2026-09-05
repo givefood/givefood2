@@ -34,7 +34,7 @@ export interface RecentlyUpdatedRow {
 export async function getRecentlyUpdated(session: Session, limit: number): Promise<RecentlyUpdatedRow[]> {
   const result = await session
     .prepare(
-      "SELECT foodbank_name FROM foodbankchange " +
+      "SELECT foodbank_name FROM foodbankchange_full " +
         "WHERE published = 1 AND change_text NOT IN ('Unknown', 'Facebook', 'Nothing') AND foodbank_name IS NOT NULL " +
         "ORDER BY created DESC LIMIT ?",
     )
@@ -81,7 +81,7 @@ export interface FeaturedArticleRow {
 // getArticlesByFoodbankId below -- same row shape/join (FeaturedArticleRow),
 // each function differs only in its WHERE clause.
 const ARTICLE_SELECT =
-  "SELECT a.id, a.foodbank_id, a.foodbank_name, f.slug AS foodbank_slug, a.published_date, a.title, a.url, a.featured " +
+  "SELECT a.id, a.foodbank_id, f.name AS foodbank_name, f.slug AS foodbank_slug, a.published_date, a.title, a.url, a.featured " +
   "FROM foodbankarticle a JOIN foodbank f ON f.id = a.foodbank_id ";
 
 // index()'s `articles` -- FoodbankArticle.select_related('foodbank'),
@@ -147,10 +147,10 @@ export async function getRecentlyUpdatedByCountry(
 ): Promise<RecentlyUpdatedRow[]> {
   const result = await session
     .prepare(
-      "SELECT fc.foodbank_name FROM foodbankchange fc " +
+      "SELECT f.name AS foodbank_name FROM foodbankchange fc " +
         "JOIN foodbank f ON f.id = fc.foodbank_id " +
         "WHERE fc.published = 1 AND fc.change_text NOT IN ('Unknown', 'Facebook', 'Nothing') " +
-        "AND fc.foodbank_name IS NOT NULL AND f.country = ? " +
+        "AND f.name IS NOT NULL AND f.country = ? " +
         "ORDER BY fc.created DESC LIMIT ?",
     )
     .bind(countryName, limit)

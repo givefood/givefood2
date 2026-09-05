@@ -113,7 +113,7 @@ export async function adminFoodbankAddSub(c: Context<AppEnv>): Promise<Response>
     // the double opt-in the public /needs/at/<slug>/updates/subscribe/ flow
     // enforces. The page says so in as many words, so an operator knows
     // what they are doing rather than discovering it later.
-    const added = await insertConfirmedSubscribers(db, foodbank.id, foodbank.name, rows);
+    const added = await insertConfirmedSubscribers(db, foodbank.id, rows);
 
     results = {
       added,

@@ -76,7 +76,7 @@ export function mapDonationPointRow(raw: Record<string, unknown>): DonationPoint
 // data would otherwise suggest reaching for.
 export async function getDonationPointsByFoodbankId(session: Session, foodbankId: number): Promise<DonationPointRow[]> {
   const result = await session
-    .prepare("SELECT * FROM foodbankdonationpoint WHERE foodbank_id = ?")
+    .prepare("SELECT * FROM foodbankdonationpoint_full WHERE foodbank_id = ?")
     .bind(foodbankId)
     .all();
   return sortByName(result.results.map(mapDonationPointRow));
@@ -108,7 +108,7 @@ export async function getDonationPointBySlugs(
   donationPointSlug: string,
 ): Promise<DonationPointRow | null> {
   const row = await session
-    .prepare("SELECT * FROM foodbankdonationpoint WHERE slug = ? AND foodbank_slug = ?")
+    .prepare("SELECT * FROM foodbankdonationpoint_full WHERE slug = ? AND foodbank_slug = ?")
     .bind(donationPointSlug, foodbankSlug)
     .first();
   return row ? mapDonationPointRow(row as Record<string, unknown>) : null;
@@ -119,7 +119,7 @@ export async function getDonationPointBySlugs(
 // getOpenDonationPointCoordinates for the cheap candidate-set version
 // ranking actually runs against).
 export async function getAllOpenDonationPoints(session: Session): Promise<DonationPointRow[]> {
-  const result = await session.prepare("SELECT * FROM foodbankdonationpoint WHERE is_closed = 0").all();
+  const result = await session.prepare("SELECT * FROM foodbankdonationpoint_full WHERE is_closed = 0").all();
   return result.results.map(mapDonationPointRow);
 }
 
@@ -143,7 +143,7 @@ export async function getOpenDonationPointsByConstituencyId(
   constituencyId: number,
 ): Promise<DonationPointRow[]> {
   const result = await session
-    .prepare("SELECT * FROM foodbankdonationpoint WHERE parliamentary_constituency_id = ? AND is_closed = 0")
+    .prepare("SELECT * FROM foodbankdonationpoint_full WHERE parliamentary_constituency_id = ? AND is_closed = 0")
     .bind(constituencyId)
     .all();
   return result.results.map(mapDonationPointRow);
@@ -157,7 +157,7 @@ export async function getOpenDonationPointsByConstituencyId(
 // instead of a constituency id.
 export async function getOpenDonationPointsByCountry(session: Session, countryName: string): Promise<DonationPointRow[]> {
   const result = await session
-    .prepare("SELECT * FROM foodbankdonationpoint WHERE country = ? AND is_closed = 0")
+    .prepare("SELECT * FROM foodbankdonationpoint_full WHERE country = ? AND is_closed = 0")
     .bind(countryName)
     .all();
   return result.results.map(mapDonationPointRow);
@@ -169,7 +169,7 @@ export async function getDonationPointsByIds(session: Session, ids: readonly num
   if (ids.length === 0) return [];
   const placeholders = ids.map(() => "?").join(", ");
   const result = await session
-    .prepare(`SELECT * FROM foodbankdonationpoint WHERE id IN (${placeholders})`)
+    .prepare(`SELECT * FROM foodbankdonationpoint_full WHERE id IN (${placeholders})`)
     .bind(...ids)
     .all();
   const rows = result.results.map((r) => mapDonationPointRow(r as Record<string, unknown>));
@@ -225,7 +225,7 @@ const COMPANY_QUERY = `
     f.lat_lng AS fb_lat_lng, f.charity_number AS fb_charity_number, f.network AS fb_network,
     n.need_id AS need_need_id, n.change_text AS need_change_text,
     n.excess_change_text AS need_excess_change_text, n.created AS need_created
-  FROM foodbankdonationpoint dp
+  FROM foodbankdonationpoint_full dp
   JOIN foodbank f ON dp.foodbank_id = f.id
   LEFT JOIN foodbankchange n ON f.latest_need_id = n.id
   WHERE dp.company_slug = ?

@@ -66,7 +66,7 @@ export interface OrderTabRow {
 // by `created` shows a Date column out of date order, and applying the
 // 200-row cap to the wrong key hands back a different 200 rows entirely.
 export async function getNeedsForFoodbankTab(session: Session, foodbankId: number, limit: number): Promise<FoodbankChangeRow[]> {
-  const result = await session.prepare("SELECT * FROM foodbankchange WHERE foodbank_id = ? ORDER BY created DESC LIMIT ?").bind(foodbankId, limit).all();
+  const result = await session.prepare("SELECT * FROM foodbankchange_full WHERE foodbank_id = ? ORDER BY created DESC LIMIT ?").bind(foodbankId, limit).all();
   return result.results.map((r) => mapNeedRow(r as Record<string, unknown>));
 }
 

@@ -292,7 +292,7 @@ export async function searchAdmin(session: Session, rawQuery: string): Promise<A
     session
       .prepare(
         `SELECT name, slug, foodbank_name, foodbank_slug, is_closed
-         FROM foodbanklocation
+         FROM foodbanklocation_full
          WHERE ${containsAnyOf(LOCATION_SEARCH_COLUMNS, mode)}
          ORDER BY is_closed, foodbank_name, name
          LIMIT ${RESULT_LIMIT}`,
@@ -303,7 +303,7 @@ export async function searchAdmin(session: Session, rawQuery: string): Promise<A
     session
       .prepare(
         `SELECT name, slug, foodbank_name, foodbank_slug, is_closed
-         FROM foodbankdonationpoint
+         FROM foodbankdonationpoint_full
          WHERE ${containsAnyOf(DONATION_POINT_SEARCH_COLUMNS, mode)}
          ORDER BY is_closed, foodbank_name, name
          LIMIT ${RESULT_LIMIT}`,

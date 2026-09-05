@@ -392,7 +392,6 @@ export async function adminNeedEditForm(c: Context<AppEnv>): Promise<Response> {
     // whatever the need already has. Nothing is trusted from the form, so
     // there is no slug to validate and no "no food bank with slug X" path.
     const foodbankId = need.foodbank_id;
-    const foodbankName = need.foodbank_name;
     const foodbankSlug = foodbankId !== null ? await getFoodbankSlugById(db, foodbankId) : null;
 
     // givefood/models/needs.py:64 -- `change_text` has no blank=True, so
@@ -410,7 +409,7 @@ export async function adminNeedEditForm(c: Context<AppEnv>): Promise<Response> {
       return renderNeedEditForm(c, db, need, formValues, foodbankSlug, "Need to set a food bank to publish need");
     }
 
-    const updated = await updateNeedRawFields(db, need.need_id, { changeText, excessChangeText, published, foodbankId, foodbankName });
+    const updated = await updateNeedRawFields(db, need.need_id, { changeText, excessChangeText, published, foodbankId });
     if (!updated) return c.notFound();
 
     // needs.py:305-317's `do_translate = self.published` (default) fires

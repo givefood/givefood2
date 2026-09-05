@@ -35,7 +35,6 @@ export interface AdminSubscriberInsert {
 export async function insertConfirmedSubscribers(
   session: Session,
   foodbankId: number,
-  foodbankName: string | null,
   rows: AdminSubscriberInsert[],
 ): Promise<number> {
   if (rows.length === 0) return 0;
@@ -46,11 +45,11 @@ export async function insertConfirmedSubscribers(
   // not matter.
   const created = new Date().toISOString();
   const sql =
-    "INSERT INTO foodbanksubscriber (created, foodbank_id, foodbank_name, email, confirmed, sub_key, unsub_key) " +
-    "VALUES (?, ?, ?, ?, 1, ?, ?) ON CONFLICT(email, foodbank_id) DO NOTHING";
+    "INSERT INTO foodbanksubscriber (created, foodbank_id, email, confirmed, sub_key, unsub_key) " +
+    "VALUES (?, ?, ?, 1, ?, ?) ON CONFLICT(email, foodbank_id) DO NOTHING";
 
   const results = await session.batch(
-    rows.map((r) => session.prepare(sql).bind(created, foodbankId, foodbankName, r.email, r.subKey, r.unsubKey)),
+    rows.map((r) => session.prepare(sql).bind(created, foodbankId, r.email, r.subKey, r.unsubKey)),
   );
   return results.reduce((n, r) => n + (r.meta.changes ?? 0), 0);
 }

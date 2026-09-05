@@ -131,7 +131,7 @@ export async function getFoodbanksForConstituency(
   const results = await session.batch([
     session.prepare("SELECT * FROM foodbank WHERE parliamentary_constituency_id = ? AND is_closed = 0").bind(constituencyId),
     session
-      .prepare(`SELECT ${LOCATION_COLUMNS_NARROW} FROM foodbanklocation WHERE parliamentary_constituency_id = ? AND is_closed = 0`)
+      .prepare(`SELECT ${LOCATION_COLUMNS_NARROW} FROM foodbanklocation_full WHERE parliamentary_constituency_id = ? AND is_closed = 0`)
       .bind(constituencyId),
   ]);
   // batch() always returns one result per input statement, in the same

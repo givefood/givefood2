@@ -153,7 +153,6 @@ export async function wfbnFoodbankUpdates(c: Context<AppEnv>): Promise<Response>
       try {
         await insertSubscriber(session, {
           foodbankId: foodbank.id,
-          foodbankName: foodbank.name,
           email,
           subKey,
           unsubKey,

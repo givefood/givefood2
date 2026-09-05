@@ -73,18 +73,15 @@ export async function upsertDonationPoint(session: Session, params: UpsertDonati
     await session
       .prepare(
         `INSERT INTO foodbankdonationpoint
-           (uuid, foodbank_id, foodbank_name, foodbank_slug, foodbank_network,
+           (uuid, foodbank_id,
             name, slug, address, postcode, country, lat_lng, latitude, longitude,
             is_closed, in_store_only, phone_number, url, opening_hours, wheelchair_accessible,
             company, company_slug, store_id, notes, place_id, modified, edited)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         crypto.randomUUID().replace(/-/g, ""),
         params.foodbankId,
-        params.foodbank.name,
-        params.foodbank.slug,
-        params.foodbank.network,
         params.name,
         slug,
         params.address,

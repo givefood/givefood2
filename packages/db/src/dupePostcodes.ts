@@ -93,7 +93,7 @@ export async function getDuplicatePostcodes(
       UNION ALL
       SELECT postcode, 'location' AS kind, name, foodbank_name,
              foodbank_slug, slug AS loc_slug, is_closed
-        FROM foodbanklocation
+        FROM foodbanklocation_full
        WHERE postcode IS NOT NULL AND TRIM(postcode) <> ''
     ),
     dupes AS (

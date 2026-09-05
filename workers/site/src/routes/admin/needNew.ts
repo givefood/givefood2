@@ -101,7 +101,6 @@ export async function adminNeedNew(c: Context<AppEnv>): Promise<Response> {
     };
 
     let foodbankId: number | null = null;
-    let foodbankName: string | null = null;
     let showPreview = false;
     if (form.foodbank_slug) {
       const foodbank = await getFoodbankBySlug(db, form.foodbank_slug);
@@ -112,7 +111,6 @@ export async function adminNeedNew(c: Context<AppEnv>): Promise<Response> {
       // typed in.
       if (!foodbank) return renderForm(c, form, false, `No food bank with slug "${form.foodbank_slug}"`);
       foodbankId = foodbank.id;
-      foodbankName = foodbank.name;
       showPreview = !!foodbank.url;
     }
 
@@ -138,7 +136,6 @@ export async function adminNeedNew(c: Context<AppEnv>): Promise<Response> {
 
     const created = await insertAdminNeed(db, {
       foodbankId,
-      foodbankName,
       changeText: form.change_text,
       excessChangeText: form.excess_change_text.trim() !== "" ? form.excess_change_text : null,
       published: form.published,

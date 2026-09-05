@@ -57,7 +57,7 @@ export async function getSubscriberByEmailAndFoodbank(
   foodbankId: number,
 ): Promise<FoodbankSubscriberRow | null> {
   const row = await session
-    .prepare("SELECT * FROM foodbanksubscriber WHERE email = ? AND foodbank_id = ?")
+    .prepare("SELECT * FROM foodbanksubscriber_full WHERE email = ? AND foodbank_id = ?")
     .bind(email, foodbankId)
     .first();
   return row ? mapSubscriberRow(row as Record<string, unknown>) : null;
@@ -65,7 +65,6 @@ export async function getSubscriberByEmailAndFoodbank(
 
 export interface InsertSubscriberParams {
   foodbankId: number;
-  foodbankName: string | null;
   email: string;
   subKey: string;
   unsubKey: string;
@@ -80,10 +79,10 @@ export async function insertSubscriber(session: Session, params: InsertSubscribe
   const created = new Date().toISOString();
   const result = await session
     .prepare(
-      "INSERT INTO foodbanksubscriber (created, foodbank_id, foodbank_name, email, confirmed, sub_key, unsub_key) " +
-        "VALUES (?, ?, ?, ?, 0, ?, ?)",
+      "INSERT INTO foodbanksubscriber (created, foodbank_id, email, confirmed, sub_key, unsub_key) " +
+        "VALUES (?, ?, ?, 0, ?, ?)",
     )
-    .bind(created, params.foodbankId, params.foodbankName, params.email, params.subKey, params.unsubKey)
+    .bind(created, params.foodbankId, params.email, params.subKey, params.unsubKey)
     .run();
   return result.meta.last_row_id;
 }
@@ -92,14 +91,14 @@ export async function insertSubscriber(session: Session, params: InsertSubscribe
 // single-row lookup with no other predicate needed (see
 // 0004_subscribers.sql's own comment on why that index exists).
 export async function getSubscriberBySubKey(session: Session, subKey: string): Promise<FoodbankSubscriberRow | null> {
-  const row = await session.prepare("SELECT * FROM foodbanksubscriber WHERE sub_key = ?").bind(subKey).first();
+  const row = await session.prepare("SELECT * FROM foodbanksubscriber_full WHERE sub_key = ?").bind(subKey).first();
   return row ? mapSubscriberRow(row as Record<string, unknown>) : null;
 }
 
 // `updates`'s unsubscribe action -- same shape as getSubscriberBySubKey,
 // against `unsub_key_idx`.
 export async function getSubscriberByUnsubKey(session: Session, unsubKey: string): Promise<FoodbankSubscriberRow | null> {
-  const row = await session.prepare("SELECT * FROM foodbanksubscriber WHERE unsub_key = ?").bind(unsubKey).first();
+  const row = await session.prepare("SELECT * FROM foodbanksubscriber_full WHERE unsub_key = ?").bind(unsubKey).first();
   return row ? mapSubscriberRow(row as Record<string, unknown>) : null;
 }
 

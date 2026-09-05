@@ -53,7 +53,6 @@ export async function handleNeedcheckRenderQueue(batch: MessageBatch<NeedcheckRe
         const session = env.DB.withSession("first-unconstrained");
         await insertFoodbankDiscrepancy(session, {
           foodbankId: message.body.foodbankId,
-          foodbankName: message.body.name,
           url: message.body.url,
           discrepancyType: "website",
           discrepancyText: `Need check failed: ${err.message}`,
@@ -115,7 +114,6 @@ async function processOne(env: Env, msg: NeedcheckRenderMessage): Promise<void> 
   const writeDiscrepancy = (text: string) =>
     insertFoodbankDiscrepancy(session, {
       foodbankId: msg.foodbankId,
-      foodbankName: foodbank.name,
       url: foodbank.url,
       discrepancyType: "website",
       discrepancyText: text,
@@ -210,7 +208,6 @@ async function processOne(env: Env, msg: NeedcheckRenderMessage): Promise<void> 
   if (decision.kind === "change") {
     newNeedId = await insertFoodbankChange(session, {
       foodbankId: msg.foodbankId,
-      foodbankName: foodbank.name,
       uri: foodbank.shopping_list_url,
       changeText: decision.needText,
       excessChangeText: decision.excessText,

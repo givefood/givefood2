@@ -67,13 +67,15 @@ export async function getPhotosForFoodbankTab(session: Session, foodbankId: numb
      WHERE f.id = ?1 AND f.place_id IS NOT NULL AND f.place_has_photo = 1
     UNION ALL
     SELECT pp.id, pp.place_id, pp.r2_key, l.name,
-           'location', 1, l.foodbank_slug, l.slug
+           'location', 1, lf.slug, l.slug
       FROM foodbanklocation l JOIN placephoto pp ON pp.place_id = l.place_id
+      JOIN foodbank lf ON lf.id = l.foodbank_id
      WHERE l.foodbank_id = ?1 AND l.place_id IS NOT NULL AND l.place_has_photo = 1
     UNION ALL
     SELECT pp.id, pp.place_id, pp.r2_key, d.name,
-           'donationpoint', 2, d.foodbank_slug, d.slug
+           'donationpoint', 2, df.slug, d.slug
       FROM foodbankdonationpoint d JOIN placephoto pp ON pp.place_id = d.place_id
+      JOIN foodbank df ON df.id = d.foodbank_id
      WHERE d.foodbank_id = ?1 AND d.place_id IS NOT NULL AND d.place_has_photo = 1
     ORDER BY ord, place_name
   `;

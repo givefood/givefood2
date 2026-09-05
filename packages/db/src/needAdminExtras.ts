@@ -19,7 +19,6 @@ import { recomputeFoodbankNeedFields } from "./needAdmin";
 
 export interface InsertAdminNeedParams {
   foodbankId: number | null;
-  foodbankName: string | null;
   changeText: string;
   excessChangeText: string | null;
   published: boolean;
@@ -74,11 +73,11 @@ export async function insertAdminNeed(session: Session, params: InsertAdminNeedP
   const result = await session
     .prepare(
       `INSERT INTO foodbankchange
-         (need_id, foodbank_id, foodbank_name, change_text, excess_change_text,
+         (need_id, foodbank_id, change_text, excess_change_text,
           input_method, published, nonpertinent, is_categorised, created, modified)
-       VALUES (?1, ?2, ?3, ?4, ?5, 'typed', ?6, 0, 0, ?7, ?7)`,
+       VALUES (?1, ?2, ?3, ?4, 'typed', ?5, 0, 0, ?6, ?6)`,
     )
-    .bind(needId, params.foodbankId, params.foodbankName, params.changeText, params.excessChangeText, params.published ? 1 : 0, now)
+    .bind(needId, params.foodbankId, params.changeText, params.excessChangeText, params.published ? 1 : 0, now)
     .run();
 
   if (params.foodbankId !== null) await recomputeFoodbankNeedFields(session, params.foodbankId);

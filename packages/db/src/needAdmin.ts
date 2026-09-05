@@ -30,7 +30,7 @@ function mapAdminNeedRow(raw: Record<string, unknown>): AdminNeedRow {
 
 export async function getUnpublishedNeeds(session: Session): Promise<AdminNeedRow[]> {
   const result = await session
-    .prepare("SELECT fc.*, f.slug AS foodbank_slug FROM foodbankchange fc LEFT JOIN foodbank f ON f.id = fc.foodbank_id WHERE fc.published = 0 AND fc.nonpertinent = 0 ORDER BY fc.created DESC")
+    .prepare("SELECT * FROM foodbankchange_full WHERE published = 0 AND nonpertinent = 0 ORDER BY created DESC")
     .all();
   return result.results.map((r) => mapAdminNeedRow(r as Record<string, unknown>));
 }
@@ -41,7 +41,7 @@ export async function getUnpublishedNeeds(session: Session): Promise<AdminNeedRo
 // widening a function three other callers share.
 export async function getPublishedNeedsForAdmin(session: Session, limit: number): Promise<AdminNeedRow[]> {
   const result = await session
-    .prepare("SELECT fc.*, f.slug AS foodbank_slug FROM foodbankchange fc LEFT JOIN foodbank f ON f.id = fc.foodbank_id WHERE fc.published = 1 ORDER BY fc.created DESC LIMIT ?")
+    .prepare("SELECT * FROM foodbankchange_full WHERE published = 1 ORDER BY created DESC LIMIT ?")
     .bind(limit)
     .all();
   return result.results.map((r) => mapAdminNeedRow(r as Record<string, unknown>));
@@ -69,14 +69,14 @@ export interface DiscrepancyRow {
 // getUnpublishedNeeds/getPublishedNeedsForAdmin above.
 export async function getOpenDiscrepancies(session: Session, limit: number): Promise<DiscrepancyRow[]> {
   const result = await session
-    .prepare("SELECT d.*, f.slug AS foodbank_slug FROM foodbankdiscrepancy d LEFT JOIN foodbank f ON f.id = d.foodbank_id WHERE d.status = 'New' ORDER BY d.created DESC LIMIT ?")
+    .prepare("SELECT * FROM foodbankdiscrepancy_full WHERE status = 'New' ORDER BY created DESC LIMIT ?")
     .bind(limit)
     .all<DiscrepancyRow>();
   return result.results;
 }
 
 export async function getDiscrepancyById(session: Session, id: number): Promise<DiscrepancyRow | null> {
-  return session.prepare("SELECT * FROM foodbankdiscrepancy WHERE id = ?").bind(id).first<DiscrepancyRow>();
+  return session.prepare("SELECT * FROM foodbankdiscrepancy_full WHERE id = ?").bind(id).first<DiscrepancyRow>();
 }
 
 // gfadmin/views.py:2206-2217 discrepancy_action -- "invalid" (dismiss) or
@@ -92,7 +92,7 @@ export async function setDiscrepancyStatus(session: Session, id: number, status:
 // published/nonpertinent status, unlike the review queue (WP 6.4) or the
 // unfiltered-but-200-capped /needs/ list -- this export is unbounded.
 export async function getAllNeedsForCsv(session: Session): Promise<FoodbankChangeRow[]> {
-  const result = await session.prepare("SELECT * FROM foodbankchange ORDER BY created DESC").all();
+  const result = await session.prepare("SELECT * FROM foodbankchange_full ORDER BY created DESC").all();
   return result.results.map((r) => mapNeedRow(r as Record<string, unknown>));
 }
 
@@ -103,7 +103,7 @@ export async function getAllNeedsForCsv(session: Session): Promise<FoodbankChang
 // unbounded by any particular need's created time).
 export async function getPrevPublishedNeed(session: Session, foodbankId: number, beforeCreated: string): Promise<FoodbankChangeRow | null> {
   const row = await session
-    .prepare("SELECT * FROM foodbankchange WHERE foodbank_id = ? AND published = 1 AND created < ? ORDER BY created DESC LIMIT 1")
+    .prepare("SELECT * FROM foodbankchange_full WHERE foodbank_id = ? AND published = 1 AND created < ? ORDER BY created DESC LIMIT 1")
     .bind(foodbankId, beforeCreated)
     .first();
   return row ? mapNeedRow(row as Record<string, unknown>) : null;
@@ -111,7 +111,7 @@ export async function getPrevPublishedNeed(session: Session, foodbankId: number,
 
 export async function getPrevNonpertinentNeed(session: Session, foodbankId: number, beforeCreated: string): Promise<FoodbankChangeRow | null> {
   const row = await session
-    .prepare("SELECT * FROM foodbankchange WHERE foodbank_id = ? AND nonpertinent = 1 AND created < ? ORDER BY created DESC LIMIT 1")
+    .prepare("SELECT * FROM foodbankchange_full WHERE foodbank_id = ? AND nonpertinent = 1 AND created < ? ORDER BY created DESC LIMIT 1")
     .bind(foodbankId, beforeCreated)
     .first();
   return row ? mapNeedRow(row as Record<string, unknown>) : null;
@@ -207,7 +207,7 @@ export async function recomputeFoodbankNeedFields(session: Session, foodbankId: 
 // action="publish" was refused for lacking a foodbank -- the caller (the
 // route handler) turns either into the appropriate HTTP response.
 export async function setNeedPublished(session: Session, needId: string, publish: boolean): Promise<FoodbankChangeRow | "needs-foodbank" | null> {
-  const need = await session.prepare("SELECT * FROM foodbankchange WHERE need_id = ?").bind(needId).first();
+  const need = await session.prepare("SELECT * FROM foodbankchange_full WHERE need_id = ?").bind(needId).first();
   if (!need) return null;
   const row = mapNeedRow(need as Record<string, unknown>);
   if (publish && row.foodbank_id === null) return "needs-foodbank";
@@ -224,7 +224,7 @@ export async function setNeedPublished(session: Session, needId: string, publish
 // need happens to be published, foodbank fields are recomputed too, same
 // as any other write that could change which need is "latest".
 export async function setNeedNonpertinent(session: Session, needId: string): Promise<FoodbankChangeRow | null> {
-  const need = await session.prepare("SELECT * FROM foodbankchange WHERE need_id = ?").bind(needId).first();
+  const need = await session.prepare("SELECT * FROM foodbankchange_full WHERE need_id = ?").bind(needId).first();
   if (!need) return null;
   const row = mapNeedRow(need as Record<string, unknown>);
 
@@ -274,7 +274,6 @@ export interface UpdateNeedRawFieldsParams {
   excessChangeText: string | null;
   published: boolean;
   foodbankId: number | null;
-  foodbankName: string | null;
 }
 
 export async function updateNeedRawFields(session: Session, needId: string, params: UpdateNeedRawFieldsParams): Promise<boolean> {
@@ -283,8 +282,8 @@ export async function updateNeedRawFields(session: Session, needId: string, para
 
   const now = new Date().toISOString();
   await session
-    .prepare("UPDATE foodbankchange SET change_text = ?, excess_change_text = ?, published = ?, foodbank_id = ?, foodbank_name = ?, modified = ? WHERE need_id = ?")
-    .bind(params.changeText, params.excessChangeText, params.published ? 1 : 0, params.foodbankId, params.foodbankName, now, needId)
+    .prepare("UPDATE foodbankchange SET change_text = ?, excess_change_text = ?, published = ?, foodbank_id = ?, modified = ? WHERE need_id = ?")
+    .bind(params.changeText, params.excessChangeText, params.published ? 1 : 0, params.foodbankId, now, needId)
     .run();
 
   const affected = new Set([need.foodbank_id, params.foodbankId].filter((id): id is number => id !== null));

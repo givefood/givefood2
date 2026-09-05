@@ -16,8 +16,8 @@ export async function getLocationsAndDonationPointsByFoodbankId(
   foodbankId: number,
 ): Promise<{ locations: FoodbankLocationRow[]; donationPoints: DonationPointRow[] }> {
   const results = await session.batch([
-    session.prepare("SELECT * FROM foodbanklocation WHERE foodbank_id = ?").bind(foodbankId),
-    session.prepare("SELECT * FROM foodbankdonationpoint WHERE foodbank_id = ?").bind(foodbankId),
+    session.prepare("SELECT * FROM foodbanklocation_full WHERE foodbank_id = ?").bind(foodbankId),
+    session.prepare("SELECT * FROM foodbankdonationpoint_full WHERE foodbank_id = ?").bind(foodbankId),
   ]);
   // batch() always returns one result per input statement, in the same
   // order -- exactly 2 here, so these indexes are never actually out of

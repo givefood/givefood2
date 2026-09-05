@@ -91,19 +91,14 @@ export async function upsertLocation(session: Session, params: UpsertLocationPar
     await session
       .prepare(
         `INSERT INTO foodbanklocation
-           (uuid, foodbank_id, foodbank_name, foodbank_slug, foodbank_network, foodbank_phone_number, foodbank_email,
+           (uuid, foodbank_id,
             name, slug, address, postcode, country, lat_lng, latitude, longitude,
             is_closed, is_donation_point, is_mobile, boundary_geojson, phone_number, email, modified, edited)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         crypto.randomUUID().replace(/-/g, ""),
         params.foodbankId,
-        params.foodbank.name,
-        params.foodbank.slug,
-        params.foodbank.network,
-        params.foodbank.phone_number,
-        params.foodbank.contact_email,
         params.name,
         slug,
         params.address,

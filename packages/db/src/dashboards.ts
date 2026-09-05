@@ -215,7 +215,7 @@ export interface ExcessNeedRow {
 // narrowed to the three columns excess.html reads.
 export async function getRecentPublishedChanges(session: Session, limit: number): Promise<ExcessNeedRow[]> {
   const result = await session
-    .prepare("SELECT foodbank_name, excess_change_text, created FROM foodbankchange WHERE published = 1 ORDER BY created DESC LIMIT ?")
+    .prepare("SELECT foodbank_name, excess_change_text, created FROM foodbankchange_full WHERE published = 1 ORDER BY created DESC LIMIT ?")
     .bind(limit)
     .all<ExcessNeedRow>();
   return result.results;

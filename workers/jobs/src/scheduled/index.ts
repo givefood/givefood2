@@ -102,7 +102,6 @@ async function enqueueChunked<T>(queue: Queue<unknown>, items: T[], toBody: (ite
 async function recordEnqueueFailure(session: Session, label: string, missed: number, failedChunks: number): Promise<void> {
   await insertFoodbankDiscrepancy(session, {
     foodbankId: null,
-    foodbankName: null,
     url: null,
     discrepancyType: "website",
     discrepancyText: `${label}: ${missed} food bank(s) across ${failedChunks} chunk(s) failed to enqueue and were not crawled today`,

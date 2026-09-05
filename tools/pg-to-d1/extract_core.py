@@ -29,7 +29,7 @@ Usage:
     uv run --with psycopg2-binary python tools/pg-to-d1/extract_core.py [mode]
 
     modes: (none) = full load  |  dashboards | translations | launch-gaps | geo
-           pcon24cd | foodbank-cache  (both are fix-ups the full load already runs)
+           pcon24cd  (a fix-up the full load already runs)
 
     modes: (none) = the 5 core tables + homepage, dashboards, translations,
     geo, pcon24cd, launch-gaps (the 4 tables found empty in D1 on
@@ -145,8 +145,7 @@ TABLES = [
         'last_charity_check', 'created', 'modified', 'edited',
     ]),
     ("givefood_foodbanklocation", "foodbanklocation", [
-        'id', 'uuid', 'foodbank_id', 'foodbank_name', 'foodbank_slug', 'foodbank_network',
-        'foodbank_phone_number', 'foodbank_email', 'name', 'slug', 'address', 'postcode',
+        'id', 'uuid', 'foodbank_id',         'name', 'slug', 'address', 'postcode',
         'country', 'lat_lng', 'latitude', 'longitude', 'place_id', 'plus_code_compound',
         'plus_code_global', 'place_has_photo', 'county', 'district', 'ward', 'lsoa', 'msoa',
         'parliamentary_constituency_id', 'parliamentary_constituency_name',
@@ -155,7 +154,7 @@ TABLES = [
         'modified', 'edited',
     ]),
     ("givefood_foodbankdonationpoint", "foodbankdonationpoint", [
-        'id', 'uuid', 'foodbank_id', 'foodbank_name', 'foodbank_slug', 'foodbank_network', 'name',
+        'id', 'uuid', 'foodbank_id', 'name',
         'slug', 'address', 'postcode', 'country', 'lat_lng', 'latitude', 'longitude', 'place_id',
         'plus_code_compound', 'plus_code_global', 'place_has_photo', 'county', 'district', 'ward',
         'lsoa', 'msoa', 'parliamentary_constituency_id', 'parliamentary_constituency_name',
@@ -164,7 +163,7 @@ TABLES = [
         'company', 'company_slug', 'store_id', 'notes', 'modified', 'edited',
     ]),
     ("givefood_foodbankchange", "foodbankchange", [
-        'id', 'need_id', 'foodbank_id', 'foodbank_name', 'distill_id', 'name', 'uri',
+        'id', 'need_id', 'foodbank_id', 'distill_id', 'name', 'uri',
         'change_text', 'change_text_original', 'excess_change_text',
         'excess_change_text_original', 'published', 'nonpertinent', 'is_categorised', 'notified',
         'input_method', 'created', 'modified',
@@ -194,7 +193,7 @@ HOMEPAGE_TABLES = [
         "order_by": "foodbank_id, day",
     }),
     ("givefood_foodbankarticle", "foodbankarticle", [
-        'id', 'foodbank_id', 'foodbank_name', 'published_date', 'title', 'url', 'featured',
+        'id', 'foodbank_id', 'published_date', 'title', 'url', 'featured',
     ], {
         "where": "featured = true",
     }),
@@ -207,7 +206,7 @@ HOMEPAGE_TABLES = [
 # (migrations/0005_orders_and_charity.sql) with no prior D1 data at all.
 DASHBOARD_TABLES = [
     ("givefood_foodbankarticle", "foodbankarticle", [
-        'id', 'foodbank_id', 'foodbank_name', 'published_date', 'title', 'url', 'featured',
+        'id', 'foodbank_id', 'published_date', 'title', 'url', 'featured',
     ]),
     ("givefood_order", "orders", [
         'id', 'order_id', 'items_text', 'country', 'created', 'modified',
@@ -269,7 +268,7 @@ DASHBOARD_TABLES = [
 # missed. Re-run it as part of the T-0 catch-up.
 LAUNCH_GAP_TABLES = [
     ("givefood_foodbanksubscriber", "foodbanksubscriber", [
-        'id', 'created', 'last_contacted', 'foodbank_id', 'foodbank_name', 'email',
+        'id', 'created', 'last_contacted', 'foodbank_id', 'email',
         'confirmed', 'sub_key', 'unsub_key',
     ]),
     ("givefood_orderitem", "orderitem", [
@@ -612,109 +611,6 @@ def backfill_pcon24cd(token_box):
     return matched
 
 
-# Django's own comment for this block of Foodbank fields copied onto every
-# child row is "Cache foodbank details" (models/foodbank.py:948-954 for
-# FoodbankLocation, :1292-1296 for FoodbankDonationPoint). It is an artifact
-# of the site's original no-SQL datastore, where there were no joins to make.
-#
-# The cache is refreshed only in the CHILD's save(). Foodbank.save() does not
-# cascade, so renaming a food bank -- or changing its phone number, email,
-# network or is_closed -- leaves every one of its locations and donation
-# points holding the old value until each is next saved by hand. Measured
-# against production on 2026-09-05: 20 donation points and 4 locations
-# disagreed with their parent's slug, 24 with its name, 44 with its phone
-# number, 38 with its email.
-#
-# That is not cosmetic. Both getDonationPointBySlugs and Django's own
-# equivalent FIND a child by its cached foodbank_slug, so a stale copy 404s
-# the child's real page -- which is how this was found, via a photo URL that
-# no page could ever satisfy (see tools/pg-to-r2/load_photos.py's own note).
-#
-# So the ETL derives them rather than copying Postgres's stale values
-# through. Postgres keeps its own drift; D1 does not inherit it.
-#
-# DELIBERATELY LIMITED TO THE FOODBANK -> CHILD COPIES. The constituency
-# columns (parliamentary_constituency_name/slug, mp, mp_party, mp_parl_id)
-# look like the same pattern and are not: they sit outside Django's "cache
-# foodbank details" block, they are set during geocoding, and 765 food banks
-# and 4,743 donation points currently disagree with the parliamentary
-# constituency table -- which is the 2024 boundary review, not staleness.
-# Rewriting those would be a large, different, unrequested change.
-RESYNC_TARGETS = [
-    # (child table, [(child column, parent column), ...])
-    ("foodbanklocation", [
-        ("foodbank_name", "name"),
-        ("foodbank_slug", "slug"),
-        ("foodbank_network", "network"),
-        ("foodbank_phone_number", "phone_number"),
-        ("foodbank_email", "contact_email"),
-        ("is_closed", "is_closed"),
-    ]),
-    ("foodbankdonationpoint", [
-        ("foodbank_name", "name"),
-        ("foodbank_slug", "slug"),
-        ("foodbank_network", "network"),
-        ("is_closed", "is_closed"),
-    ]),
-]
-
-
-def resync_foodbank_cache(token_box):
-    """Point every child's cached parent fields back at its parent, then
-    prove it. Returns the total number of rows changed."""
-    changed = 0
-    for table, mapping in RESYNC_TARGETS:
-        sets = ", ".join(
-            "%s = (SELECT p.%s FROM foodbank p WHERE p.id = %s.foodbank_id)" % (child, parent, table)
-            for child, parent in mapping
-        )
-        # `IS NOT` rather than `!=` throughout: SQLite's `!=` is NULL-
-        # propagating, so a row where one side is NULL and the other is not
-        # would compare NULL, fall out of the WHERE, and never be fixed --
-        # nor be reported by the verification below.
-        where = " OR ".join(
-            "%s.%s IS NOT (SELECT p.%s FROM foodbank p WHERE p.id = %s.foodbank_id)" % (table, child, parent, table)
-            for child, parent in mapping
-        )
-        # ORPHAN GUARD. D1 has no foreign keys (PLAN.md §4.5), so a child
-        # whose foodbank_id matches nothing is possible. Without this the
-        # subqueries above would each return NULL and the UPDATE would
-        # quietly erase that row's cached values -- and the verification
-        # below, which JOINs, would not notice. There are 0 such rows today;
-        # this is here so that stays a fact rather than an assumption.
-        orphans = d1_query(
-            token_box,
-            "SELECT COUNT(*) AS n FROM %s c WHERE NOT EXISTS "
-            "(SELECT 1 FROM foodbank p WHERE p.id = c.foodbank_id)" % table,
-        )["result"][0]["results"][0]["n"]
-        if orphans:
-            print("foodbank cache: %s has %d row(s) with no parent, left untouched" % (table, orphans), flush=True)
-
-        guard = "EXISTS (SELECT 1 FROM foodbank p WHERE p.id = %s.foodbank_id)" % table
-        result = d1_query(token_box, "UPDATE %s SET %s WHERE %s AND (%s)" % (table, sets, guard, where))
-        if not result.get("success"):
-            raise RuntimeError("foodbank-cache resync failed on %s: %s" % (table, result))
-        n = result.get("result", [{}])[0].get("meta", {}).get("changes", 0)
-        print("foodbank cache: %s, %d row(s) resynced" % (table, n), flush=True)
-        changed += n
-
-    # Verify rather than assume. A silent no-op here would look exactly like
-    # a clean run.
-    for table, mapping in RESYNC_TARGETS:
-        for child, parent in mapping:
-            sql = (
-                "SELECT COUNT(*) AS n FROM %s c JOIN foodbank p ON p.id = c.foodbank_id "
-                "WHERE c.%s IS NOT p.%s" % (table, child, parent)
-            )
-            result = d1_query(token_box, sql)
-            n = result["result"][0]["results"][0]["n"]
-            if n:
-                raise RuntimeError(
-                    "foodbank-cache resync left %d row(s) mismatched on %s.%s" % (n, table, child)
-                )
-    return changed
-
-
 def run_table_list(token_box, table_list, cur):
     total_loaded = 0
     for entry in table_list:
@@ -757,10 +653,6 @@ def main():
         total_loaded = run_table_list(token_box, GEO_TABLES, cur)
         print("place_fts: rebuilding...", flush=True)
         rebuild_place_fts(token_box)
-    elif mode == "foodbank-cache":
-        # Standalone re-run, for when a food bank has been renamed in the
-        # admin since the last full load.
-        total_loaded = resync_foodbank_cache(token_box)
     elif mode == "pcon24cd":
         # Standalone re-run -- e.g. after a schema-only fix to parlcon.json
         # itself, with no need to also reload the other 4 TABLES.
@@ -776,10 +668,6 @@ def main():
         # sits mid-refresh without it (see backfill_pcon24cd's own comment).
         print("pcon24cd: backfilling...", flush=True)
         backfill_pcon24cd(token_box)
-        # AFTER the core tables, never before: it derives the children from
-        # the foodbank rows this run has just written.
-        print("foodbank cache: resyncing...", flush=True)
-        resync_foodbank_cache(token_box)
         stats = load_site_stats(token_box, cur)
         print("site_stats: foodbanks=%d donationpoints=%d items=%d meals=%d" % stats, flush=True)
 

@@ -36,7 +36,7 @@ export function mapNeedRow(raw: Record<string, unknown>): FoodbankChangeRow {
 // and gfapi2 `needs` (hardcoded limit=100).
 export async function getPublishedNeeds(session: Session, limit: number): Promise<FoodbankChangeRow[]> {
   const result = await session
-    .prepare("SELECT * FROM foodbankchange WHERE published = 1 ORDER BY created DESC LIMIT ?")
+    .prepare("SELECT * FROM foodbankchange_full WHERE published = 1 ORDER BY created DESC LIMIT ?")
     .bind(limit)
     .all();
   return result.results.map(mapNeedRow);
@@ -77,7 +77,7 @@ export async function getRecentPublishedNeedsForRss(session: Session, limit: num
 // accepting either dashed or dashless input.
 export async function getNeedByUuid(session: Session, needId: string): Promise<FoodbankChangeRow | null> {
   const row = await session
-    .prepare("SELECT * FROM foodbankchange WHERE need_id = ?")
+    .prepare("SELECT * FROM foodbankchange_full WHERE need_id = ?")
     .bind(normalizeUuid(needId))
     .first();
   return row ? mapNeedRow(row as Record<string, unknown>) : null;
@@ -89,7 +89,7 @@ export async function getNeedByUuid(session: Session, needId: string): Promise<F
 // (PLAN.md §4.3); a PK lookup scans exactly one row either way, so this
 // costs nothing extra over a JOIN.
 export async function getNeedById(session: Session, id: number): Promise<FoodbankChangeRow | null> {
-  const row = await session.prepare("SELECT * FROM foodbankchange WHERE id = ?").bind(id).first();
+  const row = await session.prepare("SELECT * FROM foodbankchange_full WHERE id = ?").bind(id).first();
   return row ? mapNeedRow(row as Record<string, unknown>) : null;
 }
 
@@ -106,7 +106,7 @@ export async function getNeedsByIds(session: Session, ids: readonly number[]): P
   if (ids.length === 0) return new Map();
   const placeholders = ids.map(() => "?").join(", ");
   const result = await session
-    .prepare(`SELECT * FROM foodbankchange WHERE id IN (${placeholders})`)
+    .prepare(`SELECT * FROM foodbankchange_full WHERE id IN (${placeholders})`)
     .bind(...ids)
     .all();
   const rows = result.results.map((r) => mapNeedRow(r as Record<string, unknown>));

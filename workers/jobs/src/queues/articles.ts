@@ -66,7 +66,6 @@ async function processOne(env: Env, msg: ArticlesMessage): Promise<void> {
       for (const item of items) {
         const inserted = await insertArticleIfNew(session, {
           foodbankId: msg.foodbankId,
-          foodbankName: foodbank.name,
           title: item.title.slice(0, 250), // crawlers.py:50's item.title[0:250]
           url: item.link,
           publishedDate: item.publishedDate!.toISOString(), // parseFeed already filters out dateless items

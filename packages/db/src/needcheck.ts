@@ -119,7 +119,7 @@ export async function finishCrawlItem(session: Session, crawlItemId: number, nee
 // published=True).latest("created")`.
 export async function getLastPublishedNeed(session: Session, foodbankId: number): Promise<FoodbankChangeRow | null> {
   const row = await session
-    .prepare("SELECT * FROM foodbankchange WHERE foodbank_id = ?1 AND published = 1 ORDER BY created DESC LIMIT 1")
+    .prepare("SELECT * FROM foodbankchange_full WHERE foodbank_id = ?1 AND published = 1 ORDER BY created DESC LIMIT 1")
     .bind(foodbankId)
     .first();
   return row ? mapNeedRow(row as Record<string, unknown>) : null;
@@ -130,7 +130,7 @@ export async function getLastPublishedNeed(session: Session, foodbankId: number)
 // suppression window (§8.5.3 stage 9 / §8.5.5's dedup mechanism).
 export async function getLastUnpublishedNeeds(session: Session, foodbankId: number, limit: number): Promise<FoodbankChangeRow[]> {
   const result = await session
-    .prepare("SELECT * FROM foodbankchange WHERE foodbank_id = ?1 AND published = 0 ORDER BY created DESC LIMIT ?2")
+    .prepare("SELECT * FROM foodbankchange_full WHERE foodbank_id = ?1 AND published = 0 ORDER BY created DESC LIMIT ?2")
     .bind(foodbankId, limit)
     .all();
   return result.results.map((r) => mapNeedRow(r as Record<string, unknown>));
@@ -138,7 +138,6 @@ export async function getLastUnpublishedNeeds(session: Session, foodbankId: numb
 
 export interface InsertFoodbankChangeParams {
   foodbankId: number;
-  foodbankName: string;
   uri: string;
   changeText: string;
   excessChangeText: string;
@@ -160,19 +159,18 @@ export async function insertFoodbankChange(session: Session, params: InsertFoodb
   const result = await session
     .prepare(
       `INSERT INTO foodbankchange
-         (need_id, foodbank_id, foodbank_name, uri,
+         (need_id, foodbank_id, uri,
           change_text, change_text_original, excess_change_text, excess_change_text_original,
           input_method, published, nonpertinent, is_categorised, created, modified)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?5, ?6, ?6, 'ai', 0, 0, 0, ?7, ?7)`,
+       VALUES (?1, ?2, ?3, ?4, ?4, ?5, ?5, 'ai', 0, 0, 0, ?6, ?6)`,
     )
-    .bind(needId, params.foodbankId, params.foodbankName, params.uri, params.changeText, params.excessChangeText, now)
+    .bind(needId, params.foodbankId, params.uri, params.changeText, params.excessChangeText, now)
     .run();
   return result.meta.last_row_id;
 }
 
 export interface InsertFoodbankDiscrepancyParams {
   foodbankId: number | null; // NULL for a cron-level discrepancy not tied to one food bank (e.g. a partial enqueue failure)
-  foodbankName: string | null;
   url: string | null;
   discrepancyType: string;
   discrepancyText: string;
@@ -188,10 +186,10 @@ export async function insertFoodbankDiscrepancy(session: Session, params: Insert
   const result = await session
     .prepare(
       `INSERT INTO foodbankdiscrepancy
-         (foodbank_id, foodbank_name, need_id, url, discrepancy_type, discrepancy_text, status, created, modified)
-       VALUES (?1, ?2, NULL, ?3, ?4, ?5, 'New', ?6, ?6)`,
+         (foodbank_id, need_id, url, discrepancy_type, discrepancy_text, status, created, modified)
+       VALUES (?1, NULL, ?2, ?3, ?4, 'New', ?5, ?5)`,
     )
-    .bind(params.foodbankId, params.foodbankName, params.url, params.discrepancyType, params.discrepancyText, now)
+    .bind(params.foodbankId, params.url, params.discrepancyType, params.discrepancyText, now)
     .run();
   return result.meta.last_row_id;
 }

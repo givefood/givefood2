@@ -182,62 +182,6 @@ const COLUMN_NAME_RE = /^[a-z_]+$/;
 // in Django either.
 //
 // Returns the row's slug when this write changed it (i.e. the name was
-// The Foodbank fields every location, donation point, article, need,
-// discrepancy and subscriber keeps its own copy of. Django calls this block
-// "Cache foodbank details" (models/foodbank.py:948-954, :1292-1296) -- an
-// artifact of the site's original no-SQL datastore, where there were no
-// joins to make.
-//
-// Django refreshes the copy only in the CHILD's save(); Foodbank.save()
-// does not cascade. So renaming a food bank there strands every child on
-// the old value until each is next saved by hand -- and because
-// getDonationPointBySlugs and Django's own equivalent FIND a child by its
-// cached foodbank_slug, a stale copy 404s the child's real page. That is
-// not theoretical: 20 donation points and 4 locations were in exactly that
-// state, found via a photo URL no page could satisfy.
-//
-// tools/pg-to-d1/extract_core.py repairs this at load time, but there is no
-// nightly ETL after cutover, so a rename in production would 404 real pages
-// until someone ran it by hand. This closes it at the source instead.
-//
-// DERIVED BY SUBQUERY, not bound from `fields`: the admin's partial forms
-// post a subset (the Address form sends lat_lng and no name), so reading
-// the parent row back is the only thing that is right for every caller.
-const FOODBANK_CACHE_CASCADE: readonly { table: string; columns: readonly (readonly [string, string])[] }[] = [
-  { table: "foodbanklocation", columns: [
-    ["foodbank_name", "name"], ["foodbank_slug", "slug"], ["foodbank_network", "network"],
-    ["foodbank_phone_number", "phone_number"], ["foodbank_email", "contact_email"], ["is_closed", "is_closed"],
-  ] },
-  { table: "foodbankdonationpoint", columns: [
-    ["foodbank_name", "name"], ["foodbank_slug", "slug"], ["foodbank_network", "network"], ["is_closed", "is_closed"],
-  ] },
-  { table: "foodbankarticle", columns: [["foodbank_name", "name"]] },
-  { table: "foodbankchange", columns: [["foodbank_name", "name"]] },
-  { table: "foodbankdiscrepancy", columns: [["foodbank_name", "name"]] },
-  { table: "foodbanksubscriber", columns: [["foodbank_name", "name"]] },
-];
-
-// The parent columns above. A save that touches none of them cannot have
-// invalidated any child, so it skips the cascade entirely -- `name` is in
-// the list because slug is derived from it.
-const CASCADING_FIELDS = ["name", "network", "phone_number", "contact_email", "is_closed"];
-
-export async function cascadeFoodbankCache(session: Session, foodbankId: number): Promise<void> {
-  await session.batch(
-    FOODBANK_CACHE_CASCADE.map(({ table, columns }) =>
-      session
-        .prepare(
-          `UPDATE ${table} SET ` +
-            columns
-              .map(([child, parent]) => `${child} = (SELECT p.${parent} FROM foodbank p WHERE p.id = ${table}.foodbank_id)`)
-              .join(", ") +
-            ` WHERE foodbank_id = ?1`,
-        )
-        .bind(foodbankId),
-    ),
-  );
-}
-
 // part of `fields`), otherwise null -- callers redirect to
 // `admin:foodbank` with the slug the record now has, exactly as
 // gfadmin/views.py:836 does with the post-save `foodbank.slug`.
@@ -279,11 +223,6 @@ export async function updateFoodbankFields(session: Session, id: number, fields:
     .prepare(`UPDATE foodbank SET ${[setSql, ...derivedSql, tailSql].filter(Boolean).join(", ")} WHERE id = ?`)
     .bind(...values, ...derivedValues, ...tailValues, id)
     .run();
-
-  // AFTER the parent UPDATE, so the subqueries read the new values.
-  if (entries.some(([name]) => CASCADING_FIELDS.includes(name))) {
-    await cascadeFoodbankCache(session, id);
-  }
 
   return newSlug;
 }

@@ -61,7 +61,7 @@ export function mapLocationRow(raw: Record<string, unknown>): FoodbankLocationRo
 // comment in types.ts.
 export async function getLocationsByFoodbankId(session: Session, foodbankId: number): Promise<FoodbankLocationRow[]> {
   const result = await session
-    .prepare("SELECT * FROM foodbanklocation WHERE foodbank_id = ?")
+    .prepare("SELECT * FROM foodbanklocation_full WHERE foodbank_id = ?")
     .bind(foodbankId)
     .all();
   return sortByName(result.results.map(mapLocationRow));
@@ -95,7 +95,7 @@ export async function getLocationLatLngsByFoodbankId(session: Session, foodbankI
 // Same "no is_closed filter" behaviour as getLocationsByFoodbankId.
 export async function getLocationsByFoodbankIdUnsorted(session: Session, foodbankId: number): Promise<FoodbankLocationRow[]> {
   const result = await session
-    .prepare("SELECT * FROM foodbanklocation WHERE foodbank_id = ?")
+    .prepare("SELECT * FROM foodbanklocation_full WHERE foodbank_id = ?")
     .bind(foodbankId)
     .all();
   return result.results.map(mapLocationRow);
@@ -105,7 +105,7 @@ export async function getLocationsByFoodbankIdUnsorted(session: Session, foodban
 // surviving winners (see getOpenLocationCoordinates for the cheap
 // candidate-set version ranking actually runs against).
 export async function getAllOpenLocations(session: Session): Promise<FoodbankLocationRow[]> {
-  const result = await session.prepare("SELECT * FROM foodbanklocation WHERE is_closed = 0").all();
+  const result = await session.prepare("SELECT * FROM foodbanklocation_full WHERE is_closed = 0").all();
   return result.results.map(mapLocationRow);
 }
 
@@ -115,7 +115,7 @@ export async function getAllOpenLocations(session: Session): Promise<FoodbankLoc
 // large TEXT blob on this table; getAllOpenLocations() above would pull
 // ~2,000 of those just to read two string columns off each row.
 export async function getAllOpenLocationSlugs(session: Session): Promise<Array<{ foodbank_slug: string; slug: string }>> {
-  const result = await session.prepare("SELECT foodbank_slug, slug FROM foodbanklocation WHERE is_closed = 0").all();
+  const result = await session.prepare("SELECT foodbank_slug, slug FROM foodbanklocation_full WHERE is_closed = 0").all();
   return result.results as unknown as Array<{ foodbank_slug: string; slug: string }>;
 }
 
@@ -124,7 +124,7 @@ export async function getAllOpenLocationSlugs(session: Session): Promise<Array<{
 export async function getAllOpenLocationSlugsWithNames(
   session: Session,
 ): Promise<Array<{ foodbank_slug: string; slug: string; name: string }>> {
-  const result = await session.prepare("SELECT foodbank_slug, slug, name FROM foodbanklocation WHERE is_closed = 0").all();
+  const result = await session.prepare("SELECT foodbank_slug, slug, name FROM foodbanklocation_full WHERE is_closed = 0").all();
   return result.results as unknown as Array<{ foodbank_slug: string; slug: string; name: string }>;
 }
 
@@ -134,7 +134,7 @@ export async function getAllOpenLocationSlugsWithNames(
 // three-valued WHERE logic, matching Django's `is_donation_point=True`.
 export async function getOpenDonationPointLocations(session: Session): Promise<FoodbankLocationRow[]> {
   const result = await session
-    .prepare("SELECT * FROM foodbanklocation WHERE is_closed = 0 AND is_donation_point = 1")
+    .prepare("SELECT * FROM foodbanklocation_full WHERE is_closed = 0 AND is_donation_point = 1")
     .all();
   return result.results.map(mapLocationRow);
 }
@@ -199,7 +199,7 @@ export async function getLocationsByIds(session: Session, ids: readonly number[]
   if (ids.length === 0) return [];
   const placeholders = ids.map(() => "?").join(", ");
   const result = await session
-    .prepare(`SELECT * FROM foodbanklocation WHERE id IN (${placeholders})`)
+    .prepare(`SELECT * FROM foodbanklocation_full WHERE id IN (${placeholders})`)
     .bind(...ids)
     .all();
   const rows = result.results.map((r) => mapLocationRow(r as Record<string, unknown>));
@@ -219,7 +219,7 @@ export async function getFoodbankLocationBySlugs(
   locationSlug: string,
 ): Promise<FoodbankLocationRow | null> {
   const row = await session
-    .prepare("SELECT * FROM foodbanklocation WHERE slug = ? AND foodbank_slug = ?")
+    .prepare("SELECT * FROM foodbanklocation_full WHERE slug = ? AND foodbank_slug = ?")
     .bind(locationSlug, foodbankSlug)
     .first();
   return row ? mapLocationRow(row as Record<string, unknown>) : null;
@@ -232,7 +232,7 @@ export async function getOpenLocationsByConstituencyId(
   constituencyId: number,
 ): Promise<FoodbankLocationRow[]> {
   const result = await session
-    .prepare("SELECT * FROM foodbanklocation WHERE parliamentary_constituency_id = ? AND is_closed = 0")
+    .prepare("SELECT * FROM foodbanklocation_full WHERE parliamentary_constituency_id = ? AND is_closed = 0")
     .bind(constituencyId)
     .all();
   return result.results.map(mapLocationRow);
@@ -246,7 +246,7 @@ export async function getOpenLocationsByConstituencyId(
 // instead of a constituency id.
 export async function getOpenLocationsByCountry(session: Session, countryName: string): Promise<FoodbankLocationRow[]> {
   const result = await session
-    .prepare("SELECT * FROM foodbanklocation WHERE country = ? AND is_closed = 0")
+    .prepare("SELECT * FROM foodbanklocation_full WHERE country = ? AND is_closed = 0")
     .bind(countryName)
     .all();
   return result.results.map(mapLocationRow);
