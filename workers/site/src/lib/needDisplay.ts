@@ -1,5 +1,5 @@
 import { getNeedTranslation, type FoodbankWithLatestNeed, type Session } from "@givefood/db";
-import { nonEmptyLines, resolveNeedText } from "./fields";
+import { nonEmptyLines, resolveNeedText } from "@givefood/models";
 
 export interface NeedDisplay {
   changeText: string;

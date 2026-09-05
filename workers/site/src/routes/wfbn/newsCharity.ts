@@ -4,7 +4,7 @@ import { buildPageContext, render } from "@givefood/templates";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
 import { elapsedMs } from "../../middleware/serverTiming";
-import { CHARITY_DETAIL_COUNTRIES, fullNameLocaleAware, mapArticleRow } from "../../lib/fields";
+import { CHARITY_DETAIL_COUNTRIES, fullNameLocaleAware, mapArticleRow } from "@givefood/models";
 import { formatCharityRegDate, openCharitiesUrl, pythonSplitlines } from "./md/newsCharity";
 
 // gfwfbn `foodbank_news` (GET /needs/at/<slug>/news/, i18n-patterned).

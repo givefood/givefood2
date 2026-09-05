@@ -3,7 +3,7 @@ import { getFoodbankBySlug, getFoodbankLocationBySlugs, getLocationsByFoodbankId
 import { render } from "@givefood/templates";
 import type { AppEnv } from "../../../types";
 import { dbSession } from "../../../lib/session";
-import { fullNameFoodbank, nonEmptyLines } from "../../../lib/fields";
+import { fullNameFoodbank, nonEmptyLines } from "@givefood/models";
 
 // gfwfbn `md_foodbank_locations` (GET /md/needs/at/<slug>/locations/,
 // untranslated -- outside i18n_patterns). no_locations === 0 is a bare

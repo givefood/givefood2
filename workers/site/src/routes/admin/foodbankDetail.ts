@@ -20,7 +20,7 @@ import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
 import { verifyCsrf, issueCsrfToken } from "../../lib/csrf";
 import { adminPageContext } from "./pageContext";
-import { fullNameFoodbank, titleCapitalised } from "../../lib/fields";
+import { fullNameFoodbank, titleCapitalised } from "@givefood/models";
 import { inputMethodEmoji } from "../../lib/needAdminDisplay";
 import { timesince } from "../../lib/timesince";
 

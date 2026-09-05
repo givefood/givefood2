@@ -1,5 +1,5 @@
 {
-  "name": "@givefood/db",
+  "name": "@givefood/models",
   "private": true,
   "type": "module",
   "main": "./src/index.ts",
@@ -10,9 +10,5 @@
   "devDependencies": {
     "typescript": "^7.0.2",
     "@cloudflare/workers-types": "^5.20260830.1"
-  },
-  "dependencies": {
-    "@givefood/models": "workspace:*",
-    "@givefood/templates": "workspace:*"
   }
 }

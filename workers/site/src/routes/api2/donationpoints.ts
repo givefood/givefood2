@@ -28,7 +28,7 @@ import {
   phoneOrFoodbankPhone,
   urlWithRefDonationPoint,
   urlWithRefFoodbank,
-} from "../../lib/fields";
+} from "@givefood/models";
 
 // gfapi2 `donationpoints` / `donationpoint_search` -- givefood/urls.py:
 // /donationpoints/, /donationpoints/search/. Ported straight from

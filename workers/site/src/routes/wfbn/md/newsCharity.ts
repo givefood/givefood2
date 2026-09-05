@@ -3,7 +3,7 @@ import { getArticlesByFoodbankId, getFoodbankBySlug } from "@givefood/db";
 import { render } from "@givefood/templates";
 import type { AppEnv } from "../../../types";
 import { dbSession } from "../../../lib/session";
-import { CHARITY_DETAIL_COUNTRIES, fullNameFoodbank, titleCapitalised } from "../../../lib/fields";
+import { CHARITY_DETAIL_COUNTRIES, fullNameFoodbank, titleCapitalised } from "@givefood/models";
 
 const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 

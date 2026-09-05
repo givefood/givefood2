@@ -4,7 +4,7 @@ import type { Locale } from "@givefood/templates";
 import { urlForLocale } from "@givefood/urls";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
-import { changefreq } from "../../lib/fields";
+import { changefreq } from "@givefood/models";
 import { COUNTRY_MAPPING } from "../../lib/countries";
 
 const XML_HEADERS = { "Content-Type": "text/xml" };

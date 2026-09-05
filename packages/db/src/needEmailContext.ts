@@ -1,6 +1,8 @@
 import { djangoDate } from "@givefood/templates";
-import { getArticlesForNeedEmail, getFoodbankForNeedEmail, type FoodbankChangeRow, type Session } from "@givefood/db";
-import { fullNameLocaleAware, slugify, titleCapitalised, urlWithRefFoodbank } from "./fields";
+import { getArticlesForNeedEmail, getFoodbankForNeedEmail } from "./needAdminExtras";
+import type { FoodbankChangeRow } from "./needs";
+import type { Session } from "./types";
+import { fullNameLocaleAware, slugify, titleCapitalised, urlWithRefFoodbank } from "@givefood/models";
 
 // The precomputed context behind gfwfbn/templates/wfbn/emails/notification.txt
 // and .html -- ported here as packages/templates/templates/emails/
@@ -12,12 +14,12 @@ import { fullNameLocaleAware, slugify, titleCapitalised, urlWithRefFoodbank } fr
 // article title_captialised()/url_with_ref(). nunjucks cannot call a
 // method on a plain D1 row, so every one of them is resolved here instead.
 //
-// Built as ONE shared builder rather than inline in the preview route
-// because the send path (POST /admin/need/:id/notifications/, still
-// unbuilt -- see that route's absence and this file's sibling note in the
-// WP 6.8 report) must render the SAME body the preview shows. Two
-// independently-assembled contexts would drift, and the whole point of
-// gfadmin/views.py:2023-2038's preview is that the maintainer can trust it.
+// ONE shared builder, and now with two real callers: the admin preview
+// (workers/site) and the actual send (workers/jobs). That is why it lives
+// in packages/db rather than in either Worker -- the send MUST render the
+// same body the preview shows, and two independently-assembled contexts
+// would drift. The whole point of gfadmin/views.py:2023-2038's preview is
+// that the maintainer can trust it.
 
 export interface NeedEmailArticleContext {
   /** FoodbankArticle.title_captialised() -- articles.py:35-49. */

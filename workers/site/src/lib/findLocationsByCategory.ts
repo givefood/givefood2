@@ -7,7 +7,7 @@ import {
   type Session,
 } from "@givefood/db";
 import { R_EARTHDISTANCE, miles, nearest, type Ranked } from "@givefood/geo";
-import { phoneOrFoodbankPhone, emailOrFoodbankEmail } from "./fields";
+import { phoneOrFoodbankPhone, emailOrFoodbankEmail } from "@givefood/models";
 import type { LocationSearchResult } from "./findLocations";
 
 // Ported from givefood/utils/geo.py's find_locations_by_category() (:304-404)

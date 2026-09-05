@@ -13,7 +13,7 @@ import { url, urlForLocale } from "@givefood/urls";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
 import { elapsedMs } from "../../middleware/serverTiming";
-import { CHARITY_DETAIL_COUNTRIES, EMAIL_RE, fullNameLocaleAware } from "../../lib/fields";
+import { CHARITY_DETAIL_COUNTRIES, EMAIL_RE, fullNameLocaleAware } from "@givefood/models";
 import { validateTurnstile } from "../../lib/turnstile";
 import { sendEmail as sendEmailShared } from "../../lib/email";
 

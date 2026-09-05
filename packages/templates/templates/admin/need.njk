@@ -113,7 +113,19 @@
         <td>{% if need.notified %}<span style="color:green">&check;</span>{% else %}<span style="color:red">&times;</span>{% endif %}</td>
         <td>Notify</td>
         <td>
-          {% if need.published %}<span class="has-text-grey is-pulled-right">Not yet available</span>{% endif %}
+          {# gfadmin/views.py:1993-2005's Notify fires four channels; only
+             the email one is built (PLAN.md WP 6.4b -- no whatsappsubscriber
+             table, and web push needs RFC 8291 hand-rolled). Labelled for
+             what it actually does rather than pretending to be all four. #}
+          {% if need.published %}
+            <form method="post" action="/admin/need/{{ need.need_id }}/notify/" class="is-pulled-right"
+                  onsubmit="return confirm('Email {{ subscriber_counts.email }} confirmed subscribers about this need?')">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <button type="submit" class="button is-link is-small is-light"{% if not subscriber_counts.email %} disabled{% endif %}>
+                Notify by email{% if subscriber_counts.email %} ({{ subscriber_counts.email }}){% endif %}
+              </button>
+            </form>
+          {% endif %}
         </td>
       </tr>
     </table>

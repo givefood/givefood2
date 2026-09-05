@@ -14,7 +14,7 @@ import { url, urlForLocale } from "@givefood/urls";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
 import { elapsedMs } from "../../middleware/serverTiming";
-import { emailOrFoodbankEmail, ENABLE_WRITE, fullNameLocaleAware, phoneOrFoodbankPhone, resolveNeedText } from "../../lib/fields";
+import { emailOrFoodbankEmail, ENABLE_WRITE, fullNameLocaleAware, phoneOrFoodbankPhone, resolveNeedText } from "@givefood/models";
 import { constituencySchemaOrgStr } from "../../lib/schemaOrg";
 
 // gfwfbn `constituencies` (GET /needs/in/constituencies/, i18n-patterned).

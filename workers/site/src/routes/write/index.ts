@@ -5,7 +5,7 @@ import { url } from "@givefood/urls";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
 import { elapsedMs } from "../../middleware/serverTiming";
-import { EMAIL_RE } from "../../lib/fields";
+import { EMAIL_RE } from "@givefood/models";
 import { validateTurnstile } from "../../lib/turnstile";
 import { sendEmail } from "../../lib/email";
 import { issueCsrfToken, verifyCsrf } from "../../lib/csrf";

@@ -310,3 +310,39 @@ export async function deleteMobileSubscriber(session: Session, identity: MobileS
     .run();
   return result.meta.changes > 0;
 }
+
+// gfadmin/views.py:1994 -- `FoodbankSubscriber.objects.filter(foodbank =
+// foodbank, confirmed = True)`, the recipient list for a need
+// notification. Paged, because this is the one query in the codebase whose
+// result set is measured in thousands (5,855 confirmed subscribers across
+// all food banks; the largest single food bank is a few hundred) and the
+// caller fans it out one queue message at a time.
+//
+// `unsub_key` comes back with it: notification.txt/.html both render the
+// one-click unsubscribe link from it, and Django additionally puts it in
+// the RFC 8058 List-Unsubscribe header (notifications.py:66-70).
+export interface NotifiableSubscriber {
+  id: number;
+  email: string;
+  created: string;
+  unsub_key: string;
+}
+
+export async function getConfirmedSubscribersPage(
+  session: Session,
+  foodbankId: number,
+  afterId: number,
+  limit: number,
+): Promise<NotifiableSubscriber[]> {
+  // Keyset paging on id, not LIMIT/OFFSET: the fan-out runs across many
+  // queue messages and an OFFSET scan would re-read everything before it
+  // each time.
+  const { results } = await session
+    .prepare(
+      "SELECT id, email, created, unsub_key FROM foodbanksubscriber " +
+        "WHERE foodbank_id = ?1 AND confirmed = 1 AND id > ?2 ORDER BY id LIMIT ?3",
+    )
+    .bind(foodbankId, afterId, limit)
+    .all<NotifiableSubscriber>();
+  return results;
+}

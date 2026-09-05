@@ -5,7 +5,7 @@ import { urlForLocale } from "@givefood/urls";
 import type { AppEnv } from "../types";
 import { dbSession } from "../lib/session";
 import { elapsedMs } from "../middleware/serverTiming";
-import { ENABLE_WRITE, isoDate, mapArticleRow, slugify } from "../lib/fields";
+import { ENABLE_WRITE, isoDate, mapArticleRow, slugify } from "@givefood/models";
 
 // givefood/views.py:77-209 index() -- verbatim, not from any wfbn app
 // (see PLAN.md §10.2.2's app boundary note: "givefood" itself, ported for

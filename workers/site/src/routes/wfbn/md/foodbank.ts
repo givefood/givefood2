@@ -4,7 +4,7 @@ import { render } from "@givefood/templates";
 import type { AppEnv } from "../../../types";
 import { dbSession } from "../../../lib/session";
 import { findLocations } from "../../../lib/findLocations";
-import { fullNameFoodbank, networkUrl, nonEmptyLines } from "../../../lib/fields";
+import { fullNameFoodbank, networkUrl, nonEmptyLines } from "@givefood/models";
 
 // gfwfbn `md_foodbank` (GET /md/needs/at/<slug>/, untranslated -- outside
 // i18n_patterns, see givefood/urls.py's "Markdown versions" block). Same

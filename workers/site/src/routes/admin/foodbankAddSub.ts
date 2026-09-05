@@ -4,7 +4,7 @@ import { render } from "@givefood/templates";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
 import { verifyCsrf } from "../../lib/csrf";
-import { EMAIL_RE } from "../../lib/fields";
+import { EMAIL_RE } from "@givefood/models";
 import { generateSubUnsubKeys } from "../../lib/subscriberKeys";
 import { adminPageContext } from "./pageContext";
 

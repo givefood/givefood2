@@ -5,7 +5,7 @@ import { urlForLocale } from "@givefood/urls";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
 import { elapsedMs } from "../../middleware/serverTiming";
-import { CHARITY_DETAIL_COUNTRIES, fullNameLocaleAware } from "../../lib/fields";
+import { CHARITY_DETAIL_COUNTRIES, fullNameLocaleAware } from "@givefood/models";
 
 // gfwfbn `foodbank_locations` (GET /needs/at/<slug>/locations/,
 // i18n-patterned). Ported from gfwfbn/views.py:558-586. Same

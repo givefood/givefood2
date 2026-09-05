@@ -3,7 +3,7 @@ import { FRAG_KV_KEY_LAST_UPDATED, FRAG_KV_KEY_NEED_HITS, getFeaturedArticles, g
 import { intcomma, loadCatalogue, render, type Locale } from "@givefood/templates";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
-import { isoDate, mapArticleRow } from "../../lib/fields";
+import { isoDate, mapArticleRow } from "@givefood/models";
 import { timesinceAgo } from "../../lib/timesince";
 
 // givefood/views.py:1028-1071 frag() -- givefood/urls.py:27, inside

@@ -1,5 +1,5 @@
 import { toDashedUuid, type DonationPointRow, type FoodbankLocationRow, type FoodbankLocationRowNarrow, type FoodbankWithLatestNeed } from "@givefood/db";
-import { charityRegisterUrl, emailOrFoodbankEmail, fsaUrl, phoneOrFoodbankPhone } from "./fields";
+import { charityRegisterUrl, emailOrFoodbankEmail, fsaUrl, phoneOrFoodbankPhone } from "@givefood/models";
 
 // givefood/const/general.py -- verbatim.
 const TRUSSELL_TRUST_SCHEMA = {

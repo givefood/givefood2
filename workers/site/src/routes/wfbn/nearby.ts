@@ -6,7 +6,7 @@ import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
 import { elapsedMs } from "../../middleware/serverTiming";
 import { findLocations } from "../../lib/findLocations";
-import { CHARITY_DETAIL_COUNTRIES, fullNameLocaleAware } from "../../lib/fields";
+import { CHARITY_DETAIL_COUNTRIES, fullNameLocaleAware } from "@givefood/models";
 
 // gfwfbn `foodbank_nearby` (GET /needs/at/<slug>/nearby/, i18n-patterned).
 // Ported from gfwfbn/views.py:661-685, which calls

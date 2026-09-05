@@ -21,7 +21,7 @@ import {
   fullNameFoodbank,
   noItems,
   phoneOrFoodbankPhone,
-} from "../../lib/fields";
+} from "@givefood/models";
 
 // gfapi2 `foodbanks` / `foodbank` / `foodbank_search` -- givefood/urls.py:
 // /foodbanks/, /foodbank/<slug:slug>/, /foodbanks/search/. Ported straight

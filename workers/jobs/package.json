@@ -11,8 +11,10 @@
   "dependencies": {
     "@cloudflare/puppeteer": "^1.4.0",
     "@givefood/db": "workspace:*",
+    "@givefood/models": "workspace:*",
     "@givefood/urls": "workspace:*",
-    "fast-xml-parser": "^5.11.1"
+    "fast-xml-parser": "^5.11.1",
+    "@givefood/templates": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260830.1",

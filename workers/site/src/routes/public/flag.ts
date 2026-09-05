@@ -3,7 +3,7 @@ import { buildPageContext, render } from "@givefood/templates";
 import { urlForLocale } from "@givefood/urls";
 import type { AppEnv } from "../../types";
 import { elapsedMs } from "../../middleware/serverTiming";
-import { EMAIL_RE, isSingleLine, isValidHttpUrl } from "../../lib/fields";
+import { EMAIL_RE, isSingleLine, isValidHttpUrl } from "@givefood/models";
 import { redactedKeyValueLines, sendEmail } from "../../lib/email";
 import { issueCsrfToken } from "../../lib/csrf";
 import { verifyHumanGate } from "./humanGate";

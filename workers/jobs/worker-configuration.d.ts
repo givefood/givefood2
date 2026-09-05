@@ -21,6 +21,7 @@ export interface Env {
 
   OPENROUTER_KEY: string;
   GCP_TRANSLATE_KEY: string;
+  SITE_DOMAIN: string;
   POSTMARK_TOKEN: string;
   WHATSAPP_TOKEN: string;
   FIREBASE_SERVICE_ACCOUNT: string;

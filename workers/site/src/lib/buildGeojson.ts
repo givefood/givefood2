@@ -46,7 +46,7 @@ import {
 } from "@givefood/db";
 import { formatFloat, pyRound, replaceBoundaryProperties, setBoundaryPropertyType, toDjangoJsonFormat } from "@givefood/serialise";
 import { urlForLocale } from "@givefood/urls";
-import { fullAddressNullable, fullAddressUnconditional, fullNameLocaleAware } from "./fields";
+import { fullAddressNullable, fullAddressUnconditional, fullNameLocaleAware } from "@givefood/models";
 import { COUNTRY_MAPPING } from "./countries";
 
 export type GeojsonScope =

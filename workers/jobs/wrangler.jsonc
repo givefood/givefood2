@@ -15,6 +15,20 @@
   // builtins internally.
   "compatibility_flags": ["nodejs_compat"],
 
+  // REQUIRED NOW THAT THIS WORKER RENDERS TEMPLATES (notify/needEmail.ts).
+  // packages/templates/src/generated/precompiled.js is generated and
+  // gitignored, so without this the bundle cannot resolve it -- and
+  // Cloudflare Workers Builds runs a fixed `npx wrangler deploy` that never
+  // touches this package's own npm scripts, so a script hook would silently
+  // not run there. Same reasoning, verbatim, as workers/site/wrangler.jsonc.
+  "build": {
+    "command": "pnpm --filter @givefood/templates run precompile"
+  },
+
+  // routes the notify email's RFC 8058 List-Unsubscribe URL at the live
+  // site -- see notify/needEmail.ts. Same value the site Worker uses.
+  "vars": { "SITE_DOMAIN": "https://www.givefood.org.uk" },
+
   // Verified against production CrawlSet data: ONE need sweep per day at
   // ~15:00 UTC. docs/crons.md documents 4x daily and is WRONG. Reconcile
   // against the Coolify scheduled-task config before deploying for real.

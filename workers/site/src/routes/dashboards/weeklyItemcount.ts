@@ -4,7 +4,7 @@ import { buildPageContext, render } from "@givefood/templates";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
 import { elapsedMs } from "../../middleware/serverTiming";
-import { noItems } from "../../lib/fields";
+import { noItems } from "@givefood/models";
 import { parseD1Timestamp, weekKey } from "../../lib/isoWeek";
 
 function pageContext(c: Context<AppEnv>) {

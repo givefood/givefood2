@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { companyDonationPointsExist, getDonationPointsByCompanySlug, getFoodbankSlugByUuid, toDashedUuid } from "@givefood/db";
 import type { AppEnv } from "../types";
 import { dbSession } from "../lib/session";
-import { changeList, charityRegisterUrl, excessList } from "../lib/fields";
+import { changeList, charityRegisterUrl, excessList } from "@givefood/models";
 
 // gfapi3 -- predates gfapi2/func.py's ALLOWED_FORMATS/apiResponse()
 // machinery entirely: every endpoint here is JSON-only, with no CORS

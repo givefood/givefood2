@@ -1,9 +1,8 @@
 import type { Context } from "hono";
-import { getNeedByUuid } from "@givefood/db";
+import { buildNeedEmailContext, getNeedByUuid } from "@givefood/db";
 import { render } from "@givefood/templates";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
-import { buildNeedEmailContext } from "../../lib/needNotificationEmail";
 
 // gfadmin/views.py:2023-2038 need_email -- GET /admin/need/<id>/email/.
 //

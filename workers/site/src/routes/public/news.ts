@@ -4,7 +4,7 @@ import { buildPageContext, render } from "@givefood/templates";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
 import { elapsedMs } from "../../middleware/serverTiming";
-import { mapArticleRow } from "../../lib/fields";
+import { mapArticleRow } from "@givefood/models";
 
 const ARTICLES_LIMIT = 100;
 

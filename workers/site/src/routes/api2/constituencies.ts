@@ -12,7 +12,7 @@ import type { AppEnv } from "../../types";
 import { url } from "@givefood/urls";
 import { dbSession } from "../../lib/session";
 import { apiResponse, SECONDS_IN_DAY, SECONDS_IN_WEEK } from "../../lib/apiResponse";
-import { emailOrFoodbankEmail, phoneOrFoodbankPhone } from "../../lib/fields";
+import { emailOrFoodbankEmail, phoneOrFoodbankPhone } from "@givefood/models";
 
 // gfapi2 `constituencies` / `constituency` -- givefood/urls.py:
 // /constituencies/, /constituency/<slug:slug>/. Ported straight from

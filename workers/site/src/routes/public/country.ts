@@ -5,7 +5,7 @@ import { urlForLocale } from "@givefood/urls";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
 import { elapsedMs } from "../../middleware/serverTiming";
-import { ENABLE_WRITE, isoDate, slugify } from "../../lib/fields";
+import { ENABLE_WRITE, isoDate, slugify } from "@givefood/models";
 import { buildGeojsonResponse } from "../../lib/buildGeojson";
 import { COUNTRY_MAP_CONFIG, COUNTRY_MAPPING, COUNTRY_PLACEHOLDERS } from "../../lib/countries";
 

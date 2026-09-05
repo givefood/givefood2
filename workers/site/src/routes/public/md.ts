@@ -14,7 +14,7 @@ import { render } from "@givefood/templates";
 import { url } from "@givefood/urls";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
-import { isoDate, slugify } from "../../lib/fields";
+import { isoDate, slugify } from "@givefood/models";
 import { COUNTRY_MAPPING } from "../../lib/countries";
 
 // givefood/views.py md_index()/md_sitemap()/md_sitemap_md() -- givefood/urls.py's

@@ -4,6 +4,7 @@ import { backfillPlacePhoto, isPlacePhotoKey } from "../mediaBackfill/placePhoto
 import { handleTranslateNeed, type TranslateNeedMessage } from "./translateNeed";
 import { handleFoodbankCheckJob } from "../adminJobs/foodbankCheck";
 import { handleOrderLinesJob } from "../adminJobs/orderLines";
+import { handleNotifyNeedEmail, type NotifyNeedEmailMessage } from "../notify/needEmail";
 
 // Consumer for the "jobs" queue (binding JOBS_Q) -- admin-triggered and
 // on-miss work, per PLAN.md §3.3's binding map: "article crawl,
@@ -46,6 +47,13 @@ async function dispatch(body: JobMessage, env: Env): Promise<void> {
       // a failed parse is a result the order page shows rather than a message
       // Cloudflare Queues retries into the same paid Gemini call.
       return handleOrderLinesJob(env, msg.jobId, msg.orderRowId);
+    }
+    case "notify-need-email": {
+      // gfadmin/views.py:1993-1997's per-subscriber notification send.
+      // Self-paging: each message handles one page and enqueues the next,
+      // so a food bank with hundreds of subscribers is many small messages
+      // rather than one that cannot finish. See notify/needEmail.ts.
+      return handleNotifyNeedEmail(body as unknown as NotifyNeedEmailMessage, env);
     }
     default:
       throw new Error(`unknown job type: ${body.type}`);

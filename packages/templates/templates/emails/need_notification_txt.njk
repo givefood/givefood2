@@ -1,3 +1,10 @@
+{# The unsubscribe link is https here, not the http:// Django uses
+   (notification.txt:21 and notification.html:32 both hardcode it). A
+   deliberate divergence, 2026-09-05: this is the link a recipient clicks to
+   STOP receiving mail, so it should not depend on a 301 to get there, and
+   http in bulk mail is exactly what a link scanner flags. Everything else
+   in these two templates is verbatim, including the double full stop after
+   "p.m." -- that one is Django's and is left alone. #}
 {# gfwfbn/templates/wfbn/emails/notification.txt -- the plain-text half of
    the subscriber need-notification email, served by
    GET /admin/need/:id/email/ (any format other than the exact string
@@ -39,4 +46,4 @@ You can find more details at https://www.givefood.org.uk/needs/at/{{ foodbank_sl
 
 Download our app to get notifications when you are at a donation point https://www.givefood.org.uk/apps/
 
-You're getting these emails because you subscribed to them at www.givefood.org.uk on {{ subscriber_created_date }} at {{ subscriber_created_time }}. To unsubscribe visit http://www.givefood.org.uk/needs/at/{{ foodbank_slug }}/updates/unsubscribe/?key={{ unsub_key }} {% endautoescape %}
+You're getting these emails because you subscribed to them at www.givefood.org.uk on {{ subscriber_created_date }} at {{ subscriber_created_time }}. To unsubscribe visit https://www.givefood.org.uk/needs/at/{{ foodbank_slug }}/updates/unsubscribe/?key={{ unsub_key }} {% endautoescape %}

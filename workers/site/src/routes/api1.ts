@@ -14,7 +14,7 @@ import { formatCsvRow, round2 } from "@givefood/serialise";
 import type { AppEnv } from "../types";
 import { dbSession } from "../lib/session";
 import { geocode } from "../lib/geocode";
-import { charityRegisterUrl, fullAddressUnconditional, noItems } from "../lib/fields";
+import { charityRegisterUrl, fullAddressUnconditional, noItems } from "@givefood/models";
 import { timesince } from "../lib/timesince";
 
 // gfapi1 -- the deprecated v1 API, still live and still consumed (PLAN.md

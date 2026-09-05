@@ -5,7 +5,7 @@ import { urlForLocale } from "@givefood/urls";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
 import { elapsedMs } from "../../middleware/serverTiming";
-import { bankuetUrl, CHARITY_DETAIL_COUNTRIES, fullNameLocaleAware, networkUrl, urlWithRefFoodbank } from "../../lib/fields";
+import { bankuetUrl, CHARITY_DETAIL_COUNTRIES, fullNameLocaleAware, networkUrl, urlWithRefFoodbank } from "@givefood/models";
 import { resolveNeedDisplay } from "../../lib/needDisplay";
 import { schemaOrgStr } from "../../lib/schemaOrg";
 

@@ -11,6 +11,7 @@
   "dependencies": {
     "@cloudflare/puppeteer": "^1.4.0",
     "@givefood/db": "workspace:*",
+    "@givefood/models": "workspace:*",
     "@givefood/geo": "workspace:*",
     "@givefood/serialise": "workspace:*",
     "@givefood/templates": "workspace:*",

@@ -5,7 +5,7 @@ import { urlForLocale } from "@givefood/urls";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
 import { elapsedMs } from "../../middleware/serverTiming";
-import { fullNameLocaleAware, noItems, resolveNeedText } from "../../lib/fields";
+import { fullNameLocaleAware, noItems, resolveNeedText } from "@givefood/models";
 
 const ITEMS_LIMIT = 10;
 

@@ -16,6 +16,13 @@ importers:
         version: 4.127.1(@cloudflare/workers-types@5.20260830.1)
 
   packages/db:
+    dependencies:
+      '@givefood/models':
+        specifier: workspace:*
+        version: link:../models
+      '@givefood/templates':
+        specifier: workspace:*
+        version: link:../templates
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^5.20260830.1
@@ -26,6 +33,15 @@ importers:
 
   packages/geo:
     devDependencies:
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+
+  packages/models:
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: ^5.20260830.1
+        version: 5.20260830.1
       typescript:
         specifier: ^7.0.2
         version: 7.0.2
@@ -79,6 +95,12 @@ importers:
       '@givefood/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@givefood/models':
+        specifier: workspace:*
+        version: link:../../packages/models
+      '@givefood/templates':
+        specifier: workspace:*
+        version: link:../../packages/templates
       '@givefood/urls':
         specifier: workspace:*
         version: link:../../packages/urls
@@ -107,6 +129,9 @@ importers:
       '@givefood/geo':
         specifier: workspace:*
         version: link:../../packages/geo
+      '@givefood/models':
+        specifier: workspace:*
+        version: link:../../packages/models
       '@givefood/serialise':
         specifier: workspace:*
         version: link:../../packages/serialise

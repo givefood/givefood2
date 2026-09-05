@@ -4,7 +4,7 @@ import { buildPageContext, render } from "@givefood/templates";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
 import { elapsedMs } from "../../middleware/serverTiming";
-import { slugify } from "../../lib/fields";
+import { slugify } from "@givefood/models";
 import { timesince } from "../../lib/timesince";
 
 const LIMIT = 200;

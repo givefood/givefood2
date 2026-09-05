@@ -22,7 +22,7 @@ import {
   getOpenFoodbankOptions,
   type FoodbankWithLatestNeed,
   type FoodbankChangeRow,
-} from "@givefood/db";
+  setNeedNotified,} from "@givefood/db";
 import { render } from "@givefood/templates";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
@@ -198,6 +198,37 @@ async function handlePublishTransition(c: Context<AppEnv>, publish: boolean): Pr
   // never purged anything there; the food bank's own next save does it).
   // Purged here on both transitions.
   await purgeFoodbank(c, result.foodbank_id);
+
+  return c.redirect(`/admin/need/${needId}/`, 302);
+}
+
+// gfadmin/views.py:1993-1997's "Notify" action, the email channel of it.
+// Django loops over confirmed subscribers IN THE REQUEST and enqueues one
+// django-task per email; this enqueues ONE message and the jobs Worker
+// pages through the subscribers itself (workers/jobs/src/notify/
+// needEmail.ts), because a Worker cannot make hundreds of Postmark calls
+// inside one request.
+//
+// Django also stamps need.notified and fires Firebase, web push and
+// WhatsApp from the same action. `notified` is stamped here; the other
+// three channels remain unbuilt (PLAN.md WP 6.4b -- no whatsappsubscriber
+// table exists, and web push needs RFC 8291 hand-rolled in WebCrypto), so
+// this action is honestly labelled "Notify by email" in the admin rather
+// than pretending to be all four.
+export async function adminNeedNotify(c: Context<AppEnv>): Promise<Response> {
+  if (!(await requireCsrf(c))) return c.text("Forbidden", 403);
+  const needId = c.req.param("id")!;
+  const db = dbSession(c);
+
+  const need = await getNeedByUuid(db, needId);
+  if (!need) return c.notFound();
+  // views.py only offers Notify on a published need, and an unpublished
+  // need's page is not one subscribers should be sent to.
+  if (!need.published) return c.text("Cannot notify subscribers about an unpublished need", 400);
+  if (need.foodbank_id === null) return c.text("Cannot notify: this need has no food bank", 400);
+
+  await c.env.JOBS_Q.send({ type: "notify-need-email", needId: need.id, afterId: 0 });
+  await setNeedNotified(db, needId);
 
   return c.redirect(`/admin/need/${needId}/`, 302);
 }

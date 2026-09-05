@@ -7,7 +7,7 @@ import {
   type Session,
 } from "@givefood/db";
 import { R_EARTHDISTANCE, miles, nearest, type Ranked } from "@givefood/geo";
-import { phoneOrFoodbankPhone, emailOrFoodbankEmail } from "./fields";
+import { phoneOrFoodbankPhone, emailOrFoodbankEmail } from "@givefood/models";
 
 // Ported from givefood/utils/geo.py's find_locations() -- the query behind
 // both gfwfbn's index page and gfapi2's location_search (already built,

@@ -23,7 +23,7 @@ import {
   noItems,
   phoneOrFoodbankPhone,
   urlWithRefFoodbank,
-} from "../../lib/fields";
+} from "@givefood/models";
 
 // gfapi2 `locations` / `location_search` -- givefood/urls.py: /locations/,
 // /locations/search/. Ported straight from gfapi2/views.py, verbatim.

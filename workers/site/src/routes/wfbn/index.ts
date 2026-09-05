@@ -11,7 +11,7 @@ import { findLocations } from "../../lib/findLocations";
 import { findDonationpoints } from "../../lib/findDonationpoints";
 import { findLocationsByCategory } from "../../lib/findLocationsByCategory";
 import { ITEM_CATEGORIES } from "../../lib/itemCategories";
-import { resolveNeedText } from "../../lib/fields";
+import { resolveNeedText } from "@givefood/models";
 
 // gfwfbn `index` (GET /needs/, i18n-patterned -- mounted at /needs/,
 // /cy/needs/, /ga/needs/, /gd/needs/ in index.ts). The `place` view

@@ -3,7 +3,7 @@ import { getDonationPointBySlugs, getDonationPointsByFoodbankId, getFoodbankBySl
 import { render } from "@givefood/templates";
 import type { AppEnv } from "../../../types";
 import { dbSession } from "../../../lib/session";
-import { fullNameFoodbank, nonEmptyLines } from "../../../lib/fields";
+import { fullNameFoodbank, nonEmptyLines } from "@givefood/models";
 
 // gfwfbn-md `md_foodbank_donationpoints` (GET
 // /md/needs/at/<slug>/donationpoints/, untranslated -- see
