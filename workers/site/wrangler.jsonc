@@ -51,7 +51,11 @@
   // previews_enabled are pinned to what the remote already had, so this
   // declaration is a no-op against live rather than a change.
   "routes": [
-    { "pattern": "beta.givefood.org.uk", "custom_domain": true, "enabled": true, "previews_enabled": false }
+    { "pattern": "beta.givefood.org.uk", "custom_domain": true, "enabled": true, "previews_enabled": false },
+    // LIVE since 2026-09-05 ~19:20 UTC, added through the dashboard by the
+    // maintainer. Declared here so that a deploy from this config cannot
+    // remove it -- wrangler treats this list as the authoritative set.
+    { "pattern": "www.givefood.org.uk", "custom_domain": true, "enabled": true, "previews_enabled": false }
   ],
 
   // Production, at cutover. ONE entry, so most-specific-wins never has to be
