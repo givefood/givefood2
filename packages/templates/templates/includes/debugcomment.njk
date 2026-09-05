@@ -1,59 +1,77 @@
-{% if not inrobotstxt %}<!--
-{% endif %}
-{% if inrobotstxt %}#{% else %}👋{% endif %} {{ _("Hello") }}!
+{# public/includes/debugcomment.html.
 
-{% if inrobotstxt %}#{% else %}🕰️{% endif %} Generated at {{ now() }}
+   Django included this in three places: public/page.html, admin/page.html
+   and public/robots.txt, the last one as
+   `{% include ... with inrobotstxt=True %}` -- which switched every emoji
+   to a "#" so the block was a run of robots.txt comments rather than an
+   HTML comment. Every line here used to carry an
+   `{% if inrobotstxt %}#{% else %}<emoji>{% endif %}` to support that.
 
-{% if inrobotstxt %}#{% else %}🌍{% endif %} In colo {{ colo }}
-{% if inrobotstxt %}#{% else %}🖥️{% endif %} By machine {{ instance_id }}
-{% if inrobotstxt %}#{% else %}💾{% endif %} Using code {{ version }}
-{# Django's "By app" line is gone, 2026-09-05. It reported the Python
-   package of the view that resolved the request (gfwfbn, gfdash, gfapi2
-   ...), which was worth something when those were separate Django apps
-   with separate URL confs; here they are just directories under routes/,
-   every call site hardcoded the string that its own path already told
-   you, and nothing else in any template ever read app_name.
+   The port renders robots.txt from routes/public/robots.ts, which builds
+   its lines in TypeScript and never touches this template, so that branch
+   was unreachable in every one of its ~30 occurrences. Dropped 2026-09-05,
+   maintainer decision: robots.txt does not need the debug comment. The two
+   remaining includes (page.njk, wfbn/rss.njk) are both XML-ish and both
+   want the HTML comment form.
 
-   This comment closes against the next line deliberately: a comment that
+   Do not write a nunjucks comment-close sequence inside a comment like
+   this one: it closes the comment there and the remainder becomes output,
+   which fails the precompile rather than showing up anywhere. #}
+<!--
+👋 {{ _("Hello") }}!
+
+🕰️ Generated at {{ now() }}
+
+🌍 In colo {{ colo }}
+🖥️ By machine {{ instance_id }}
+💾 Using code {{ version }}
+{# Django's "By app" line was here, reporting the Python package of the
+   view that resolved the request (gfwfbn, gfdash, gfapi2 ...). That meant
+   something when those were separate Django apps with separate URL confs;
+   here they are directories under routes/, every call site hardcoded the
+   string its own path already told you, and no other template ever read
+   app_name. Removed 2026-09-05 along with the context variable itself.
+
+   This comment closes against the next line deliberately -- a comment that
    ends its own line leaves that trailing newline in the output, which
-   showed up here as a stray blank line between "Using code" and "Took".
-   (Do not write a nunjucks comment-close sequence inside a comment either
-   -- it closes the comment there and the rest becomes output, which is a
-   precompile error rather than anything visible.) #}{% if inrobotstxt %}#{% else %}⏱️{% endif %} Took {{ render_time_ms }}ms
+   showed up here as a stray blank line. #}⏱️ Took {{ render_time_ms }}ms
 
-{% if inrobotstxt %}#{% else %}🌍{% endif %} Language {{ language_name }}
-{% if inrobotstxt %}#{% else %}🌍{% endif %} Language code {{ language_code }}
-{% if inrobotstxt %}#{% else %}🔣{% endif %} Language direction {{ language_direction }}
+🌍 Language {{ language_name }}
+🌍 Language code {{ language_code }}
+🔣 Language direction {{ language_direction }}
 
-{% if inrobotstxt %}#{% else %}🐙{% endif %} Code https://github.com/givefood/givefood
+🐙 Code https://github.com/givefood/givefood
 {# Django built this URL straight from `version`, because there `version`
    WAS the commit SHA (SOURCE_COMMIT). A Cloudflare Worker version id is a
    UUID with no connection to a commit, so linking `version` here would
    render a github.com/.../commit/<uuid> that 404s. `commit` is set only
    when the deploy tagged the version with a real SHA -- see
-   middleware/runtimeIdentity.ts -- and the line is dropped otherwise. #}
-{% if commit %}{% if inrobotstxt %}#{% else %}🐱{% endif %} Code version https://github.com/givefood/givefood/commit/{{ commit }}
+   middleware/runtimeIdentity.ts -- and the line is dropped otherwise.
+
+   No blank line before the ascii art below: the newline that follows
+   `endif` is that blank line, in both branches. Writing one out as well
+   left two blank lines here whenever `commit` was unset, which is always
+   at the moment. #}{% if commit %}🐱 Code version https://github.com/givefood/givefood/commit/{{ commit }}
 {% endif %}
+============================================
+|  ,dP""8a "888888b,  d8b    "888b  ,888"  |
+|  88b   "  888  d88 dPY8b    88Y8b,8888   |
+|  `"Y8888a 888ad8P'dPaaY8b   88 Y88P888   |
+|  a    Y88 888    dP    Y8b  88  YP 888   |
+|  `"8ad8P'a888a  a88a;*a888aa88a   a888a  |
+|                                          |
+|                 ;*;;;;*;;;*;;;*,,        |
+|         _,,-''':::';*;;;*;;;*;;*d;,      |
+|      .-'      ::::::::::';*;;*;dII;      |
+|    .' ,<<<,.  :::::::::::::::ffffff`.    |
+|   / ,<<<<<<<<,::::::::::::::::fffffI,\   |
+|  .,<<<<<<<<<<I;:::::::::::::::ffffKIP",  |
+|  |<<<<<<<<<<dP;,?>;,::::::::::fffKKIP |  |
+|  ``<<<<<<<dP;;;;;\>>>>>;,::::fffKKIPf '  |
+|   \ `mYMMV?;;;;;;;\>>>>>>>>>,YIIPP"` /   |
+|    `. "":;;;;;;;;;i>>>>>>>>>>>>>,  ,'    |
+|      `-._``":;;;sP'`"?>>>>>>>  _.-       |
+|            -...._______....-             |
+============================================
 
-{% if inrobotstxt %}# {% endif %}============================================
-{% if inrobotstxt %}# {% endif %}|  ,dP""8a "888888b,  d8b    "888b  ,888"  |
-{% if inrobotstxt %}# {% endif %}|  88b   "  888  d88 dPY8b    88Y8b,8888   |
-{% if inrobotstxt %}# {% endif %}|  `"Y8888a 888ad8P'dPaaY8b   88 Y88P888   |
-{% if inrobotstxt %}# {% endif %}|  a    Y88 888    dP    Y8b  88  YP 888   |
-{% if inrobotstxt %}# {% endif %}|  `"8ad8P'a888a  a88a;*a888aa88a   a888a  |
-{% if inrobotstxt %}# {% endif %}|                                          |
-{% if inrobotstxt %}# {% endif %}|                 ;*;;;;*;;;*;;;*,,        |
-{% if inrobotstxt %}# {% endif %}|         _,,-''':::';*;;;*;;;*;;*d;,      |
-{% if inrobotstxt %}# {% endif %}|      .-'      ::::::::::';*;;*;dII;      |
-{% if inrobotstxt %}# {% endif %}|    .' ,<<<,.  :::::::::::::::ffffff`.    |
-{% if inrobotstxt %}# {% endif %}|   / ,<<<<<<<<,::::::::::::::::fffffI,\   |
-{% if inrobotstxt %}# {% endif %}|  .,<<<<<<<<<<I;:::::::::::::::ffffKIP",  |
-{% if inrobotstxt %}# {% endif %}|  |<<<<<<<<<<dP;,?>;,::::::::::fffKKIP |  |
-{% if inrobotstxt %}# {% endif %}|  ``<<<<<<<dP;;;;;\>>>>>;,::::fffKKIPf '  |
-{% if inrobotstxt %}# {% endif %}|   \ `mYMMV?;;;;;;;\>>>>>>>>>,YIIPP"` /   |
-{% if inrobotstxt %}# {% endif %}|    `. "":;;;;;;;;;i>>>>>>>>>>>>>,  ,'    |
-{% if inrobotstxt %}# {% endif %}|      `-._``":;;;sP'`"?>>>>>>>  _.-       |
-{% if inrobotstxt %}# {% endif %}|            -...._______....-             |
-{% if inrobotstxt %}# {% endif %}============================================
-
-{% if not inrobotstxt %}-->{% endif %}
+-->
