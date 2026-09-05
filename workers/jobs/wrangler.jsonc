@@ -27,7 +27,14 @@
 
   // routes the notify email's RFC 8058 List-Unsubscribe URL at the live
   // site -- see notify/needEmail.ts. Same value the site Worker uses.
-  "vars": { "SITE_DOMAIN": "https://www.givefood.org.uk" },
+  "vars": {
+    "SITE_DOMAIN": "https://www.givefood.org.uk",
+    // needcheck/scrape.ts's REST markdown call -- see that file on why it is
+    // back on the REST endpoint. Not a secret: an account id identifies, it
+    // does not authorise, and tools/pg-to-d1/extract_core.py has it as a
+    // literal already. The token beside it (CF_API_KEY) is the secret.
+    "CF_ACCOUNT_ID": "211195b9bf606f797a6d2dbc0bf41791"
+  },
 
   // Verified against production CrawlSet data: ONE need sweep per day at
   // ~15:00 UTC. docs/crons.md documents 4x daily and is WRONG. Reconcile

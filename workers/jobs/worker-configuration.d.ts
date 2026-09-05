@@ -31,6 +31,9 @@ export interface Env {
   GMAP_STATIC_KEY: string;
   GMAP_PLACES_KEY: string;
   GMAP_GEOCODE_KEY: string;
+  // needcheck/scrape.ts's REST markdown call. A var, not a secret -- an
+  // account id is not sensitive and is already a literal in tools/pg-to-d1.
+  CF_ACCOUNT_ID: string;
   CF_API_KEY: string;
   CF_ZONE_ID: string;
   GEMINI_API_KEY: string;

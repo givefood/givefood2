@@ -149,21 +149,80 @@ async function htmlToMarkdown(html: string): Promise<string> {
     .trim();
 }
 
-// general.py:114-164 get_markdown(), moved off the REST endpoint it still
-// uses (see that function's own docstring) onto the `browser` Workers
-// Binding, maintainer's call 2026-09-03 despite this being the one path in
-// the whole jobs Worker explicitly flagged highest-stakes (needcheckRender.ts's
-// own comment) -- Django has no binding to have chosen instead, so this is
-// a deliberate divergence from its proven behaviour, not a port of it.
-// Same three-attempt retry, same degrading waitUntil ladder, same
-// challenge-check-before-strip order as the REST version; the one
-// intentional difference is rejecting requests by resourceType()
-// ("image", "stylesheet") rather than the REST call's rejectResourceTypes
-// + a regex on the request URL -- resourceType() classifies a stylesheet
-// correctly even when its URL has no ".css" in it (a query-stringed CDN
-// URL, for instance), so it's strictly the more faithful match for "don't
-// fetch styling", not a looser one.
-export async function getMarkdown(env: Env, url: string): Promise<string | null> {
+// general.py:114-164 get_markdown().
+//
+// BACK ON THE REST ENDPOINT, 2026-09-05, reverting a change made two days
+// earlier. It had been moved to the `browser` binding with the
+// htmlToMarkdown() above doing the HTML->markdown conversion by hand. That
+// is the one path in this Worker its own comment calls highest-stakes, and
+// the divergence showed up in the numbers the first day the cron ran:
+//
+//   date      Django   port
+//   09-03         20     20     <- both are ETL copies, identical
+//   09-04         31    113     <- port's own cron starts
+//   09-05          6     32
+//
+// 32 needs reached the review queue today against Django's 6, none of them
+// suppressed as a repeat. The mechanism is that the model's output only
+// stays stable if its INPUT stays stable: the prompt's whole reproducibility
+// contract ("the same page must always produce exactly the same lists",
+// prompt.ts:26) is graded against the last PUBLISHED need, and every last
+// published need in this database was produced by Django from REST-markdown
+// text. A different converter -- different whitespace, no image or link
+// markdown, different block separation -- yields differently-worded items
+// for an unchanged page, decision.ts's keysEqual() then says "change", and
+// the same page reappears in the queue every day.
+//
+// So the fix is not to improve the hand-written converter. It is to feed
+// the model the same bytes Django feeds it. htmlToMarkdown() is kept above
+// only as the fallback for when the REST credentials are absent.
+//
+// Same three attempts and the same degrading waitUntil ladder as Django,
+// and the same challenge-check-before-strip order.
+const MARKDOWN_ENDPOINT = "https://api.cloudflare.com/client/v4/accounts";
+
+async function getMarkdownViaRest(env: Env, url: string): Promise<string | null> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const waitUntil = WAIT_UNTILS[Math.min(attempt, WAIT_UNTILS.length - 1)];
+    let res: Response;
+    try {
+      res = await fetch(`${MARKDOWN_ENDPOINT}/${env.CF_ACCOUNT_ID}/browser-rendering/markdown`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${env.CF_API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          url,
+          // general.py:137 verbatim -- the REST call's own way of saying
+          // "don't fetch styling".
+          rejectRequestPattern: ["/^.*\\.(css)/"],
+          gotoOptions: { waitUntil, timeout: 45_000 },
+        }),
+        signal: AbortSignal.timeout(60_000),
+      });
+    } catch {
+      continue;
+    }
+    if (!res.ok) continue;
+
+    let payload: { success?: boolean; result?: string };
+    try {
+      payload = (await res.json()) as { success?: boolean; result?: string };
+    } catch {
+      continue;
+    }
+    const markdown = payload.success ? payload.result : undefined;
+    if (!markdown) continue;
+
+    const low = markdown.toLowerCase();
+    if (CHALLENGE_MARKERS.some((m) => low.includes(m))) continue; // BEFORE stripping, matching general.py
+    return stripDataUris(markdown);
+  }
+  return null;
+}
+
+// The binding path, kept as the fallback for a deployment with no
+// CF_ACCOUNT_ID/CF_API_KEY. It works -- it just produces different text,
+// which is exactly the problem above, so it is no longer the default.
+async function getMarkdownViaBinding(env: Env, url: string): Promise<string | null> {
   let browser: Awaited<ReturnType<typeof puppeteer.launch>>;
   try {
     browser = await puppeteer.launch(env.BROWSER);
@@ -185,26 +244,32 @@ export async function getMarkdown(env: Env, url: string): Promise<string | null>
       try {
         await page.goto(url, { waitUntil, timeout: 45_000 });
       } catch {
-        continue; // navigation timeout, DNS failure, etc -- try the next attempt
+        continue;
       }
 
       let html: string;
       try {
         html = await page.content();
       } catch {
-        continue; // page navigated away/crashed between goto and content()
+        continue;
       }
 
       const markdown = await htmlToMarkdown(html);
       if (!markdown) continue;
       const low = markdown.toLowerCase();
-      if (CHALLENGE_MARKERS.some((m) => low.includes(m))) continue; // checked BEFORE stripping, matching general.py
+      if (CHALLENGE_MARKERS.some((m) => low.includes(m))) continue;
       return stripDataUris(markdown);
     }
     return null;
   } finally {
     await browser.close(); // gotchas.md: REST auto-closes, a binding session does not
   }
+}
+
+export async function getMarkdown(env: Env, url: string): Promise<string | null> {
+  if (env.CF_ACCOUNT_ID && env.CF_API_KEY) return getMarkdownViaRest(env, url);
+  console.warn("needcheck: CF_ACCOUNT_ID/CF_API_KEY unset, falling back to the binding scraper -- expect noisier extraction");
+  return getMarkdownViaBinding(env, url);
 }
 
 // crawlers.py:334-342's scrape_type == "facebook" branch. A GET to the
