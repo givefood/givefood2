@@ -34,27 +34,17 @@
     <form method="post" class="form-edit-need">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 
-      {# Django's NeedForm (givefood/forms.py:232) exposes `foodbank` as an
-         editable ModelChoiceField here, and this port carried that over as a
-         slug text input backed by a datalist. It is now READ-ONLY on the edit
-         form -- maintainer decision 2026-09-05: a need is created against the
-         food bank whose page produced it, and reassigning one to a different
-         food bank is not something this form needs to do. The create half
-         (admin/need_new.njk) still picks a food bank, because that is where
-         the association is made.
+      {# NO FOOD BANK FIELD. Django's NeedForm (givefood/forms.py:232)
+         exposes `foodbank` as an editable ModelChoiceField and this port
+         carried that over as a slug input; it was made read-only earlier on
+         2026-09-05, then removed outright -- a need is created against the
+         food bank whose page produced it, the page's own title and Back link
+         already say which one that is, and repeating it as a field the form
+         cannot change is a label pretending to be an input.
 
-         Nothing is posted for it any more, so routes/admin/needs.ts keeps
-         whatever foodbank_id the need already has rather than reading one
-         back off the form. #}
-      <div class="field">
-        <label class="label">Food Bank</label>
-        <div class="control">
-          {% if foodbank_slug %}
-            <p><a href="/admin/foodbank/{{ foodbank_slug }}/">{{ need.foodbank_name or foodbank_slug }}</a></p>
-          {% else %}
-            <p>(none) &mdash; a need cannot be published without a food bank.</p>
-          {% endif %}
-        </div>
+         routes/admin/needs.ts keeps whatever foodbank_id the need already
+         has. The create half (admin/need_new.njk) still picks one, because
+         that is where the association is made. #}
       </div>
 
       {# Labels are the model's explicit verbose_names (givefood/models/needs.py:64

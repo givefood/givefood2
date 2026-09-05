@@ -380,7 +380,10 @@ async function renderNeedEditForm(
   foodbankSlug: string | null,
   error: string | null,
 ): Promise<Response> {
-  const [foodbankOptions, foodbank] = await Promise.all([getOpenFoodbankOptions(db), foodbankSlug ? getFoodbankBySlug(db, foodbankSlug) : Promise.resolve(null)]);
+  // The food bank list went with the field: the edit form cannot change it,
+  // so there is nothing to offer options for. `foodbank` itself is still
+  // needed -- computeNeedProxySrc reads its url for the preview pane.
+  const foodbank = foodbankSlug ? await getFoodbankBySlug(db, foodbankSlug) : null;
   // admin/form.html:23-29's need.uri preview -- see computeNeedProxySrc's
   // own comment. Uses `need.uri` (the crawl-time snapshot), never
   // whichever food bank is currently typed into the field above.
@@ -388,8 +391,6 @@ async function renderNeedEditForm(
   const html = await render("admin/need_form.njk", {
     ...(await adminPageContext(c, "needs")),
     need: { ...need, change_text: formValues.change_text, excess_change_text: formValues.excess_change_text, published: formValues.published },
-    foodbank_slug: foodbankSlug,
-    foodbank_options: foodbankOptions,
     show_proxy: !!proxySrc,
     proxy_src: proxySrc,
     error,
