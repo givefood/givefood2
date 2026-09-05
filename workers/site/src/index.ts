@@ -477,6 +477,13 @@ app.get("/wp-login.php", (c) => c.redirect("https://www.youtube.com/watch?v=dQw4
 // sitemap is a maintainer decision 2026-09-05. The place gazetteer DATA
 // stays either way: 253,584 rows plus the place_fts index, feeding /aac/.
 const OUT_OF_SCOPE = [
+  // A dev scratch page (givefood/urls.py:75 -> views.maplibre_test), never
+  // part of the public site. Dropped rather than ported, maintainer
+  // decision 2026-09-05. Listed rather than just left to fall through so
+  // the next person to diff this file against Django's urls.py sees a
+  // decision instead of an oversight -- which is the whole reason this
+  // block exists. Worth deleting its Django view and template too.
+  "/tests/maplibre/",
   "/sitemap_external.xml",
   "/sitemap_places.xml",
   "/sitemap_places_index.xml",
@@ -508,7 +515,6 @@ for (const path of OUT_OF_SCOPE) app.all(path, (c) => c.notFound());
 const NOT_PORTED: Array<[string, string]> = [
   ["/human/", "human-readable data page"],
   ["/firebase-messaging-sw.js", "Firebase messaging service worker"],
-  ["/tests/maplibre/", "maplibre test page"],
   ["/needs/manifest.json", "gfwfbn manifest"],
   ["/needs/tt-old-data/", "gfwfbn tt-old-data"],
 ];
