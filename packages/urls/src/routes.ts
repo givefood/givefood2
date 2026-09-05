@@ -24,7 +24,6 @@
 export const ROUTES: Record<string, string> = {
   index: "/",
   about_us: "/about-us/",
-  colophon: "/colophon/",
   apps: "/apps/",
   flag: "/flag/",
   donate: "/donate/",
@@ -191,7 +190,6 @@ export const I18N_SCOPED = new Set([
   "manifest",
   "flag",
   "apps",
-  "colophon",
   "annual_report_index",
   // Pre-existing latent bug, found while wiring up WP 3.7: `human/` sits
   // inside i18n_patterns too (givefood/urls.py:28, page_translatable=True

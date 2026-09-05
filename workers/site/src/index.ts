@@ -37,7 +37,6 @@ import { humanRelay } from "./routes/human";
 import { whatsappHook } from "./routes/whatsappHook";
 import { publicIndex } from "./routes/public";
 import { publicAboutUs, publicApps, publicBot } from "./routes/public/contentPages";
-import { publicColophon } from "./routes/public/colophon";
 import { publicServices } from "./routes/public/services";
 import { publicPrivacy } from "./routes/public/privacy";
 import { publicDonate } from "./routes/public/donate";
@@ -334,7 +333,6 @@ for (const locale of LOCALES) {
 app.get("/about-us/", publicAboutUs);
 app.get("/apps/", publicApps);
 app.get("/bot/", publicBot);
-app.get("/colophon/", publicColophon);
 app.get("/donate/", publicDonate);
 app.get("/news/", publicNews);
 app.get("/services/", publicServices);
@@ -346,7 +344,6 @@ for (const locale of LOCALES) {
   app.get(`/${locale}/about-us/`, publicAboutUs);
   app.get(`/${locale}/apps/`, publicApps);
   app.get(`/${locale}/bot/`, publicBot);
-  app.get(`/${locale}/colophon/`, publicColophon);
   app.get(`/${locale}/donate/`, publicDonate);
   app.get(`/${locale}/news/`, publicNews);
   app.get(`/${locale}/annual-reports/`, annualReportIndex);
@@ -507,6 +504,12 @@ app.get("/wp-login.php", (c) => c.redirect("https://www.youtube.com/watch?v=dQw4
 // too). PLAN.md §Q6 is the sizing behind it -- 5.58M URLs. The external
 // sitemap is a maintainer decision 2026-09-05. The place gazetteer DATA
 // stays either way: 253,584 rows plus the place_fts index, feeding /aac/.
+// /colophon/ was here. Removed 2026-09-05, maintainer decision -- the page
+// itself, its route, its template, its entry in the footer nav and in
+// /llms.txt. Django still has it (views.py:987-1008); this port does not,
+// which is a deliberate content decision rather than an unported gap, so it
+// is NOT in OUT_OF_SCOPE below -- there is nothing to answer for the path
+// that app.notFound() does not already answer.
 const OUT_OF_SCOPE = [
   // A dev scratch page (givefood/urls.py:75 -> views.maplibre_test), never
   // part of the public site. Dropped rather than ported, maintainer

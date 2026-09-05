@@ -66,7 +66,6 @@ Give Food is a registered charity in England & Wales (1188192) that uses data to
 - [Donate](${domain}/donate/): Information on how to support Give Food
 - [Register a Food Bank](${domain}/register-foodbank/): Form for food banks to join the database
 - [Privacy Policy](${domain}/privacy/): How we handle data and user privacy
-- [Colophon](${domain}/colophon/): Technical details about the website and infrastructure
 - [Bot Documentation](${domain}/bot/): Information about GiveFoodBot web crawler
 
 ## Public Tools
