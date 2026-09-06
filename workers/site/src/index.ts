@@ -3,6 +3,7 @@ import type { Context } from "hono";
 import { LOCALES } from "@givefood/templates";
 import type { AppEnv } from "./types";
 import { noStore } from "./middleware/noStore";
+import { pageCacheControl } from "./middleware/pageCacheControl";
 import { serverTiming } from "./middleware/serverTiming";
 import { cacheTag } from "./middleware/cacheTag";
 import { runtimeIdentity } from "./middleware/runtimeIdentity";
@@ -115,6 +116,13 @@ app.use("*", runtimeIdentity); // was context_processors.py's instance_id/versio
 app.use("*", slugRedirect); // was SlugRedirectMiddleware
 app.use("*", resolveLanguage); // was LocaleMiddleware + i18n_patterns
 app.use("*", geoJsonPreload); // was GeoJSONPreload (runs after routing)
+// Restores the header half of Django's 75 @cache_page decorators for HTML,
+// RSS and Markdown. Registered HERE, above the noStore mounts below, on
+// purpose: Hono unwinds post-response middleware in reverse registration
+// order, so this one runs LAST and sees every header the admin's no-store
+// and each route's own Cache-Control have already set -- which is exactly
+// what its "never override" guard needs. See middleware/pageCacheControl.ts.
+app.use("*", pageCacheControl);
 
 // SECURITY, registered before any /admin or /auth route so it wraps every one
 // of them (including the auth redirects and 404s): mark the whole admin
