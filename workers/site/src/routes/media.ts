@@ -217,5 +217,26 @@ async function serveVariant(c: Context<AppEnv>, variant: Variant): Promise<Respo
   // A derived variant has no cacheControl of its own. Immutable for a given
   // ETag, and the ETag moves when the photo does.
   h.set("cache-control", "public, max-age=31536000, immutable");
+  // STRIP THE RESIZING SERVICE'S `Vary: Accept`. It adds that header because
+  // it is built for format=auto, where the bytes genuinely are negotiated.
+  // This route is the opposite case -- see parseVariant's "FORMAT IS
+  // EXPLICIT, not negotiated from Accept" note above: the format comes from
+  // `?f=`, so a given URL has exactly one representation and Accept cannot
+  // change it. The header arrives anyway via `new Headers(res.headers)`,
+  // which copies the subrequest's headers wholesale; etag/cache-tag/
+  // cache-control are overridden just below/above, and `vary` was simply
+  // missed.
+  //
+  // It is not cosmetic. This zone has Cloudflare's "Vary for Images" setting
+  // on, which is the one case where the edge cache DOES honour Vary -- so
+  // every distinct Accept string minted its own cache entry for the same
+  // bytes. Measured on live traffic 2026-09-06: jpeg edge hit rate 4.0%
+  // (6,922 MISS of 7,215) against a median of ~3 requests per photo, which
+  // should give ~67%. Reproduced directly: one URL, three browser Accept
+  // strings, three MISSes, and identical md5s in all three responses.
+  //
+  // accept-encoding is kept -- that one is real (gzip/br) and is the only
+  // Vary Cloudflare honours by default.
+  h.set("vary", "accept-encoding");
   return new Response(res.body, { status: 200, headers: h });
 }
