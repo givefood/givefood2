@@ -15,6 +15,26 @@
   // builtins internally.
   "compatibility_flags": ["nodejs_compat"],
 
+  // NO PUBLIC URL. workers_dev defaults to TRUE, so this Worker has been
+  // answering the internet on givefood2-jobs.<subdomain>.workers.dev since
+  // its first deploy. It is crons and queue consumers only -- it exports no
+  // fetch() -- so every one of those requests throws "Handler does not
+  // export a fetch() function" and returns a 500.
+  //
+  // Found in the live logs 2026-09-06: all 4 of the Worker's exceptions in
+  // 24h were this, and nothing else. They are the entire error rate of this
+  // Worker (0.32%), and they are pure noise -- there is no caller to fix,
+  // just scanners finding a hostname.
+  //
+  // Turning it off is also the bigger half of the point. This is the Worker
+  // that holds the notification secrets, the Google Places key and
+  // CF_API_KEY (workers/site holds none of them -- that separation is
+  // PLAN.md D1's stated reason for a second Worker at all). Nothing is
+  // reachable through a Worker with no fetch handler, but a public hostname
+  // that confirms it exists is a free gift to a scanner and buys us nothing:
+  // crons and queues do not use this URL.
+  "workers_dev": false,
+
   // WORKERS BUILDS MUST TARGET THIS DIRECTORY, not the repo root. A plain
   // `npx wrangler deploy` from the root fails outright:
   //
