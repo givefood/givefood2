@@ -25,6 +25,7 @@ import { adminFoodbankDetail, adminFoodbankTab, adminFoodbankTouch } from "./foo
 import { adminArticleToggleFeatured } from "./articles";
 import { adminCrawlSetJson } from "./crawlSet";
 import { adminCrawlSetsList, adminCrawlSetDetail } from "./crawlSets";
+import { adminJobsList } from "./jobs";
 import { adminFoodbankCheck, adminJobStatus } from "./foodbankCheck";
 import { adminFoodbankUseAiDetail } from "./useAi";
 import { adminQueryConsole } from "./query";
@@ -189,6 +190,7 @@ adminApp.get("/subscriptions/", adminSubscriptionsList);
 adminApp.post("/subscriptions/delete/", adminDeleteSubscription);
 adminApp.get("/foodbanks/without_need/", adminFoodbanksWithoutNeedList);
 adminApp.get("/needs/", adminNeedsList);
+adminApp.get("/jobs/", adminJobsList);
 adminApp.get("/crawl-sets/", adminCrawlSetsList);
 adminApp.get("/crawl-set/:id{[0-9]+}/", adminCrawlSetDetail);
 

@@ -54,3 +54,44 @@ export async function markAdminJobFailed(session: Session, id: string, error: st
 export async function getLatestAdminJob(session: Session, kind: string, target: string): Promise<AdminJobRow | null> {
   return session.prepare("SELECT * FROM admin_job WHERE kind = ? AND target = ? ORDER BY created DESC LIMIT 1").bind(kind, target).first<AdminJobRow>();
 }
+
+// The jobs page's list. There has never been a list view for this table --
+// /admin/job/:id/ answers about ONE job whose id the caller already has,
+// which is fine for the poll that follows a button press and useless for
+// "what has been running". Django had no equivalent either: its admin read
+// django_tasks_db.DBTaskResult, which this port has no counterpart for
+// (see adminDashboardStats.ts). This is the nearest honest replacement for
+// the half of it that lives in D1.
+//
+// `queued` and `running` first, then most recent: a stuck job matters more
+// than a finished one, and a queued job whose consumer never picked it up
+// sorts to the top where it can be seen rather than ageing quietly down the
+// list. Within a status band it is newest-first, as everywhere else here.
+export async function getRecentAdminJobs(session: Session, limit: number): Promise<AdminJobRow[]> {
+  const result = await session
+    .prepare(
+      `SELECT * FROM admin_job
+       ORDER BY CASE status WHEN 'running' THEN 0 WHEN 'queued' THEN 1 ELSE 2 END, created DESC
+       LIMIT ?`,
+    )
+    .bind(limit)
+    .all<AdminJobRow>();
+  return result.results;
+}
+
+// Counts for the page's header line, over the same 24h window Django's
+// tasks_24h used (gfadmin/views.py:75-80). `outstanding` is the D1 half of
+// what Django called tasks_outstanding -- the queue half cannot come from
+// here at all, and arrives from the Cloudflare API instead.
+export async function getAdminJobCounts(session: Session, since: string): Promise<{ finished_24h: number; outstanding: number }> {
+  const row = await session
+    .prepare(
+      `SELECT
+         COUNT(*) FILTER (WHERE finished >= ? AND status IN ('done','failed')) AS finished_24h,
+         COUNT(*) FILTER (WHERE status IN ('queued','running'))                AS outstanding
+       FROM admin_job`,
+    )
+    .bind(since)
+    .first<{ finished_24h: number; outstanding: number }>();
+  return row ?? { finished_24h: 0, outstanding: 0 };
+}

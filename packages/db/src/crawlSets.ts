@@ -91,3 +91,63 @@ export async function getOrphanedCrawlItems(session: Session, crawlType: CrawlTy
     .all<OrphanedCrawlItemRow>();
   return result.results;
 }
+
+export interface RunningCrawlSetRow {
+  id: number;
+  crawl_type: string;
+  start: string;
+  expected: number | null;
+  remaining: number | null;
+  done: number | null;
+  running_for: string;
+}
+
+// The "is anything crawling right now" half of the jobs page. A crawl set is
+// running exactly when it has no finish -- the same test crawl_sets.njk
+// already renders as a red "Unfinished", but read here as its own query so
+// the jobs page does not have to pull 50 rows to find the nought-to-two that
+// matter.
+//
+// NOT the same thing as "unfinished". A row whose consumer died keeps
+// finish NULL forever, so an old start here is a STUCK crawl, not a busy
+// one -- which is precisely why running_for is computed and shown. The page
+// is what makes that visible; nothing cleans these up.
+export async function getRunningCrawlSets(session: Session, now: number = Date.now()): Promise<RunningCrawlSetRow[]> {
+  const result = await session
+    .prepare(
+      `SELECT id, crawl_type, start, expected, remaining
+       FROM crawlset WHERE finish IS NULL ORDER BY start DESC`,
+    )
+    .all<Omit<RunningCrawlSetRow, "done" | "running_for">>();
+  return result.results.map((r) => ({
+    ...r,
+    // expected/remaining are the queue's own countdown (scheduled/index.ts
+    // decrements remaining as each render lands), so done is derived rather
+    // than stored -- there is no third column to drift out of step.
+    done: r.expected !== null && r.remaining !== null ? r.expected - r.remaining : null,
+    running_for: formatTimedelta(now - parseD1Timestamp(r.start)),
+  }));
+}
+
+export interface CrawlTypeLastRun {
+  crawl_type: string;
+  last_start: string;
+  last_finish: string | null;
+  last_set_id: number;
+}
+
+// Last run per crawl type, for pairing each cron trigger with the last thing
+// it actually did. One row per type via a correlated MAX rather than a window
+// function: there are six types and a few dozen rows, and this keeps to the
+// same plain-SQL vocabulary as the rest of this file.
+export async function getCrawlTypeLastRuns(session: Session): Promise<CrawlTypeLastRun[]> {
+  const result = await session
+    .prepare(
+      `SELECT cs.crawl_type, cs.start AS last_start, cs.finish AS last_finish, cs.id AS last_set_id
+       FROM crawlset cs
+       WHERE cs.start = (SELECT MAX(c2.start) FROM crawlset c2 WHERE c2.crawl_type = cs.crawl_type)
+       ORDER BY cs.start DESC`,
+    )
+    .all<CrawlTypeLastRun>();
+  return result.results;
+}

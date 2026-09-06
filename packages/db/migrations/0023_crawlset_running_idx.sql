@@ -1,0 +1,17 @@
+-- /admin/jobs/'s "Running Now" panel asks crawlset for the rows with no
+-- finish. That is a full scan today, and the answer is almost always the
+-- empty set -- the worst shape a scan can have, because the cost is paid in
+-- full to return nothing.
+--
+-- A PARTIAL index, matching the predicate exactly. Only unfinished rows are
+-- indexed, so the index holds the nought-to-two rows that are actually
+-- running rather than a copy of the whole table, and a row leaves it the
+-- moment the crawl finishes. Same shape as this schema's existing
+-- dp_open_latlng_idx (... WHERE is_closed = 0).
+--
+-- crawlset is only ~13 rows today, so this changes nothing measurable now.
+-- It is worth doing at this size rather than later: the table gains a row
+-- per sweep (one needcheck, eight article runs and one charity run a day,
+-- so roughly 4,000 a year) and never loses one, and this page is loaded by
+-- a human waiting for it.
+CREATE INDEX IF NOT EXISTS crawlset_running_idx ON crawlset(start DESC) WHERE finish IS NULL;

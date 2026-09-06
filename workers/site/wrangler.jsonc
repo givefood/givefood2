@@ -180,7 +180,16 @@
     // Admin footer only -- the D1 equivalent of Django's DB_HOST, which its
     // own admin footer shows so an admin with a local and a production tab
     // open can tell them apart. The binding exposes no name at runtime.
-    "D1_DATABASE_NAME": "givefood"
+    "D1_DATABASE_NAME": "givefood",
+    // /admin/jobs/'s queue-depth panel (lib/queueBacklog.ts). A plain var,
+    // not a secret -- it is an account identifier, it is already in plain
+    // text in workers/jobs/wrangler.jsonc, and it is useless without the
+    // token that accompanies it. CF_API_KEY, which IS the secret, is
+    // already in `secrets.required` below for clearCache.ts's zone purge;
+    // that same token now needs Account Analytics:Read and Queues:Read
+    // added, and the panel degrades to a stated reason without them rather
+    // than failing the page.
+    "CF_ACCOUNT_ID": "211195b9bf606f797a6d2dbc0bf41791"
   },
 
   // PLAN.md §6507 names this as the replacement for Django's

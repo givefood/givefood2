@@ -1,0 +1,136 @@
+{% extends "admin/page.njk" %}
+
+{% block title %}Jobs{% endblock %}
+
+{% block body %}
+
+<h2>Jobs</h2>
+
+<div class="level">
+  <div class="level-item has-text-centered">
+    <div>
+      <p class="heading">Crawls Running</p>
+      <p class="title">{{ stats.running_count }}</p>
+    </div>
+  </div>
+  <div class="level-item has-text-centered">
+    <div>
+      <p class="heading">Queued Messages</p>
+      <p class="title">{{ stats.queued_messages }}</p>
+    </div>
+  </div>
+  <div class="level-item has-text-centered">
+    <div>
+      <p class="heading">Dead Letter</p>
+      <p class="title"{% if stats.dlq_messages %} style="color:red;"{% endif %}>{{ stats.dlq_messages }}</p>
+    </div>
+  </div>
+  <div class="level-item has-text-centered">
+    <div>
+      <p class="heading">Admin Jobs Outstanding</p>
+      <p class="title">{{ stats.admin_jobs_outstanding }}</p>
+    </div>
+  </div>
+  <div class="level-item has-text-centered">
+    <div>
+      <p class="heading">Admin Jobs 24h</p>
+      <p class="title">{{ stats.admin_jobs_24h }}</p>
+    </div>
+  </div>
+</div>
+
+<h3>Running Now</h3>
+<table class="table is-fullwidth is-hoverable">
+  <thead>
+    <tr><th>Type</th><th>Started</th><th>Running For</th><th>Done</th><th>Remaining</th></tr>
+  </thead>
+  <tbody>
+    {% for cs in running_crawl_sets %}
+    <tr>
+      <td><a href="/admin/crawl-set/{{ cs.id }}/">{{ cs.crawl_type_icon | safe }} {{ cs.crawl_type }}</a></td>
+      <td>{{ cs.start|date("N j, Y, P") }}</td>
+      <td>{{ cs.running_for }}</td>
+      <td>{% if cs.done != null %}{{ cs.done }} of {{ cs.expected }}{% endif %}</td>
+      <td>{% if cs.remaining != null %}{{ cs.remaining }}{% endif %}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="5">Nothing crawling right now.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+<p class="help">A crawl set with no finish time is either running or stuck &mdash; nothing clears these up, so a long &ldquo;running for&rdquo; means a sweep that died rather than one that is busy.</p>
+
+<h3 style="margin-top:2em;">Queues</h3>
+{% if queue_error %}
+<div class="notification is-warning">{{ queue_error }}</div>
+{% else %}
+<table class="table is-fullwidth is-hoverable">
+  <thead>
+    <tr><th>Queue</th><th>Messages</th><th>Last Sample</th></tr>
+  </thead>
+  <tbody>
+    {% for q in queue_backlog %}
+    <tr>
+      <td>{% if q.is_dlq %}<span class="mdi mdi-alert-circle-outline"></span> {% endif %}{{ q.name }}</td>
+      <td{% if q.messages and q.is_dlq %} style="color:red;font-weight:bold;"{% endif %}>{{ q.messages }}</td>
+      <td>{% if q.sampled_at %}{{ q.sampled_at|date("N j, Y, P") }}{% else %}<span class="has-text-grey">idle</span>{% endif %}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="3">No queues.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+<p class="help">Depths come from Cloudflare&rsquo;s analytics API, sampled about once a minute. Anything sitting in a <code>-dlq</code> has already failed every retry it gets and needs a human.</p>
+{% endif %}
+
+<h3 style="margin-top:2em;">Scheduled</h3>
+<table class="table is-fullwidth is-hoverable">
+  <thead>
+    <tr><th>Job</th><th>Schedule (UTC)</th><th>What It Does</th><th>Last Run</th><th>Finished</th></tr>
+  </thead>
+  <tbody>
+    {% for cron in crons %}
+    <tr>
+      <td>{{ cron.crawl_type_icon | safe }} {{ cron.name }}</td>
+      <td><code>{{ cron.schedule }}</code></td>
+      <td>{{ cron.description }}</td>
+      <td>
+        {% if cron.last_start %}
+          {% if cron.last_set_id %}<a href="/admin/crawl-set/{{ cron.last_set_id }}/">{{ cron.last_start|date("N j, Y, P") }}</a>
+          {% else %}{{ cron.last_start|date("N j, Y, P") }}{% endif %}
+        {% else %}<span class="has-text-grey">not recorded</span>{% endif %}
+      </td>
+      <td>{% if cron.last_finish %}{{ cron.last_finish|date("N j, Y, P") }}{% elif cron.last_start %}<span style="color:red;">Unfinished</span>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+<p class="help">Cloudflare&rsquo;s cron scheduler has no timezone setting, so these are UTC all year &mdash; the 15:00 sweep runs at 16:00 British Summer Time. Jobs marked &ldquo;not recorded&rdquo; write no crawl set; their schedule is shown but their runs leave no trace in D1.</p>
+
+<h3 style="margin-top:2em;">Admin Jobs</h3>
+<table class="table is-fullwidth is-hoverable">
+  <thead>
+    <tr><th>Kind</th><th>Target</th><th>Status</th><th>Created</th><th>Finished</th><th>Detail</th></tr>
+  </thead>
+  <tbody>
+    {% for job in admin_jobs %}
+    <tr>
+      <td>{{ job.kind }}</td>
+      <td>{% if job.target %}{{ job.target }}{% endif %}</td>
+      <td>
+        {% if job.status == "failed" %}<span class="tag is-danger">failed</span>
+        {% elif job.status == "running" %}<span class="tag is-info">running</span>
+        {% elif job.status == "queued" %}<span class="tag is-warning">queued</span>
+        {% else %}<span class="tag is-success">done</span>{% endif %}
+      </td>
+      <td>{{ job.created|date("N j, Y, P") }}</td>
+      <td>{% if job.finished %}{{ job.finished|date("N j, Y, P") }}{% endif %}</td>
+      <td>{% if job.error %}<span style="color:red;">{{ job.error|truncate(120) }}</span>{% endif %}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="6">None</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+{% endblock %}
