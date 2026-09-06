@@ -181,6 +181,25 @@ async function htmlToMarkdown(html: string): Promise<string> {
 // and the same challenge-check-before-strip order.
 const MARKDOWN_ENDPOINT = "https://api.cloudflare.com/client/v4/accounts";
 
+// Set the first time the REST endpoint answers 401/403, and never cleared:
+// the credential cannot become valid mid-run, so every later call in this
+// isolate skips straight to the binding rather than spending a round trip
+// to be rejected again.
+//
+// WHY FALL BACK AT ALL, given the binding is what caused the false-positive
+// flood this file was reverted away from on 2026-09-05? Because the two
+// failure modes are not comparable. A noisier extraction costs the reviewer
+// time on a queue they read daily; no extraction at all means every food
+// bank's shopping list silently goes stale, which is the entire point of
+// the site. Verified 2026-09-05, the day this mattered: the binding path's
+// own sweep failed to render 30 of 1,023 food banks (2.9%), while the REST
+// path failed 2 of 2 -- so degraded is measurably better than nothing.
+//
+// Module scope, so it lasts an isolate rather than a request; a fresh
+// isolate re-tests REST, which is what picks the fix up automatically once
+// the token is corrected.
+let restAuthFailed = false;
+
 // A FAILURE HERE USED TO BE COMPLETELY SILENT: every branch below was a
 // bare `continue`, so three attempts fell through to `return null` with
 // nothing written to the log. That is survivable for the ordinary case --
@@ -220,13 +239,16 @@ async function getMarkdownViaRest(env: Env, url: string): Promise<string | null>
     }
 
     if (res.status === 401 || res.status === 403) {
-      // Not retried, and not quiet. Every subsequent food bank in the
-      // sweep will fail identically, so the ladder is pointless here.
+      // Not retried, and not quiet. Every subsequent food bank in the sweep
+      // will fail identically, so the ladder is pointless here -- and the
+      // latch below makes the rest of this isolate skip REST entirely.
       console.error(
         `needcheck: Browser Rendering REST returned ${res.status} -- CF_API_KEY is missing the ` +
           `Browser Rendering permission, or is wrong for account ${env.CF_ACCOUNT_ID}. ` +
-          `THE WHOLE SWEEP WILL FIND NOTHING until this is fixed. ${await res.text()}`,
+          `FALLING BACK TO THE BINDING for the rest of this run; extraction will be noisier ` +
+          `(see getMarkdown) until the token is fixed. ${await res.text()}`,
       );
+      restAuthFailed = true;
       return null;
     }
     if (!res.ok) {
@@ -306,8 +328,14 @@ async function getMarkdownViaBinding(env: Env, url: string): Promise<string | nu
 }
 
 export async function getMarkdown(env: Env, url: string): Promise<string | null> {
-  if (env.CF_ACCOUNT_ID && env.CF_API_KEY) return getMarkdownViaRest(env, url);
-  console.warn("needcheck: CF_ACCOUNT_ID/CF_API_KEY unset, falling back to the binding scraper -- expect noisier extraction");
+  if (env.CF_ACCOUNT_ID && env.CF_API_KEY && !restAuthFailed) {
+    const markdown = await getMarkdownViaRest(env, url);
+    // A null here is usually just an unreachable site, and must NOT be
+    // retried through the binding -- that would double the load on every
+    // food bank whose page is genuinely down. Only an auth failure, which
+    // sets the latch, falls through.
+    if (!restAuthFailed) return markdown;
+  }
   return getMarkdownViaBinding(env, url);
 }
 
