@@ -16,13 +16,13 @@
   <div class="level-item has-text-centered">
     <div>
       <p class="heading">Queued Messages</p>
-      <p class="title">{{ stats.queued_messages }}</p>
+      <p class="title">{% if stats.queued_messages != null %}{{ stats.queued_messages }}{% else %}&mdash;{% endif %}</p>
     </div>
   </div>
   <div class="level-item has-text-centered">
     <div>
       <p class="heading">Dead Letter</p>
-      <p class="title"{% if stats.dlq_messages %} style="color:red;"{% endif %}>{{ stats.dlq_messages }}</p>
+      <p class="title"{% if stats.dlq_messages %} style="color:red;"{% endif %}>{% if stats.dlq_messages != null %}{{ stats.dlq_messages }}{% else %}&mdash;{% endif %}</p>
     </div>
   </div>
   <div class="level-item has-text-centered">
@@ -63,7 +63,8 @@
 <h3 style="margin-top:2em;">Queues</h3>
 {% if queue_error %}
 <div class="notification is-warning">{{ queue_error }}</div>
-{% else %}
+{% endif %}
+{% if queue_backlog %}
 <table class="table is-fullwidth is-hoverable">
   <thead>
     <tr><th>Queue</th><th>Messages</th><th>Last Sample</th></tr>
@@ -72,7 +73,7 @@
     {% for q in queue_backlog %}
     <tr>
       <td>{% if q.is_dlq %}<span class="mdi mdi-alert-circle-outline"></span> {% endif %}{{ q.name }}</td>
-      <td{% if q.messages and q.is_dlq %} style="color:red;font-weight:bold;"{% endif %}>{{ q.messages }}</td>
+      <td{% if q.messages and q.is_dlq %} style="color:red;font-weight:bold;"{% endif %}>{% if q.messages != null %}{{ q.messages }}{% else %}<span class="has-text-grey">&mdash;</span>{% endif %}</td>
       <td>{% if q.sampled_at %}{{ q.sampled_at|date("N j, Y, P") }}{% else %}<span class="has-text-grey">idle</span>{% endif %}</td>
     </tr>
     {% else %}

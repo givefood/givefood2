@@ -31,7 +31,8 @@ const TIMEOUT_MS = 5_000;
 
 export interface QueueBacklogRow {
   name: string;
-  messages: number;
+  /** Null when depths could not be fetched -- unknown, not empty. */
+  messages: number | null;
   is_dlq: boolean;
   /** Null when the queue produced no sample in the window -- idle, not zero. */
   sampled_at: string | null;
@@ -39,8 +40,24 @@ export interface QueueBacklogRow {
 
 export interface QueueBacklog {
   queues: QueueBacklogRow[];
-  /** Non-null when the panel could not be built; the page renders the reason. */
+  /** Non-null when the panel is degraded; the page renders the reason. */
   error: string | null;
+}
+
+// The two calls need DIFFERENT token permissions, so a combined "HTTP 403"
+// is unactionable -- it was the first thing this panel actually said in
+// production, and it did not say which permission to add. Each call carries
+// the permission its failure implies, and they are reported separately.
+const NEEDS_QUEUES_READ = "Queues:Read";
+const NEEDS_ACCOUNT_ANALYTICS = "Account Analytics:Read";
+
+function describe(err: unknown, permission: string, timeoutMs: number): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  if (raw === "The operation was aborted") return `no response within ${timeoutMs / 1000}s`;
+  // 403 and 401 are always the token, never the request -- say so, and name
+  // the permission rather than making someone map a status code to it.
+  if (/\b(401|403)\b/.test(raw)) return `${raw} -- CF_API_KEY is missing ${permission}`;
+  return raw;
 }
 
 const BACKLOG_QUERY = `query($a:String!,$since:Time!,$until:Time!){
@@ -113,10 +130,23 @@ export async function getQueueBacklog(env: AppEnv["Bindings"], now: number = Dat
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {
-    const [names, samples] = await Promise.all([
+    // allSettled, not all: the two calls fail independently and either one
+    // alone is still worth rendering. Names without depths still tells you
+    // which queues exist; depths without names still tells you something is
+    // backed up, which is the alarm this panel exists to raise.
+    const [namesResult, samplesResult] = await Promise.allSettled([
       fetchQueueNames(accountId, apiKey, controller.signal),
       fetchBacklogSamples(accountId, apiKey, now, controller.signal),
     ]);
+
+    const problems: string[] = [];
+    if (namesResult.status === "rejected") problems.push(`queue names (${describe(namesResult.reason, NEEDS_QUEUES_READ, TIMEOUT_MS)})`);
+    if (samplesResult.status === "rejected") problems.push(`queue depths (${describe(samplesResult.reason, NEEDS_ACCOUNT_ANALYTICS, TIMEOUT_MS)})`);
+    if (problems.length) console.error("admin/jobs: queue backlog degraded --", problems.join("; "));
+
+    const names = namesResult.status === "fulfilled" ? namesResult.value : new Map<string, string>();
+    const samples = samplesResult.status === "fulfilled" ? samplesResult.value : [];
+    const haveDepths = samplesResult.status === "fulfilled";
 
     // Newest sample wins. The query is already ordered datetimeMinute_DESC,
     // so the first sighting of a queueId is its latest sample and every
@@ -124,18 +154,24 @@ export async function getQueueBacklog(env: AppEnv["Bindings"], now: number = Dat
     const latest = new Map<string, BacklogSample>();
     for (const s of samples) if (!latest.has(s.dimensions.queueId)) latest.set(s.dimensions.queueId, s);
 
-    // Driven by the queue LIST, not by the samples: a queue with no sample
-    // in the window is idle and must still appear, or the page would
-    // silently omit exactly the queue that has stopped being consumed.
-    const queues: QueueBacklogRow[] = [...names.entries()]
-      .map(([id, name]) => {
+    // Driven by the queue LIST where we have one: a queue with no sample in
+    // the window is idle and must still appear, or the page would silently
+    // omit exactly the queue that has stopped being consumed. Without the
+    // list, fall back to whatever the samples themselves name -- an id is a
+    // poor label but a backed-up queue with an ugly name still beats a blank
+    // panel.
+    const ids = names.size ? [...names.keys()] : [...latest.keys()];
+    const queues: QueueBacklogRow[] = ids
+      .map((id) => {
+        const name = names.get(id) ?? `queue ${id.slice(0, 8)}`;
         const sample = latest.get(id);
         return {
           name,
           // avg over a one-minute bucket of an integer depth; round rather
           // than truncate so a queue that held one message for part of a
-          // minute does not display as empty.
-          messages: sample ? Math.round(sample.avg.messages) : 0,
+          // minute does not display as empty. Null when depths are missing
+          // entirely -- an unknown depth must not render as a reassuring 0.
+          messages: haveDepths ? (sample ? Math.round(sample.avg.messages) : 0) : null,
           is_dlq: name.endsWith("-dlq"),
           sampled_at: sample ? sample.dimensions.datetimeMinute : null,
         };
@@ -144,21 +180,11 @@ export async function getQueueBacklog(env: AppEnv["Bindings"], now: number = Dat
       // depth, since a non-empty DLQ is the one that needs a human), then
       // alphabetical so the idle majority is scannable.
       .sort((a, b) =>
-        b.messages - a.messages ||
+        (b.messages ?? -1) - (a.messages ?? -1) ||
         Number(b.is_dlq) - Number(a.is_dlq) ||
         a.name.localeCompare(b.name));
 
-    return { queues, error: null };
-  } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err);
-    console.error("admin/jobs: queue backlog unavailable", reason);
-    return {
-      queues: [],
-      error:
-        reason === "The operation was aborted"
-          ? `Cloudflare API did not respond within ${TIMEOUT_MS / 1000}s.`
-          : `Cloudflare API: ${reason}`,
-    };
+    return { queues, error: problems.length ? `Cloudflare API: ${problems.join("; ")}.` : null };
   } finally {
     clearTimeout(timer);
   }

@@ -82,8 +82,11 @@ export async function adminJobsList(c: Context<AppEnv>): Promise<Response> {
     };
   });
 
-  const queuedMessages = backlog.queues.reduce((n, q) => n + q.messages, 0);
-  const dlqMessages = backlog.queues.reduce((n, q) => n + (q.is_dlq ? q.messages : 0), 0);
+  // null messages means "depth unknown", which must not total as zero -- the
+  // counters go null so the page shows a dash rather than a reassuring 0.
+  const haveDepths = backlog.queues.some((q) => q.messages !== null);
+  const queuedMessages = haveDepths ? backlog.queues.reduce((n, q) => n + (q.messages ?? 0), 0) : null;
+  const dlqMessages = haveDepths ? backlog.queues.reduce((n, q) => n + (q.is_dlq ? (q.messages ?? 0) : 0), 0) : null;
 
   const html = await render("admin/jobs.njk", {
     ...(await adminPageContext(c, "jobs")),
