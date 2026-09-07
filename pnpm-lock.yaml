@@ -30,6 +30,9 @@ importers:
       '@cloudflare/workers-types':
         specifier: ^5.20260905.1
         version: 5.20260905.1
+      '@types/node':
+        specifier: ^26.4.1
+        version: 26.4.1
       typescript:
         specifier: ^7.0.2
         version: 7.0.2
@@ -1873,7 +1876,6 @@ snapshots:
   '@types/node@26.4.1':
     dependencies:
       undici-types: 8.3.0
-    optional: true
 
   '@types/nunjucks@3.2.6': {}
 
@@ -2541,8 +2543,7 @@ snapshots:
       buffer: 5.7.1
       through: 2.3.8
 
-  undici-types@8.3.0:
-    optional: true
+  undici-types@8.3.0: {}
 
   undici@7.29.0: {}
 
