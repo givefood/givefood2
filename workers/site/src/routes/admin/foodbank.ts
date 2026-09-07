@@ -1,5 +1,15 @@
 import type { Context } from "hono";
-import { getFoodbankBySlug, updateFoodbankFields, insertFoodbank, deleteFoodbankCascade, setDiscrepancyStatus } from "@givefood/db";
+import type { Session } from "@givefood/db";
+import {
+  getFoodbankBySlug,
+  updateFoodbankFields,
+  insertFoodbank,
+  deleteFoodbankCascade,
+  setDiscrepancyStatus,
+  foodbankNameTaken,
+  foodbankSlugTaken,
+  foodbankSlugForName,
+} from "@givefood/db";
 import { render } from "@givefood/templates";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
@@ -27,6 +37,53 @@ function phoneClashError(specs: readonly AdminFieldSpec[], values: Record<string
   if (!hasBoth) return null;
   if (values.phone_number && values.phone_number === values.secondary_phone_number) {
     return "Phone number and secondary phone number can not be the same";
+  }
+  return null;
+}
+
+// The uniqueness validation Django's ModelForm did for free, and github #12
+// says this port dropped: FoodbankForm(request.POST, instance=foodbank)
+// .is_valid() ran _post_clean() -> instance.validate_unique(), so a
+// duplicate came back as an error on the RE-RENDERED BOUND form with all 30
+// typed fields (including whatever the Lookup buttons pulled out of Google
+// Places) still on the page. Sending the write straight to D1 instead turns
+// that into SQLITE_CONSTRAINT_UNIQUE -> app.onError -> the 500 page, and the
+// admin retypes everything.
+//
+// Two constraints, checked in the order the admin can act on them:
+//
+//   foodbank_name_uniq -- Django's own `unique=True` (foodbank.py:61). The
+//   wording is ModelForm's single-field branch verbatim,
+//   "%(model_name)s with this %(field_label)s already exists." resolved
+//   against capfirst(verbose_name)="Foodbank" and capfirst(name.verbose_name)
+//   ="Name". The offending value is appended, as items.ts:133 does -- an
+//   improvement on Django, kept deliberately, because the admin often gets
+//   here from a Lookup that rewrote the field under them.
+//
+//   foodbank_slug_uniq -- no Django wording to copy: `slug` is
+//   editable=False and NOT unique there, so Django wrote the duplicate and
+//   broke the public page later. Say the thing the admin can act on instead,
+//   because the name they typed is genuinely not a duplicate and pointing at
+//   "Name already exists" would be a lie: slugify() eats case and
+//   punctuation, so "St Marys Foodbank" collides with "St. Mary's Foodbank".
+//
+// `exceptId` is the row being edited (undefined when creating). Without it
+// every ordinary save of an unrenamed food bank would fail, since the full
+// form and the Politics form both post the row's own current name back.
+async function nameClashError(db: Session, name: AdminFieldValue | undefined, exceptId: number | undefined): Promise<string | null> {
+  // The 4 partial forms (address/phone/email/fsa-id) never post `name`, so
+  // they touch neither index and skip both queries.
+  if (typeof name !== "string" || !name) return null;
+
+  if (await foodbankNameTaken(db, name, exceptId)) {
+    return `Foodbank with this Name already exists: "${name}"`;
+  }
+  // Against the DERIVED slug, not the typed name: updateFoodbankFields and
+  // insertFoodbank both re-slugify internally, so checking anything else
+  // would let the write disagree with the check.
+  const slug = foodbankSlugForName(name);
+  if (await foodbankSlugTaken(db, slug, exceptId)) {
+    return `Another food bank already uses the web address /needs/at/${slug}/ -- choose a name more distinct than "${name}"`;
   }
   return null;
 }
@@ -61,10 +118,33 @@ async function renderFoodbankForm(
     if (!(await verifyCsrf(c, c.env.CSRF_SECRET, csrfToken))) return c.text("Forbidden", 403);
 
     const parsed = parseAdminFields(opts.fieldSpecs, body as Record<string, unknown>);
-    const error = parsed.ok ? phoneClashError(opts.fieldSpecs, parsed.values) : parsed.error;
+    // Cheap local checks first, so a form that fails on a required field or
+    // the phone clash costs no D1 round trip; the uniqueness lookups only
+    // run when the rest of the form is already good.
+    const error =
+      (parsed.ok ? phoneClashError(opts.fieldSpecs, parsed.values) : parsed.error) ??
+      (await nameClashError(db, parsed.values.name, foodbank.id));
     if (error) return renderForm({ ...foodbank, ...parsed.values }, error);
 
-    const newSlug = await updateFoodbankFields(db, foodbank.id, parsed.values, opts.stampEdited);
+    // Backstop, not the guard -- nameClashError above is the guard, and this
+    // is the same backstop adminFoodbankNew keeps around its INSERT. What is
+    // left for this to catch is the race (a second admin taking the name
+    // between that SELECT and this UPDATE) and anything else D1 refuses.
+    // Without it those still reach app.onError and throw all 30 typed fields
+    // away, which is the exact loss github #12 is about -- a check that
+    // closes the common path but leaves the rare one landing on the 500 page
+    // has fixed the report, not the class.
+    let newSlug: string | null;
+    try {
+      newSlug = await updateFoodbankFields(db, foodbank.id, parsed.values, opts.stampEdited);
+    } catch (err) {
+      // The raw SQLite text goes to the log, not into the admin's page.
+      console.error("foodbank save: update failed", err);
+      return renderForm(
+        { ...foodbank, ...parsed.values },
+        "Could not save this food bank -- the database refused the change, so nothing was saved. Check the name is not already in use and try again.",
+      );
+    }
 
     // givefood/models/foodbank.py:717-758's do_decache, as a tag purge
     // rather than Django's hand-maintained URL list. Both slugs when the
@@ -144,16 +224,32 @@ export async function adminFoodbankNew(c: Context<AppEnv>): Promise<Response> {
     if (!(await verifyCsrf(c, c.env.CSRF_SECRET, csrfToken))) return c.text("Forbidden", 403);
 
     const parsed = parseAdminFields(FOODBANK_FIELDS, body as Record<string, unknown>);
-    const error = parsed.ok ? phoneClashError(FOODBANK_FIELDS, parsed.values) : parsed.error;
+    // No exceptId on a create -- there is no row to exclude. nameClashError
+    // passes `undefined` through to `id IS NOT NULL`, which matches every
+    // existing row; an `id != NULL` there would match none and wave the
+    // duplicate straight through to the INSERT.
+    const error =
+      (parsed.ok ? phoneClashError(FOODBANK_FIELDS, parsed.values) : parsed.error) ??
+      (await nameClashError(db, parsed.values.name, undefined));
     if (error) return renderForm({ ...parsed.values }, error);
 
     let created: { id: number; slug: string };
     try {
       created = await insertFoodbank(db, parsed.values);
     } catch (err) {
+      // Backstop, not the guard -- the check above is the guard. What is
+      // left for this to catch is the race (two admins creating the same
+      // name between that SELECT and this INSERT) and anything else D1
+      // refuses, so it no longer ASSERTS a duplicate the way it used to:
+      // a NOT NULL violation or a D1 outage reported as "a food bank with
+      // this name may already exist" sent the admin hunting for a duplicate
+      // that was never there. The raw SQLite text goes to the log rather
+      // than into the page; the admin gets their 30 fields back, which is
+      // the part that matters.
+      console.error("foodbank create: insert failed", err);
       return renderForm(
         { ...parsed.values },
-        `Could not create food bank -- a food bank with this name may already exist (${err instanceof Error ? err.message : String(err)})`,
+        "Could not create food bank -- the database refused the save, so nothing was created. Check the name is not already in use and try again.",
       );
     }
     // gfadmin/views.py:817-858 foodbank_form redirects to `admin:foodbank`

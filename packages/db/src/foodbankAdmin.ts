@@ -106,6 +106,10 @@ export async function getFoodbankAdminTotals(session: Session, foodbankId: numbe
 
 const COMBINING_MARKS_RE = new RegExp(`[${String.fromCodePoint(0x0300)}-${String.fromCodePoint(0x036f)}]`, "g");
 
+// Django's slugify, as Foodbank.save() (givefood/models/foodbank.py:634)
+// calls it. NOT exported directly -- foodbankSlugForName() below is the
+// public door, so a caller checking for a slug clash and this module
+// writing the row cannot drift apart.
 function slugify(value: string): string {
   const ascii = value
     .normalize("NFKD")
@@ -132,6 +136,55 @@ function parseLatLng(latLng: string): { latitude: number | null; longitude: numb
   const latitude = latStr ? Number.parseFloat(latStr) : NaN;
   const longitude = lngStr ? Number.parseFloat(lngStr) : NaN;
   return { latitude: Number.isFinite(latitude) ? latitude : null, longitude: Number.isFinite(longitude) ? longitude : null };
+}
+
+// The slug a given name WILL be written as, for callers that have to
+// validate `foodbank_slug_uniq` before insertFoodbank/updateFoodbankFields
+// derive the same value internally (:151, :216). Exported so the check and
+// the write share one implementation: a handler re-implementing Django's
+// slugify would eventually disagree with this one and let a collision
+// through to SQLite, which is the 500 the check exists to prevent.
+export function foodbankSlugForName(name: string): string {
+  return slugify(name);
+}
+
+// The two uniqueness checks Django's ModelForm ran inside is_valid() and
+// this port has to run for itself (github #12).
+//
+// `foodbank_name_uniq` (0001_core.sql:47) is Django's own
+// `name = models.CharField(max_length=100, unique=True)`
+// (givefood/models/foodbank.py:61), so validate_unique() reported it as a
+// field error on the re-rendered bound form. `foodbank_slug_uniq` (:48) is
+// PORT-ADDED -- Django's `slug` is editable=False with no unique=True
+// (foodbank.py:63), so a colliding slug was silently written there and
+// surfaced later as MultipleObjectsReturned on the public page. The
+// constraint is right to have; it just needs validating in front of it too,
+// because slugify() collapses punctuation and case ("St. Mary's Foodbank"
+// and "St Marys Foodbank" are distinct names with one slug).
+//
+// `exceptId` excludes the row being edited: the full Foodbank form posts all
+// 30 fields including the row's own current name, so an unexcluded check
+// would reject every ordinary save of an unrenamed food bank.
+//
+// `id IS NOT ?` rather than `id != ?`, exactly as slugRedirects.ts:64 --
+// SQLite's `!=` against NULL yields NULL (never true), so on a create, where
+// there is no row to exclude, `id != NULL` would filter out every row and
+// make the check always pass, reintroducing the very bug it looks like it
+// is preventing.
+export async function foodbankNameTaken(session: Session, name: string, exceptId: number | undefined): Promise<boolean> {
+  const row = await session
+    .prepare("SELECT id FROM foodbank WHERE name = ? AND id IS NOT ?")
+    .bind(name, exceptId ?? null)
+    .first<{ id: number }>();
+  return !!row;
+}
+
+export async function foodbankSlugTaken(session: Session, slug: string, exceptId: number | undefined): Promise<boolean> {
+  const row = await session
+    .prepare("SELECT id FROM foodbank WHERE slug = ? AND id IS NOT ?")
+    .bind(slug, exceptId ?? null)
+    .first<{ id: number }>();
+  return !!row;
 }
 
 // gfadmin/views.py:817-858 foodbank_form's create branch (`slug=None`).

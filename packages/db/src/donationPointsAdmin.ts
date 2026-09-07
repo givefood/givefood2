@@ -64,6 +64,43 @@ export async function deleteDonationPoint(session: Session, id: number): Promise
   await session.prepare("DELETE FROM foodbankdonationpoint WHERE id = ?").bind(id).run();
 }
 
+// The unique_together=('foodbank','name') check Django's ModelForm did for
+// us (givefood/models/foodbank.py:1029, enforced here by dp_fb_name_uniq --
+// migrations/0001_core.sql:102). FoodbankDonationPointForm declares
+// `fields = "__all__"` with `widgets = {'foodbank': HiddenInput()}`
+// (forms.py:172-177), so `foodbank` is IN the form, which is precisely what
+// made ModelForm._post_clean() -> instance.validate_unique() run this check
+// at all; had `foodbank` been excluded, Django would have skipped it too.
+// Without this the INSERT/UPDATE reached SQLite, raised
+// SQLITE_CONSTRAINT_UNIQUE and left app.onError rendering the 500 page --
+// discarding everything the admin typed, including the eight fields the
+// "Lookup Donation Point" button had just pulled from Google Places.
+//
+// Excludes the row being edited, exactly as Model._perform_unique_checks()
+// does with `qs.exclude(pk=...)` on an instance that has a pk. That is not a
+// nicety: the entire point of the Lookup button is to refresh lat_lng /
+// place_id / opening_hours on an EXISTING donation point while leaving the
+// Name alone, and a check without the exclusion would make that flow
+// permanently unsavable.
+//
+// `id IS NOT ?` rather than `id != ?`, copying slugRedirectOldSlugTaken
+// (slugRedirects.ts:62-69): on a create exceptId is null, and SQLite's `!=`
+// against NULL yields NULL rather than true, which would filter out every
+// row and make the check silently always pass -- reintroducing the very
+// 500 this exists to prevent, behind a check that looks present.
+export async function donationPointNameTaken(
+  session: Session,
+  foodbankId: number,
+  name: string,
+  exceptId: number | undefined,
+): Promise<boolean> {
+  const row = await session
+    .prepare("SELECT id FROM foodbankdonationpoint WHERE foodbank_id = ? AND name = ? AND id IS NOT ?")
+    .bind(foodbankId, name, exceptId ?? null)
+    .first<{ id: number }>();
+  return !!row;
+}
+
 export async function upsertDonationPoint(session: Session, params: UpsertDonationPointParams, existingId: number | undefined): Promise<string> {
   const slug = slugify(params.name);
   const companySlug = params.company ? slugify(params.company) : null;

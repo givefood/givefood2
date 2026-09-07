@@ -1,5 +1,12 @@
 import type { Context } from "hono";
-import { getFoodbankBySlug, getDonationPointBySlugs, upsertDonationPoint, deleteDonationPoint, getLocationLatLngsByFoodbankId } from "@givefood/db";
+import {
+  getFoodbankBySlug,
+  getDonationPointBySlugs,
+  upsertDonationPoint,
+  deleteDonationPoint,
+  getLocationLatLngsByFoodbankId,
+  donationPointNameTaken,
+} from "@givefood/db";
 import { render } from "@givefood/templates";
 import { AGGREGATE_TAG, foodbankTag } from "@givefood/urls";
 import type { AppEnv } from "../../types";
@@ -82,6 +89,29 @@ export async function adminDonationPointForm(c: Context<AppEnv>): Promise<Respon
       latLngs.add(foodbank.lat_lng);
       if (foodbank.delivery_lat_lng) latLngs.add(foodbank.delivery_lat_lng);
       if (latLngs.has(parsed.values.lat_lng)) error = "Location can't be the same as the food bank or one of it's locations";
+    }
+
+    // ModelForm.validate_unique() against foodbank.py:1029's
+    // unique_together=('foodbank','name'). Runs AFTER the clean() check
+    // above because Django's _post_clean() does the same: full_clean()
+    // calls Model.clean() first with validate_unique=False, then
+    // validate_unique() separately, so a form failing both reported the
+    // clean() error first.
+    //
+    // Django rendered this as a NON-FIELD error above the still-bound
+    // fields, at 200. This port shows it in generic_form.njk's single
+    // `error` slot at 400 -- the same status every other validation
+    // failure on this form already uses -- and appends the offending name
+    // the way items.ts:133 does. What matters, and what issue #12 was
+    // actually about, is that it is the RE-RENDERED FORM: everything the
+    // admin typed (and everything the Lookup button fetched) survives,
+    // instead of being thrown away by app.onError's 500 page.
+    //
+    // `existing?.id` covers both halves in one call: undefined on create,
+    // the row's own id on edit, so re-saving a donation point without
+    // renaming it is not reported as a clash.
+    if (!error && (await donationPointNameTaken(db, foodbank.id, String(parsed.values.name), existing?.id))) {
+      error = `Foodbank donation point with this Foodbank and Name already exists: "${parsed.values.name}"`;
     }
 
     if (error) return renderForm({ ...parsed.values }, error);
