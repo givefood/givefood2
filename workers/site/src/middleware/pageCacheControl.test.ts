@@ -582,10 +582,42 @@ describe("pageCacheControl: the guards that make it safe on '*'", () => {
     }
   });
 
+  it("REGRESSION: leaves a token-bearing response alone even with NO Set-Cookie", async () => {
+    // The live bug this guard was added for. issueCsrfToken() REUSES a valid
+    // cookie and returns early WITHOUT re-emitting Set-Cookie, so a returning
+    // visitor's /flag/ carried a CSRF token and no cookie header at all. The
+    // first version of this middleware keyed only on Set-Cookie, stamped
+    // `public, s-maxage=86400` on that page, and put one visitor's token in
+    // the shared cache for a day; everyone served it had their submission
+    // rejected and their typed contents discarded. Reproduced on production
+    // 2026-09-07.
+    //
+    // csrfIssued is set by issueCsrfToken on EVERY path, so it is the causal
+    // signal: "this response contains a token", not "this response happens
+    // to set a cookie".
+    const reusedToken = (c: Context<AppEnv>) => {
+      c.set("csrfIssued", true); // no Set-Cookie -- the reuse path
+      return c.html('<input name="csrf_token" value="2222a5e7">');
+    };
+    expect(await cacheControl("/flag/", reusedToken)).toBeNull();
+    expect(await cacheControl("/register-foodbank/", reusedToken)).toBeNull();
+    expect(await cacheControl("/write/to/cities-of-london-and-westminster/", reusedToken)).toBeNull();
+    // Including on the paths that would otherwise get the longest TTL, since
+    // the flag must beat the TTL table rather than being consulted after it.
+    expect(await cacheControl("/privacy/", reusedToken)).toBeNull();
+    // And a page that issued no token is unaffected -- the guard must not
+    // quietly disable caching for the whole site.
+    expect(await cacheControl("/privacy/")).toBe("public, max-age=300, s-maxage=604800");
+  });
+
   it("leaves a response carrying Set-Cookie exactly as it found it", async () => {
+    // Kept as belt-and-braces alongside the csrfIssued flag above, for any
+    // future per-visitor response that sets a cookie without going through
+    // issueCsrfToken (a session, a stored preference).
+    //
     // /flag/ and /register-foodbank/ embed a per-visitor CSRF token in the
     // form. Cloudflare declines to cache a response with Set-Cookie, which
-    // is the only reason one visitor's token is not served to everybody;
+    // is one reason one visitor's token is not served to everybody;
     // adding "public" could plausibly talk it out of that bypass.
     const withCookie = (c: Context<AppEnv>) => {
       c.header("Set-Cookie", "csrftoken=abc123; Path=/");

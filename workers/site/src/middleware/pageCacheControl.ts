@@ -114,14 +114,28 @@ export const pageCacheControl: MiddlewareHandler<AppEnv> = async (c, next) => {
   // gaps.
   if (c.res.headers.has("Cache-Control")) return;
 
-  // SET-COOKIE MEANS PER-VISITOR. Cloudflare already declines to cache a
-  // response carrying Set-Cookie, which is the only reason /flag/ and
-  // /register-foodbank/ are not serving one visitor's CSRF token to
-  // everybody -- both embed csrf_token in the form, and Django cached
-  // /flag/ for a day. Adding "public" here could plausibly talk Cloudflare
-  // out of that bypass, so this leaves any cookie-bearing response exactly
-  // as it found it. Verified 2026-09-06: /flag/ returns BYPASS with a
-  // distinct token per request.
+  // A RESPONSE CARRYING A CSRF TOKEN IS PER-VISITOR. lib/csrf.ts's
+  // issueCsrfToken() sets this on every path, so the test is "did this
+  // response get a token" rather than "did it happen to set a cookie".
+  //
+  // THE COOKIE TEST BELOW WAS NOT ENOUGH, and shipping it alone was a live
+  // bug. This middleware's first version relied on Set-Cookie only, citing
+  // a verification that /flag/ returns BYPASS with a distinct token per
+  // request -- true, but only for a visitor with NO cookie. issueCsrfToken
+  // REUSES a valid cookie and returns early without re-emitting it, so a
+  // returning visitor's /flag/ came back with no Set-Cookie, was stamped
+  // `public, max-age=300, s-maxage=86400`, and went into the shared cache
+  // with that visitor's token in the HTML. Everyone subsequently served
+  // that entry had their form submission rejected by verifyCsrf and their
+  // typed contents discarded by the ?turnstilefail=true redirect -- on
+  // /write/to/<slug>/ that is a name, postal address and email. Up to 24
+  // hours per URL, unpurgeable (cacheTag.ts assigns these paths no tag).
+  // Reproduced against production 2026-09-07 before the fix.
+  //
+  // Both checks are kept. The flag is the correct, causal one; Set-Cookie
+  // stays as belt-and-braces for any future per-visitor response that sets
+  // a cookie without going through issueCsrfToken (a session, a preference).
+  if (c.get("csrfIssued")) return;
   if (c.res.headers.has("Set-Cookie")) return;
 
   const type = c.res.headers.get("Content-Type") ?? "";

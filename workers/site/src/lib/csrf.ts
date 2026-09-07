@@ -57,6 +57,28 @@ export async function issueCsrfToken(c: Context<AppEnv>, secret: string | undefi
   // minted the token, and the double-submit still binds the form to the
   // cookie. It is also what Django's own CsrfViewMiddleware does -- one
   // stable token per session, rotated on login, not per response.
+  // MARK THE RESPONSE AS PER-VISITOR BEFORE ANY RETURN PATH. The raw token
+  // ends up rendered into the page as a hidden field, so a response that
+  // reaches this function must never be stored in a shared cache.
+  //
+  // This flag exists because Set-Cookie was NOT a sufficient signal for
+  // that. middleware/pageCacheControl.ts originally keyed its per-visitor
+  // guard on Set-Cookie, on the strength of PLAN.md:10836's description of
+  // this function as minting "a fresh raw token plus a new signed cookie on
+  // *every* call". The reuse path below made that untrue on 2026-09-02 and
+  // the middleware was written against the stale invariant on 2026-09-06:
+  // a returning visitor takes the early return at the end of this block,
+  // sends no Set-Cookie, and their page -- token and all -- was stamped
+  // `public, s-maxage=86400` and served to everyone else, whose POSTs then
+  // failed CSRF validation and discarded everything they had typed.
+  // Reproduced on production before the fix.
+  //
+  // Set here rather than at the mint site so that it cannot be missed by a
+  // future third return path, and so the guard is CAUSAL ("this response
+  // contains a token") rather than incidental ("this response happens to
+  // set a cookie").
+  c.set("csrfIssued", true);
+
   const existing = parseCookie(c.req.header("Cookie"), COOKIE_NAME);
   if (existing) {
     const dot = existing.indexOf(".");
