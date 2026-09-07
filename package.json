@@ -9,13 +9,15 @@
     "dev:site": "pnpm --filter @givefood/site dev",
     "dev:jobs": "pnpm --filter @givefood/jobs dev",
     "typecheck": "pnpm -r typecheck",
+    "test": "vitest run && pnpm run verify:webpush && pnpm run verify:whatsapp",
+    "test:watch": "vitest",
+    "test:unit": "vitest run",
     "verify:webpush": "packages/templates/node_modules/.bin/tsx tools/webpush-vector/verify.ts",
-    "verify:whatsapp": "packages/templates/node_modules/.bin/tsx tools/whatsapp-command/verify.ts",
-    "test": "pnpm -r test",
-    "verify:cache-headers": "packages/templates/node_modules/.bin/tsx workers/site/tools/cache-headers/verify.ts"
+    "verify:whatsapp": "packages/templates/node_modules/.bin/tsx tools/whatsapp-command/verify.ts"
   },
   "devDependencies": {
     "typescript": "^7.0.2",
+    "vitest": "^5.0.0",
     "wrangler": "^4.129.0"
   }
 }
