@@ -26,6 +26,15 @@ import { timesinceAgo } from "../../lib/timesince";
 // fall through to a live answer -- rather than failing the whole request
 // over a cache that's explicitly a "should be fast," not "must be
 // present," optimisation.
+
+// FIVE MINUTES, matching the cron that refreshes the KV key behind it
+// (workers/jobs/src/scheduled/index.ts, "*/5 * * * *"). Django had no
+// @cache_page on this view at all, so an explicit short TTL is already
+// more caching than the original; the number that matters is that it is
+// not pageCacheControl's 24-hour default, which would have made a value
+// deliberately recomputed every five minutes up to 288 refreshes stale.
+const FRAG_TTL = "public, max-age=300";
+
 const SEVEN_DAYS_SECONDS = 60 * 60 * 24 * 7;
 
 async function readOrCompute(kv: KVNamespace, key: string, compute: () => Promise<string | null>): Promise<string | null> {
@@ -63,8 +72,32 @@ export async function frag(c: Context<AppEnv>): Promise<Response> {
   // proxied request, so there's no equivalent fallback chain to
   // reproduce, and X-Forwarded-For is attacker-suppliable in a way
   // CF-Connecting-IP isn't.
+  // PER-VISITOR. THIS RESPONSE MUST NEVER ENTER A SHARED CACHE, and saying
+  // so explicitly is not belt-and-braces -- it was a live leak. Django left
+  // this uncached by simply having no @cache_page, and this branch inherited
+  // that by returning early with only a Content-Type. Then two things filled
+  // the silence: the zone Cache Rule gives HTML/text an edge TTL of its own,
+  // and middleware/pageCacheControl.ts (added 2026-09-06) counts text/plain
+  // as cacheable and stamped `public, max-age=300, s-maxage=86400` on
+  // anything that set no Cache-Control of its own.
+  //
+  // Result, observed on production 2026-09-07: GET /frag/ip-address/ came
+  // back `cf-cache-status: HIT, age: 1427` with ANOTHER VISITOR'S IPv6
+  // address in the body. A visitor's IP address is personal data, and it was
+  // being handed to whoever asked next for up to 24 hours.
+  //
+  // CDN-Cache-Control as well as Cache-Control, for the same reason /flag/
+  // needed it: withholding or privatising Cache-Control does not stop the
+  // zone Cache Rule, and only `CDN-Cache-Control: no-store` does.
   if (slug === "ip-address") {
-    return new Response(c.req.header("CF-Connecting-IP") ?? "", { headers: { "Content-Type": "text/plain" } });
+    return new Response(c.req.header("CF-Connecting-IP") ?? "", {
+      headers: {
+        "Content-Type": "text/plain",
+        "Cache-Control": "private, no-store, max-age=0, must-revalidate",
+        "CDN-Cache-Control": "no-store",
+        Vary: "CF-Connecting-IP",
+      },
+    });
   }
 
   const session = dbSession(c);
@@ -73,7 +106,9 @@ export async function frag(c: Context<AppEnv>): Promise<Response> {
     const modified = await readOrCompute(c.env.DATA, FRAG_KV_KEY_LAST_UPDATED, () => getLastModifiedFoodbank(session));
     if (!modified) return new Response("", { status: 403 });
     const catalogue = await loadCatalogue(locale);
-    return new Response(timesinceAgo(modified, new Date(), catalogue), { headers: { "Content-Type": "text/plain" } });
+    return new Response(timesinceAgo(modified, new Date(), catalogue), {
+      headers: { "Content-Type": "text/plain", "Cache-Control": FRAG_TTL },
+    });
   }
 
   if (slug === "need-hits") {
@@ -87,7 +122,9 @@ export async function frag(c: Context<AppEnv>): Promise<Response> {
     // to whatever digits happen to lead the string.
     const total = cachedOrComputed === null ? NaN : Number(cachedOrComputed);
     if (!cachedOrComputed || Number.isNaN(total)) return new Response("", { status: 403 });
-    return new Response(intcomma(total), { headers: { "Content-Type": "text/plain" } });
+    return new Response(intcomma(total), {
+      headers: { "Content-Type": "text/plain", "Cache-Control": FRAG_TTL },
+    });
   }
 
   // news -- a raw HTML fragment (public/frags/news.njk, already built and

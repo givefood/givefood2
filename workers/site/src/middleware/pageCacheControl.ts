@@ -94,7 +94,27 @@ function sharedTtl(path: string): number {
 // Only the three types that have no header today. Everything else either
 // already sets its own (JSON, geojson, images) or is served by the assets
 // binding with its own immutable headers.
-const CACHEABLE_TYPES = /^(?:text\/html|application\/rss\+xml|text\/markdown|text\/plain)/;
+//
+// text/plain WAS ON THIS LIST AND HAD TO COME OFF. A content type is not
+// evidence that a response is shareable, and text/plain is the type most
+// likely to be a per-visitor fragment: /frag/ip-address/ returns the
+// caller's own IP, and with no Cache-Control of its own it was stamped
+// `public, s-maxage=86400` here and served to whoever asked next -- observed
+// on production 2026-09-07 as a HIT, age 1427, carrying a stranger's IPv6
+// address. The WhatsApp webhook's GET verification echo (whatsappHook.ts:89)
+// is text/plain too, and equally must not be cached.
+//
+// The three that remain are HTML page renders and their markdown/RSS
+// equivalents -- all whole-page responses from routes that take no
+// per-visitor input. robots.txt, security.txt and llms.txt now set their own
+// week-long TTL (matching Django's @cache_page) rather than relying on this.
+//
+// THIS IS THE SECOND TIME this middleware defaulted a per-visitor response
+// to public; the first was CSRF-bearing forms, fixed by the csrfIssued flag
+// above. The lesson both times: default to NOT caching and let a route opt
+// in, rather than inferring shareability from a header the route did not
+// choose.
+const CACHEABLE_TYPES = /^(?:text\/html|application\/rss\+xml|text\/markdown)/;
 
 export const pageCacheControl: MiddlewareHandler<AppEnv> = async (c, next) => {
   await next();

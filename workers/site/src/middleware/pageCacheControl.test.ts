@@ -747,10 +747,19 @@ describe("pageCacheControl: which content types it fills in for", () => {
       new Response("<rss/>", { headers: { "Content-Type": "application/rss+xml; charset=utf-8" } });
     const md = () =>
       new Response("# Needs", { headers: { "Content-Type": "text/markdown; charset=utf-8" } });
-    const txt = () => new Response("User-agent: *", { headers: { "Content-Type": "text/plain; charset=utf-8" } });
     expect(await cacheControl("/needs/rss.xml", rss)).toBe(`public, max-age=300, s-maxage=${DAY}`);
     expect(await cacheControl("/md/needs/at/sid-valley/", md)).toBe(`public, max-age=300, s-maxage=${DAY}`);
-    expect(await cacheControl("/robots.txt", txt)).toBe(`public, max-age=300, s-maxage=${DAY}`);
+    // text/plain is DELIBERATELY NOT on the list, and this asserts the
+    // absence. It was on it until 2026-09-07, when /frag/ip-address/ -- a
+    // text/plain response carrying the caller's own IP -- was found on
+    // production as a shared-cache HIT, age 1427, serving a stranger's IPv6
+    // address. The WhatsApp webhook's GET verification echo is text/plain
+    // too. robots.txt, security.txt and llms.txt now set their own week-long
+    // TTL rather than relying on this middleware.
+    const txt = () => new Response("User-agent: *", { headers: { "Content-Type": "text/plain; charset=utf-8" } });
+    expect(await cacheControl("/robots.txt", txt)).toBeNull();
+    const ip = () => new Response("2a02:6b67::1", { headers: { "Content-Type": "text/plain" } });
+    expect(await cacheControl("/frag/ip-address/", ip)).toBeNull();
     // A markdown nearby page still gets the week its Django view asked for:
     // the family rules run on the path, independently of the type gate.
     expect(await cacheControl("/md/needs/at/sid-valley/nearby/", md)).toBe(
@@ -833,7 +842,9 @@ describe("pageCacheControl: which content types it fills in for", () => {
     // response on the floor.
     const typed = (type: string) => () => new Response("body", { headers: { "Content-Type": type } });
     expect(await cacheControl("/", typed("text/htmlish"))).toBe("public, max-age=300, s-maxage=3600");
-    expect(await cacheControl("/", typed("text/plaintext"))).toBe("public, max-age=300, s-maxage=3600");
+    // text/plaintext no longer matches anything, since text/plain left the
+    // list -- the prefix-matching point is now carried by text/htmlish above.
+    expect(await cacheControl("/", typed("text/plaintext"))).toBeNull();
   });
 
   it("fills in for the helpers real routes use, and only those", async () => {
@@ -848,9 +859,12 @@ describe("pageCacheControl: which content types it fills in for", () => {
       return res.headers.get("Cache-Control");
     };
     expect(await via("/", (c) => c.html("<p>x</p>"))).toBe(`public, max-age=300, s-maxage=${HOUR}`);
-    expect(await via("/robots.txt", (c) => c.text("User-agent: *"))).toBe(
-      `public, max-age=300, s-maxage=${DAY}`,
-    );
+    // c.text() is text/plain and is NOT filled in, deliberately -- see the
+    // content-type test above. This is the helper /frag/ip-address/ and the
+    // WhatsApp webhook echo both use, and neither may be shared. The routes
+    // that genuinely want a plain-text page (robots.txt, security.txt,
+    // llms.txt) now say so themselves with Django's own week.
+    expect(await via("/robots.txt", (c) => c.text("User-agent: *"))).toBeNull();
     // c.json() is the API, which Django left uncached and this port leaves
     // to the route -- so the gap-filler must not reach it.
     expect(await via("/api/2/foodbanks/", (c) => c.json({ ok: true }))).toBeNull();

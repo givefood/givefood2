@@ -11,8 +11,10 @@ import { dbSession } from "../../lib/session";
 // givefood/static/root/security.txt (different content, never wired into
 // urls.py -- confirmed dead, not ported).
 export async function securityTxt(): Promise<Response> {
+  // @cache_page(SECONDS_IN_WEEK) in Django, set here for the same reason as
+  // llmsTxt below: pageCacheControl no longer treats text/plain as cacheable.
   return new Response("Contact: mailto:mail@givefood.org.uk\nExpires: 2030-01-01T00:00:00.000Z\n", {
-    headers: { "Content-Type": "text/plain" },
+    headers: { "Content-Type": "text/plain", "Cache-Control": "public, max-age=604800" },
   });
 }
 
@@ -189,5 +191,11 @@ API endpoints support multiple formats via \`?format=\` parameter:
 - Charity Registration: England & Wales 1188192
 `;
 
-  return new Response(body, { headers: { "Content-Type": "text/plain; charset=utf-8" } });
+    // Django gave this @cache_page(SECONDS_IN_WEEK) (givefood/views.py). Set
+  // HERE rather than left to middleware/pageCacheControl.ts, which no longer
+  // treats text/plain as cacheable -- see that file on why a content type is
+  // not evidence that a response is shareable.
+  return new Response(body, {
+    headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "public, max-age=604800" },
+  });
 }

@@ -45,5 +45,11 @@ export async function robotsTxt(c: Context<AppEnv>): Promise<Response> {
     ...sitemapUrls.map((s) => `Sitemap: ${c.env.SITE_DOMAIN}${s}`),
   ];
 
-  return new Response(lines.join("\n") + "\n", { headers: { "Content-Type": "text/plain" } });
+    // Django gave this @cache_page(SECONDS_IN_WEEK) (givefood/views.py). Set
+  // HERE rather than left to middleware/pageCacheControl.ts, which no longer
+  // treats text/plain as cacheable -- see that file on why a content type is
+  // not evidence that a response is shareable.
+  return new Response(lines.join("\n") + "\n", {
+    headers: { "Content-Type": "text/plain", "Cache-Control": "public, max-age=604800" },
+  });
 }
