@@ -44,8 +44,16 @@
 
          routes/admin/needs.ts keeps whatever foodbank_id the need already
          has. The create half (admin/need_new.njk) still picks one, because
-         that is where the association is made. #}
-      </div>
+         that is where the association is made.
+
+         GitHub issue #36. Removing that field left its closing </div>
+         behind, and a stray close is not a cosmetic defect here: it ended
+         `<div class="column">` immediately after the CSRF input, so every
+         field, the checkbox and the submit button rendered OUTSIDE the
+         Bulma column and lost its width and padding. The final </div> then
+         closed `.columns` instead, leaving the last one unmatched. That is
+         why the form "doesn't look anything like the original" -- the
+         markup was right, the container it lived in was gone. #}
 
       {# Labels are the model's explicit verbose_names (givefood/models/needs.py:64
          "Shopping List" and :67 "Excess Items"), matching admin/need_new.njk:68-70.
