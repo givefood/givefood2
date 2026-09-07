@@ -143,6 +143,40 @@ app.use("/auth/*", noStore);
 app.use("/needs/at/*/updates/*", noStore);
 app.use("/write/to/*/email/done/*", noStore);
 
+// EVERY PUBLIC PAGE THAT RENDERS A CSRF TOKEN. These four templates embed
+// csrf_token in a form (public/flag.njk, public/register_foodbank.njk,
+// write/constituency.njk, write/email.njk), which makes the response
+// per-visitor and unshareable.
+//
+// WHY noStore AND NOT JUST WITHHOLDING Cache-Control. Removing the header is
+// not sufficient, and believing it was is what left this live: the zone
+// Cache Rule gives HTML an EDGE TTL of its own, so the edge caches a page
+// whether or not the Worker sends Cache-Control -- that is exactly how HTML
+// was being served at cf-cache-status HIT with age=3092 and no header at
+// all, before any of this middleware existed. Confirmed again after the
+// first attempt at this fix: /flag/ still came back HIT, age=47, header
+// gone. Only CDN-Cache-Control: no-store, which noStore sets, actually
+// stops it -- the same mechanism that keeps /admin at BYPASS.
+//
+// Cloudflare's own "do not cache a response with Set-Cookie" rule masked
+// this for first-time visitors, which is why it survived review: a visitor
+// with no cookie gets a Set-Cookie and a BYPASS, and only a RETURNING
+// visitor (issueCsrfToken reuses their cookie and emits no Set-Cookie)
+// produces a cacheable token-bearing page.
+// TRAILING SLASHES ARE LOAD-BEARING. Hono matches a middleware pattern
+// against the full path, and "/flag" does NOT match "/flag/" -- verified
+// directly, not assumed. Every route here is registered WITH the slash
+// (Django's APPEND_SLASH shape), so the mounts must carry it too; getting
+// this wrong fails open, silently, into exactly the bug above.
+app.use("/flag/", noStore);
+app.use("/register-foodbank/", noStore);
+app.use("/write/to/*", noStore);
+for (const locale of LOCALES) {
+  if (locale === "en") continue;
+  app.use(`/${locale}/flag/`, noStore);
+  app.use(`/${locale}/register-foodbank/`, noStore);
+}
+
 // Media routes are registered at givefood/urls.py:14 -> gfwfbn/urls/generic.py,
 // OUTSIDE i18n_patterns -- one URL each, never language-prefixed. This is
 // the one route group fully built out in this pass; see PLAN.md §3.7.
