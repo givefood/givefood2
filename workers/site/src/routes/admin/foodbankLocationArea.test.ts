@@ -44,6 +44,10 @@ const { upsertLocation: realUpsertLocation } = await vi.importActual<typeof impo
 const { adminFoodbankLocationAreaForm } = await import("./foodbankLocationArea");
 
 // See locationsAdmin.test.ts for why these columns and both indexes.
+// `place_id` is one this fixture never sets -- the area form has no such
+// field and passes null (foodbankLocationArea.ts:110) -- but upsertLocation
+// now names the column in both statements (issue #34), so the table it writes
+// to has to have it, as migrations/0001_core.sql:64 always did.
 const SCHEMA = `
 CREATE TABLE foodbanklocation (
   id INTEGER PRIMARY KEY, uuid TEXT NOT NULL,
@@ -51,6 +55,7 @@ CREATE TABLE foodbanklocation (
   name TEXT NOT NULL, slug TEXT NOT NULL,
   address TEXT, postcode TEXT,
   country TEXT NOT NULL, lat_lng TEXT NOT NULL, latitude REAL, longitude REAL,
+  place_id TEXT,
   is_closed INTEGER NOT NULL, is_donation_point INTEGER, is_mobile INTEGER,
   boundary_geojson TEXT,
   phone_number TEXT, email TEXT,

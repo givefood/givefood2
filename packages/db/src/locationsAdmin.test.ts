@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { locationNameTaken, locationSlugTaken, locationSlug } from "./locationsAdmin";
+import { locationNameTaken, locationSlugTaken, locationSlug, upsertLocation } from "./locationsAdmin";
 import type { Session } from "./types";
 
 // GitHub issue #12, verbatim: "500 adding a location with the same name as an
@@ -195,5 +195,159 @@ describe("locationSlug", () => {
   // knows it is a known gap rather than an accident of this change.
   it("returns an empty slug for a name with no ASCII word characters", () => {
     expect(locationSlug("北京")).toBe("");
+  });
+});
+
+// GitHub issue #34, verbatim: "Location admin form silently discards the Place
+// ID it just looked up." `place_id` was on the form, filled by admin.js's
+// "Lookup Location" button out of Google Places, and handed to this function
+// as UpsertLocationParams.placeId -- which neither statement named, so D1 took
+// the parameter and dropped the value on every save. Same contract-on-the-query
+// scope as the rest of this file: which columns the statements name, and which
+// value lands in each. The rows are proved in
+// workers/site/src/routes/admin/foodbankLocation.test.ts, against real SQLite.
+// Same {sql, params} shape as recordingSession's Recorded above, so `only()`
+// serves both -- this one answers .run() instead of .first(), which is all a
+// write path ever calls.
+function writingSession(): { session: Session; writes: Recorded[] } {
+  const writes: Recorded[] = [];
+  const session = {
+    prepare(sql: string) {
+      return {
+        bind(...params: unknown[]) {
+          writes.push({ sql, params });
+          return { run: async () => ({ success: true }) };
+        },
+      };
+    },
+  } as unknown as Session;
+  return { session, writes };
+}
+
+// Maps each bound parameter back to the COLUMN it lands in, by reading the
+// statement itself. Asserting on the params array alone cannot catch the
+// mutant that matters here: name `place_id` in the INSERT's column list
+// without adding a matching value to .bind() (or add the two in different
+// positions) and the array of bound values is unchanged while every column
+// from there on shifts by one -- an address written into place_id, a place id
+// written into is_donation_point. Parsing the SQL is what turns the assertion
+// into "this value goes in THAT column" rather than "these values were sent".
+function zipToColumns(columns: string[], slots: string[], params: unknown[]): Record<string, unknown> {
+  expect(slots).toHaveLength(columns.length);
+  const bound: Record<string, unknown> = {};
+  let cursor = 0;
+  columns.forEach((column, i) => {
+    // A literal in the VALUES tuple (`is_closed` is a hard 0 on create)
+    // consumes a column but no parameter.
+    bound[column] = slots[i] === "?" ? params[cursor++] : slots[i];
+  });
+  // Every parameter must have found a column. One left over is a .bind() that
+  // no longer lines up with its own statement, which SQLite rejects outright.
+  expect(cursor).toBe(params.length);
+  return bound;
+}
+
+function insertBindings({ sql, params }: Recorded): Record<string, unknown> {
+  const columnsOpen = sql.indexOf("(");
+  const columns = sql
+    .slice(columnsOpen + 1, sql.indexOf(")", columnsOpen))
+    .split(",")
+    .map((part) => part.trim());
+  const valuesOpen = sql.indexOf("(", sql.indexOf("VALUES"));
+  const slots = sql
+    .slice(valuesOpen + 1, sql.indexOf(")", valuesOpen))
+    .split(",")
+    .map((part) => part.trim());
+  return zipToColumns(columns, slots, params);
+}
+
+// Returns the SET assignments only; the trailing `WHERE id = ?` binding is
+// handed back separately under a key no column could collide with, because
+// a SET list that swallowed it would be a statement writing the row id.
+function updateBindings({ sql, params }: Recorded): { set: Record<string, unknown>; whereId: unknown } {
+  const assignments = sql
+    .slice(sql.search(/\bSET\b/) + 3, sql.search(/\bWHERE\b/))
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const columns = assignments.map((assignment) => assignment.split("=")[0]!.trim());
+  const slots = assignments.map((assignment) => assignment.split("=")[1]!.trim());
+  expect(params).toHaveLength(columns.length + 1);
+  return { set: zipToColumns(columns, slots, params.slice(0, columns.length)), whereId: params[columns.length] };
+}
+
+// A real Google Places id, in the shape the Lookup button writes into
+// #id_place_id -- opaque, no internal structure to accidentally satisfy.
+const PLACE_ID = "ChIJVXealLU_xkcRja_At0z9AGY";
+
+const PARENT = {
+  name: "Salisbury",
+  slug: "salisbury",
+  network: "Trussell",
+  phone_number: "01722349556",
+  contact_email: "info@salisbury.foodbank.org.uk",
+  country: "England",
+};
+
+function upsertParams(placeId: string | null) {
+  return {
+    foodbankId: SALISBURY,
+    foodbank: PARENT,
+    name: "Bemerton Heath Centre",
+    address: "Pembroke Road",
+    postcode: "SP2 9DY",
+    isDonationPoint: 0,
+    isMobile: 0,
+    latLng: "51.0812,-1.8231",
+    boundaryGeojson: null,
+    placeId,
+    phoneNumber: null,
+    email: null,
+  };
+}
+
+describe("upsertLocation and place_id", () => {
+  it("names place_id in the INSERT and binds the looked-up value to that column", async () => {
+    const { session, writes } = writingSession();
+    await upsertLocation(session, upsertParams(PLACE_ID), undefined);
+
+    const bound = insertBindings(only(writes));
+    expect(bound.place_id).toBe(PLACE_ID);
+    // The neighbours either side, so a shift by one is a failure here and not
+    // a surprise in production three columns later.
+    expect(bound.longitude).toBe(-1.8231);
+    expect(bound.is_closed).toBe("0");
+    expect(bound.is_donation_point).toBe(0);
+  });
+
+  // The half that was the whole bug: an INSERT-only fix would store a Place ID
+  // on create and then throw it away the first time anyone edited the row.
+  it("names place_id in the UPDATE's SET list and binds the value to that column", async () => {
+    const { session, writes } = writingSession();
+    await upsertLocation(session, upsertParams(PLACE_ID), 412);
+
+    const { set, whereId } = updateBindings(only(writes));
+    expect(set.place_id).toBe(PLACE_ID);
+    expect(set.longitude).toBe(-1.8231);
+    expect(set.is_donation_point).toBe(0);
+    expect(whereId).toBe(412);
+  });
+
+  // The deliberate decision, recorded as a test rather than only as a comment.
+  // NULL, never "". parseAdminFields hands every empty text field to this
+  // function as null already, Django's own form did the same for this
+  // specific field (CharField(null=True) gets empty_value=None, unlike the
+  // TextFields beside it, which is why production holds 35 NULLs and zero
+  // empty strings in this column), and placePhotos.ts gathers place ids with
+  // `place_id IS NOT NULL` -- an empty string would pass that filter and be
+  // sent to Google as a place id.
+  it("binds NULL, not an empty string, when the Place ID field was left empty", async () => {
+    const create = writingSession();
+    await upsertLocation(create.session, upsertParams(null), undefined);
+    expect(insertBindings(only(create.writes)).place_id).toBeNull();
+
+    const edit = writingSession();
+    await upsertLocation(edit.session, upsertParams(null), 412);
+    expect(updateBindings(only(edit.writes)).set.place_id).toBeNull();
   });
 });

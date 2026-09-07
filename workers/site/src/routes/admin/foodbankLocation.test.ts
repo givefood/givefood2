@@ -2,6 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { Hono } from "hono";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppEnv } from "../../types";
+import { FOODBANK_LOCATION_FIELDS } from "../../lib/adminFormFields";
 
 // GitHub issue #12: "500 adding a location with the same name as an existing
 // location." packages/db/src/locationsAdmin.test.ts proves the two pre-flight
@@ -65,19 +66,35 @@ const {
   locationNameTaken,
   locationSlugTaken,
   upsertLocation: realUpsertLocation,
+  getFoodbankLocationBySlugs: realGetFoodbankLocationBySlugs,
 } = await vi.importActual<typeof import("@givefood/db")>("@givefood/db");
 const { adminFoodbankLocationForm } = await import("./foodbankLocation");
 
 // Mirrors migrations/0001_core.sql:57-77 as amended by
 // 0019_drop_foodbank_cache.sql -- see locationsAdmin.test.ts for the full
 // reasoning about which columns are here and why both indexes matter.
+//
+// `place_id` is here because upsertLocation writes it (issue #34), and the
+// `foodbank` table and `foodbanklocation_full` view are here so that the
+// REAL getFoodbankLocationBySlugs -- which selects * from the view, not from
+// the table -- can run against this database in the place_id block below.
+// Nothing else in this file needs either, but a hand-built row standing in
+// for the read half would have made the round-trip proof circular: the whole
+// question is whether the value survives the trip out of storage and back,
+// and the view is one of the steps it has to survive.
 const SCHEMA = `
+CREATE TABLE foodbank (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL, slug TEXT NOT NULL,
+  network TEXT, phone_number TEXT, contact_email TEXT
+);
 CREATE TABLE foodbanklocation (
   id INTEGER PRIMARY KEY, uuid TEXT NOT NULL,
   foodbank_id INTEGER NOT NULL,
   name TEXT NOT NULL, slug TEXT NOT NULL,
   address TEXT, postcode TEXT,
   country TEXT NOT NULL, lat_lng TEXT NOT NULL, latitude REAL, longitude REAL,
+  place_id TEXT,
   is_closed INTEGER NOT NULL, is_donation_point INTEGER, is_mobile INTEGER,
   boundary_geojson TEXT,
   phone_number TEXT, email TEXT,
@@ -85,6 +102,15 @@ CREATE TABLE foodbanklocation (
 );
 CREATE UNIQUE INDEX loc_fb_name_uniq   ON foodbanklocation(foodbank_id, name);
 CREATE INDEX loc_foodbank_slug_idx     ON foodbanklocation(foodbank_id, slug);
+CREATE VIEW foodbanklocation_full AS
+  SELECT l.*,
+         f.name          AS foodbank_name,
+         f.slug          AS foodbank_slug,
+         f.network       AS foodbank_network,
+         f.phone_number  AS foodbank_phone_number,
+         f.contact_email AS foodbank_email
+    FROM foodbanklocation l
+    LEFT JOIN foodbank f ON f.id = l.foodbank_id;
 `;
 
 type Bindable = null | number | bigint | string | Uint8Array;
@@ -177,6 +203,17 @@ beforeEach(async () => {
 
   db = new DatabaseSync(":memory:");
   db.exec(SCHEMA);
+  // The parent row the foodbanklocation_full view joins to. Only the place_id
+  // block reads through the view; every other test here talks to the base
+  // table, where this row is simply unreferenced.
+  db.prepare("INSERT INTO foodbank (id, name, slug, network, phone_number, contact_email) VALUES (?, ?, ?, ?, ?, ?)").run(
+    SALISBURY.id,
+    SALISBURY.name,
+    SALISBURY.slug,
+    SALISBURY.network,
+    SALISBURY.phone_number,
+    SALISBURY.contact_email,
+  );
   const session = d1Session(db);
   env = { DB: { withSession: () => session }, CSRF_SECRET: "s", PURGE_Q: { send: async () => {} } } as unknown as AppEnv["Bindings"];
 
@@ -479,5 +516,221 @@ describe("GET", () => {
 
     expect(res.status).toBe(200);
     expect((lastRenderContext().data as Record<string, unknown>).name).toBe("Bemerton Heath Centre");
+  });
+});
+
+// GITHUB ISSUE #34: "Location admin form silently discards the Place ID it just
+// looked up." upsertLocation accepted `placeId` and named the column in neither
+// of its two statements, so admin.js's "Lookup Location" button could fetch a
+// Place ID out of Google Places, put it in the box, and have it vanish on save.
+// packages/db/src/locationsAdmin.test.ts pins the two statements' SHAPE. This
+// block runs the whole path against the real SQLite above and then reads the
+// stored row, because the shape of an UPDATE is not the interesting claim here.
+//
+// WHAT THE PRESERVE TEST IS REALLY GUARDING. Writing `place_id = ?` on every
+// update is only safe while the edit form round-trips the value it was given:
+// the same statement that finally stores a Place ID would otherwise BLANK one
+// on every unrelated edit -- a rename, a postcode fix -- across the 1,938
+// production rows that hold one. So the round trip is executed rather than
+// reasoned about, and every link is real: the row is read back through the
+// actual getFoodbankLocationBySlugs (and therefore through
+// foodbanklocation_full, which is where a dropped column would hide), the POST
+// body is built from the context the handler hands the template using the same
+// field list the template iterates, and the write is the actual upsertLocation.
+// If any link breaks, "preserves an existing Place ID" fails and this fix is
+// correctly reported as the data-loss bug it would then be.
+const PLACE_ID = "ChIJVXealLU_xkcRja_At0z9AGY";
+const RELOOKED_UP_PLACE_ID = "ChIJ68J3tUsbdkgRDVK5UPlkX4A";
+
+describe("place_id", () => {
+  // The db layer is stubbed everywhere else in this file because those tests
+  // are about REFUSALS, where the interesting fact is that no row was written.
+  // Here the row is the assertion, so both functions are the real ones.
+  beforeEach(() => {
+    mocks.getFoodbankLocationBySlugs.mockImplementation(async (...args: unknown[]) =>
+      realGetFoodbankLocationBySlugs(args[0] as never, args[1] as never, args[2] as never),
+    );
+    mocks.upsertLocation.mockImplementation(async (...args: unknown[]) =>
+      realUpsertLocation(args[0] as never, args[1] as never, args[2] as never),
+    );
+  });
+
+  async function seedWithPlaceId(name: string, placeId: string | null) {
+    await realUpsertLocation(d1Session(db) as never, { ...seedParams(name), placeId }, undefined);
+    return rowFor(name);
+  }
+
+  function stored(id: number) {
+    return db.prepare("SELECT name, place_id FROM foodbanklocation WHERE id = ?").get(id) as {
+      name: string;
+      place_id: string | null;
+    };
+  }
+
+  // What a browser would actually submit from the rendered page: the SAME
+  // field list the template iterates (generic_form.njk hands
+  // FOODBANK_LOCATION_FIELDS to formfields.njk's `fieldset(fields, data)`)
+  // over the SAME `data` object the handler gave it. Deliberately NOT built
+  // from the database row -- a value only returns on a POST if a field exists
+  // for it and the form was given it, which is the link being tested.
+  function browserWouldSubmit(data: Record<string, unknown>, edits: Record<string, string> = {}): Record<string, string> {
+    const body: Record<string, string> = {};
+    for (const spec of FOODBANK_LOCATION_FIELDS) {
+      const value = data[spec.name];
+      // An unchecked checkbox is ABSENT from the body, and that absence is
+      // its false state -- parseAdminFields' own comment says so.
+      if (spec.kind === "checkbox") {
+        if (value) body[spec.name] = "1";
+        continue;
+      }
+      // nunjucks renders null and undefined into a value attribute as ""
+      // (env.ts pins throwOnUndefined: false for exactly that), so a column
+      // holding NULL comes back as an empty field.
+      body[spec.name] = value === null || value === undefined ? "" : String(value);
+    }
+    return { ...body, ...edits };
+  }
+
+  async function openEditForm(locSlug: string): Promise<Record<string, unknown>> {
+    const res = await app.request(`/admin/foodbank/salisbury/location/${locSlug}/edit/`, {}, env, execCtx);
+    expect(res.status).toBe(200);
+    return lastRenderContext().data as Record<string, unknown>;
+  }
+
+  // The reported bug, at its narrowest. Before the fix this row saved with
+  // place_id NULL and nothing anywhere said so -- the admin's next clue was
+  // that the location never grew a photograph, because
+  // mediaBackfill/placePhoto.ts:136 keys the Google Places photo fetch on
+  // exactly this column and returns quietly when it is empty.
+  it("stores the Place ID the Lookup button found, on create", async () => {
+    const res = await post("/admin/foodbank/salisbury/location/new/", { name: "Wilton", ...TYPED, place_id: PLACE_ID });
+
+    expect(res.status).toBe(302);
+    expect(stored(rowFor("Wilton").id).place_id).toBe(PLACE_ID);
+  });
+
+  // The read half on its own, so that a break in it is reported as "the form
+  // was never given the value" rather than only as a mysterious blanking.
+  it("hands the stored Place ID back to the edit form", async () => {
+    const row = await seedWithPlaceId("Downton", PLACE_ID);
+
+    expect((await openEditForm(row.slug)).place_id).toBe(PLACE_ID);
+  });
+
+  // THE TEST THIS CHANGE IS NOT SAFE WITHOUT. Nothing here mentions a Place
+  // ID: the admin renames a location, and every other field goes back exactly
+  // as the form served it. Adding `place_id = ?` to the UPDATE means that POST
+  // now rewrites the column, so if the value had NOT come back in the body
+  // this ordinary edit would erase it -- turning a missing write into a
+  // deletion, on 1,938 rows nothing else could restore.
+  it("preserves an existing Place ID through an edit that only changes the name", async () => {
+    const row = await seedWithPlaceId("Downton", PLACE_ID);
+    const data = await openEditForm(row.slug);
+
+    const res = await post(
+      `/admin/foodbank/salisbury/location/${row.slug}/edit/`,
+      browserWouldSubmit(data, { name: "Downton Memorial Hall" }),
+    );
+
+    expect(res.status).toBe(302);
+    expect(stored(row.id).name).toBe("Downton Memorial Hall");
+    expect(stored(row.id).place_id).toBe(PLACE_ID);
+  });
+
+  // The other direction, and the mutant killer for the UPDATE: drop
+  // `place_id = ?` from the SET list and the column simply keeps its old
+  // value, which the preserve test above would happily accept. This one is
+  // what fails.
+  it("stores a re-looked-up Place ID over the old one", async () => {
+    const row = await seedWithPlaceId("Downton", PLACE_ID);
+    const data = await openEditForm(row.slug);
+
+    const res = await post(
+      `/admin/foodbank/salisbury/location/${row.slug}/edit/`,
+      browserWouldSubmit(data, { place_id: RELOOKED_UP_PLACE_ID }),
+    );
+
+    expect(res.status).toBe(302);
+    expect(stored(row.id).place_id).toBe(RELOOKED_UP_PLACE_ID);
+  });
+
+  // THE EMPTY-FIELD DECISION, recorded where it can fail. NULL, never "": it
+  // is what parseAdminFields already does to every other text field on this
+  // form, it is what Django's own form did for this field (CharField(null=True)
+  // is given empty_value=None, unlike the TextFields beside it -- run against
+  // Django 5.2.6), and it is what the 1,973 production rows hold (1,938
+  // populated, 35 NULL, 0 empty). The second assertion is why it matters
+  // rather than merely being tidy: placePhotos.ts:44-48 collects a food bank's
+  // place ids with `place_id IS NOT NULL`, so an empty string would pass that
+  // filter and be handed to Google as a place id.
+  it("stores NULL, not an empty string, when the Place ID is cleared", async () => {
+    const row = await seedWithPlaceId("Downton", PLACE_ID);
+    const data = await openEditForm(row.slug);
+
+    const res = await post(`/admin/foodbank/salisbury/location/${row.slug}/edit/`, browserWouldSubmit(data, { place_id: "" }));
+
+    expect(res.status).toBe(302);
+    expect(stored(row.id).place_id).toBeNull();
+    expect(db.prepare("SELECT id FROM foodbanklocation WHERE place_id IS NOT NULL").all()).toHaveLength(0);
+  });
+
+  // Same decision, reached through parseAdminFields' trim rather than an empty
+  // box -- a pasted Place ID that was only whitespace must not become a stored
+  // space, which would be neither a place id nor absent.
+  it("treats a whitespace-only Place ID as cleared", async () => {
+    const row = await seedWithPlaceId("Downton", PLACE_ID);
+    const data = await openEditForm(row.slug);
+
+    const res = await post(`/admin/foodbank/salisbury/location/${row.slug}/edit/`, browserWouldSubmit(data, { place_id: "   " }));
+
+    expect(res.status).toBe(302);
+    expect(stored(row.id).place_id).toBeNull();
+  });
+
+  // THE ONE SHAPE IN WHICH `place_id = ?` CAN STILL DESTROY A PLACE ID, pinned
+  // here because it is a hazard rather than a bug and the difference should be
+  // written down. parseAdminFields loops over the SPEC LIST, not over the POST
+  // body (adminFormFields.ts:286), so a field the body omits entirely reads as
+  // undefined, trims to "" and arrives as null -- identical to an emptied box,
+  // and there is no third state in which "leave this column alone" could be
+  // expressed. Every other nullable field on this form behaves the same way; a
+  // POST missing `address` blanks the address. So this is consistency, not an
+  // oversight, and special-casing this one column would be the surprise.
+  //
+  // It is unreachable from today's admin: generic_form.njk hands the whole of
+  // FOODBANK_LOCATION_FIELDS to formfields.njk, which renders an input for
+  // every spec, so a browser always posts all ten names. The two routes that
+  // reach upsertLocation are this handler and the area form, and the area form
+  // is registered create-only (routes/admin/index.ts:154-155), so its
+  // `placeId: null` only ever reaches the INSERT.
+  //
+  // What this test is for is the day someone slices this form the way
+  // FOODBANK_PARTIAL_FORMS (adminFormFields.ts:225-231) slices the food bank
+  // one. Note that the food bank's own "address" partial already carries
+  // `place_id` in its field list for exactly this reason. A location partial
+  // that dropped it would silently blank the column on 1,938 rows, and this is
+  // the test that says so out loud instead of leaving it to be discovered.
+  it("clears the Place ID when the POST omits the field entirely -- the hazard a partial form would hit", async () => {
+    const row = await seedWithPlaceId("Downton", PLACE_ID);
+    const data = await openEditForm(row.slug);
+    const body = browserWouldSubmit(data);
+    expect(body.place_id).toBe(PLACE_ID); // the full form really does post it back
+    delete body.place_id;
+
+    const res = await post(`/admin/foodbank/salisbury/location/${row.slug}/edit/`, body);
+
+    expect(res.status).toBe(302);
+    expect(stored(row.id).place_id).toBeNull();
+  });
+
+  // A create with the box left alone, against the real column: the INSERT's
+  // null path is the one every seed in this file already takes, pinned here so
+  // that "empty means NULL" is asserted on both statements, not just the
+  // UPDATE.
+  it("stores NULL on a create with no Place ID", async () => {
+    const res = await post("/admin/foodbank/salisbury/location/new/", { name: "Wilton", ...TYPED });
+
+    expect(res.status).toBe(302);
+    expect(stored(rowFor("Wilton").id).place_id).toBeNull();
   });
 });

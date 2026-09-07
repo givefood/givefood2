@@ -158,6 +158,59 @@ export async function locationSlugTaken(
 // Create (existingId undefined) or update (existingId given) -- one
 // function, matching Django's single create+edit form/view for this
 // model. Returns the row's slug so the caller can redirect to it.
+//
+// GitHub issue #34. `place_id` was declared on UpsertLocationParams, was on
+// the form (lib/adminFormFields.ts:148), was filled by admin.js's "Lookup
+// Location" button straight out of Google Places, and was passed in by the
+// handler (routes/admin/foodbankLocation.ts:144) -- and then named by
+// NEITHER statement below, so it was accepted and silently dropped on every
+// save. The sibling upsertDonationPoint has always written it
+// (donationPointsAdmin.ts:117, :150); this is that same one column, in both
+// statements, in the migration's own column position.
+//
+// Not cosmetic. `place_id` is the key the Google Places photo backfill runs
+// on: workers/jobs/src/mediaBackfill/placePhoto.ts:136 logs "media-backfill:
+// place has no place_id for <key>" and returns quietly, so a location
+// created through this admin could never acquire a photograph and nothing
+// anywhere said why.
+//
+// THE UPDATE IS THE DANGEROUS HALF, and it is only safe because the edit
+// form round-trips the stored value. `place_id = ?` means every ordinary
+// edit -- a rename, a postcode fix -- rewrites the column with whatever the
+// form posted, so a form that did NOT render the current value would blank
+// the 1,938 of 1,973 production rows that hold one (counted on live D1), all
+// of them written by the Django ETL and none recoverable from anything else
+// in the row. It does render it: getFoodbankLocationBySlugs selects * from
+// foodbanklocation_full (whose body is `l.*` plus the parent's columns,
+// migrations/0019), the handler spreads that row into the template's `data`,
+// and admin/includes/formfields.njk emits it as the text input's value.
+// That whole chain is EXECUTED rather than asserted, in routes/admin/
+// foodbankLocation.test.ts's "place_id" block -- real read, real render
+// context, real POST body, this UPDATE, row read back -- because one broken
+// link in it turns this fix into a data-loss bug.
+//
+// AN EMPTY PLACE ID FIELD STORES NULL, never "". Three reasons, all checked
+// rather than assumed:
+//   - Consistency with the fields beside it. parseAdminFields
+//     (lib/adminFormFields.ts:316) maps every empty text field to null, so
+//     `address`/`postcode`/`boundary_geojson`/`phone_number`/`email` already
+//     arrive here as null from the same POST. Passing params.placeId through
+//     unchanged keeps this column on the same rule; special-casing it would
+//     be the inconsistency.
+//   - It is what Django stored. `place_id` is CharField(max_length=1024,
+//     null=True, blank=True) (models/base.py:76), and Django's
+//     CharField.formfield() sets `empty_value=None` when the field is null
+//     and the backend doesn't read "" as NULL. Run against the installed
+//     Django 5.2.6 rather than recalled: that field's form field cleans both
+//     "" and "  " to None. `address`/`boundary_geojson` are TextFields,
+//     whose formfield() has no such branch and cleans "" to "" -- which is
+//     exactly why the migrated data holds 8 and 218 empty strings in those
+//     two columns and ZERO in this one (1,973 rows: 1,938 populated, 35
+//     NULL, 0 empty).
+//   - "" would be worse than absent downstream. placePhotos.ts:44-48 and
+//     :67-79 gather a food bank's owned place ids with `place_id IS NOT
+//     NULL`; an empty string passes that filter and is then handed to Google
+//     as a place id.
 export async function upsertLocation(session: Session, params: UpsertLocationParams, existingId: number | undefined): Promise<string> {
   const slug = locationSlug(params.name);
   const { latitude, longitude } = parseLatLng(params.latLng);
@@ -168,9 +221,9 @@ export async function upsertLocation(session: Session, params: UpsertLocationPar
       .prepare(
         `INSERT INTO foodbanklocation
            (uuid, foodbank_id,
-            name, slug, address, postcode, country, lat_lng, latitude, longitude,
+            name, slug, address, postcode, country, lat_lng, latitude, longitude, place_id,
             is_closed, is_donation_point, is_mobile, boundary_geojson, phone_number, email, modified, edited)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         crypto.randomUUID().replace(/-/g, ""),
@@ -183,6 +236,7 @@ export async function upsertLocation(session: Session, params: UpsertLocationPar
         params.latLng,
         latitude,
         longitude,
+        params.placeId,
         params.isDonationPoint,
         params.isMobile,
         params.boundaryGeojson,
@@ -196,7 +250,7 @@ export async function upsertLocation(session: Session, params: UpsertLocationPar
     await session
       .prepare(
         `UPDATE foodbanklocation SET
-           name = ?, slug = ?, address = ?, postcode = ?, lat_lng = ?, latitude = ?, longitude = ?,
+           name = ?, slug = ?, address = ?, postcode = ?, lat_lng = ?, latitude = ?, longitude = ?, place_id = ?,
            is_donation_point = ?, is_mobile = ?, boundary_geojson = ?, phone_number = ?, email = ?,
            modified = ?, edited = ?
          WHERE id = ?`,
@@ -209,6 +263,7 @@ export async function upsertLocation(session: Session, params: UpsertLocationPar
         params.latLng,
         latitude,
         longitude,
+        params.placeId,
         params.isDonationPoint,
         params.isMobile,
         params.boundaryGeojson,
