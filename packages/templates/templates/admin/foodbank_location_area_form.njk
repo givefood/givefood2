@@ -43,11 +43,24 @@
       <div class="field">
         <div class="control">
           {# gfadmin/templates/admin/fblocation_area_form.html:16's double-submit
-             guard -- matters here more than on most ported forms: the create
-             path (lib/db's upsertLocation with no existingId) is a bare INSERT,
-             same as Django's `foodbank_location.save()` at views.py:1723, with
-             no ON CONFLICT dedupe. A double click creates two identical
-             locations, not a harmless no-op. #}
+             guard, ported as-is.
+
+             THIS COMMENT USED TO SAY a double click "creates two identical
+             locations, not a harmless no-op". That was never true, and
+             believing it is part of why this form's write went unguarded
+             until #12: foodbanklocation has carried UNIQUE(foodbank_id, name)
+             since 0001_core.sql, so the second insert could not duplicate the
+             row -- it raised, and the admin got the 500 page instead, losing
+             the area they had just looked up.
+
+             What a double click does TODAY is land on the duplicate-name
+             check added for #12 and come back as "Foodbank location with this
+             Foodbank and Name already exists", with both fields still filled
+             in. So the guard is now a courtesy rather than a safeguard: it
+             saves a pointless second round trip and an error banner for
+             something that did work. Kept because Django has it, and because
+             this form can spend up to 40s in MapIt before it writes, which is
+             exactly when an impatient second click happens. #}
           <button type="submit" class="button is-link is-light" onclick="this.form.submit();this.disabled = true;">Submit</button>
         </div>
       </div>
