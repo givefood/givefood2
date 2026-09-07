@@ -1,0 +1,61 @@
+-- ================= 0024_article_published_all_idx.sql =====================
+-- Ticket #42. The index the UNFILTERED article ordering has never had.
+--
+-- getRecentArticles() in packages/db/src/homepage.ts runs
+--   SELECT ... FROM foodbankarticle a JOIN foodbank f ON f.id = a.foodbank_id
+--   ORDER BY a.published_date DESC LIMIT ?
+-- with no WHERE clause at all, for /news/ (LIMIT 100), /needs/rss.xml
+-- (LIMIT 10) and /dashboard/articles/ (LIMIT 200).
+--
+-- foodbankarticle carries exactly two indexes today, and NEITHER covers
+-- that ordering:
+--   * article_published_idx  -- (published_date DESC) WHERE featured = 1,
+--     from 0003_homepage_data.sql. PARTIAL, so it holds 175 of the 17,248
+--     rows and cannot answer a query that wants all of them.
+--   * article_url_uniq       -- (url), from 0010_article_url_unique.sql.
+--     The dedup key the crawler inserts against; wrong column entirely.
+--
+-- So the planner scans the table and sorts the whole thing in a temp
+-- b-tree. Measured against production D1 on 2026-09-07:
+--
+--   EXPLAIN QUERY PLAN -> SCAN a
+--                         SEARCH f USING INTEGER PRIMARY KEY (rowid=?)
+--                         USE TEMP B-TREE FOR ORDER BY
+--   rows_read      51,744   (3 x the table's 17,248 rows)
+--   sql_duration   46.2 ms
+--
+-- 51,744 rows read to return 100. The cost is IDENTICAL at LIMIT 10, 100
+-- and 200 -- the sort has to see every row before it knows which ten are
+-- the newest, so the limit buys nothing. With this index the same shape
+-- costs 2 rows read per row returned: proven on the real production
+-- database by its already-indexed twins -- foodbankchange's
+-- change_pub_created_idx answers the same join-and-order at LIMIT 100 in
+-- 200 rows / 1.0-1.6 ms, and article_published_idx itself answers the
+-- featured query at LIMIT 5 in 10 rows / 0.85 ms.
+--
+-- DESC IS LOAD-BEARING, NOT DECORATION. SQLite will happily serve
+-- `ORDER BY published_date DESC` from an ASC index by scanning it
+-- backwards, and EXPLAIN QUERY PLAN reports the same line either way -- so
+-- an ASC index looks identical and is not. Within a group of rows sharing
+-- one published_date, a forward scan of a DESC index emits them in rowid
+-- order, which is the order the temp-b-tree sort already produced; a
+-- backward scan of an ASC index emits them reversed. Measured on a
+-- 17,248-row replica with ties: the DESC index returns byte-identical rows
+-- to today's plan at LIMIT 10, 100 and 200, and the ASC index does not.
+-- articlePublishedIndex.test.ts pins that difference.
+--
+-- BOTH INDEXES STAY. The obvious follow-up -- "the partial one is now
+-- redundant" -- is wrong and was tested: with both present the planner
+-- still picks article_published_idx for getFeaturedArticles()'s
+-- `WHERE featured = 1`, because 175 of 17,248 rows are featured and the
+-- partial index contains only those. Drop it and the homepage's featured
+-- block falls onto this index instead, walking ~99 non-featured entries
+-- for every featured one it finds -- a 10-row read turned into a
+-- several-hundred-row one. Adding this index is not permission to remove
+-- that one.
+--
+-- Cost of carrying it: 17,248 TEXT entries, roughly 0.6-1 MB against a
+-- 437 MB database, and 147 inserts in the last 30 days (~5/day) to
+-- maintain. Nothing.
+
+CREATE INDEX article_published_all_idx ON foodbankarticle(published_date DESC);
