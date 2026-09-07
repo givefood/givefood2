@@ -1,0 +1,62 @@
+# Cache-Control for the Workers Assets binding.
+#
+# WITHOUT THIS FILE the binding's default applies -- "public, max-age=0,
+# must-revalidate" -- so every stylesheet, script, font and icon is
+# revalidated on EVERY page view. Measured on production over 24h before this
+# existed: 47,979 asset requests and 750 MB, essentially all of it repeat
+# traffic for bytes the browser already had.
+#
+#   /static/fonts   9,295 reqs   312.1 MB
+#   /static/css    10,785 reqs   265.3 MB
+#   /static/js     12,795 reqs   139.6 MB
+#   /static/img    15,104 reqs    33.0 MB
+#
+# The zone analytics showed these as cf-cache-status REVALIDATED rather than
+# HIT, which is the tell: the edge had them, and every visitor asked anyway.
+#
+# WHY `immutable` IS SAFE FOR css/js: page.njk appends ?v={{ version }}, which
+# is the deploy's version id, so a changed file is a changed URL. That was
+# true of 60 references and NOT of 10 others (webpush.js, api2.js,
+# chart-colors.js, maplibre-gl.*, echarts.js, highlight*) -- those are now
+# versioned too, in the same change that added this file, because a year-long
+# immutable TTL on an unversioned URL is unfixable without renaming the file.
+# instantpage-5.2.0.js is the deliberate exception: its version is in its
+# FILENAME, so adding ?v= would bust a never-changing file on every deploy.
+#
+# Order matters: the most specific matching rule wins, so /sw.js and
+# /favicon.ico below override nothing, but a future /static/* rule would need
+# to come before the per-type ones.
+
+# Fonts change only when the typeface is relicensed or subset -- rename the
+# file if that ever happens. 312 MB/day, the largest single category.
+/static/fonts/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# Safe because every reference carries ?v={{ version }} (see above).
+/static/css/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/static/js/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# NOT immutable, and not a year. Images are referenced WITHOUT a version
+# (logo.svg, favicon.svg, the app-store badges, ~35 files under img/), so a
+# replaced image can only reach a browser when its TTL expires. Thirty days
+# is a large win over revalidate-every-time while keeping a bounded worst
+# case; version these the way css/js are if that ever bites.
+/static/img/*
+  Cache-Control: public, max-age=2592000
+
+# THE SERVICE WORKER MUST NOT BE CACHED HARD. webpush.js:111 registers
+# /sw.js, and a stale service worker is not a stale asset -- it keeps
+# controlling the page, and every push subscriber stays on the old code with
+# no way to update them. Browsers already bypass the HTTP cache for the SW
+# script itself on update checks, but subresources and older browsers do not,
+# so say it explicitly. This is the one file where the default was right.
+/sw.js
+  Cache-Control: public, max-age=0, must-revalidate
+
+# Unversioned and referenced by browsers directly rather than from a
+# template, so it cannot be busted at all. A week bounds the staleness.
+/favicon.ico
+  Cache-Control: public, max-age=604800

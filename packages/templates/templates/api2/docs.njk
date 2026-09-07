@@ -4,10 +4,10 @@
 {% block title %}Give Food API Docs {% endblock %}
 
 {% block head %}
-  <link rel="stylesheet" href="/static/css/api.css">
-  <link rel="stylesheet" href="/static/css/highlight-default.css">
-  <script src="/static/js/api2.js" defer></script>
-  <script src="/static/js/highlight.pack.js" defer></script>
+  <link rel="stylesheet" href="/static/css/api.css?v={{ version }}">
+  <link rel="stylesheet" href="/static/css/highlight-default.css?v={{ version }}">
+  <script src="/static/js/api2.js?v={{ version }}" defer></script>
+  <script src="/static/js/highlight.pack.js?v={{ version }}" defer></script>
   <meta name="description" content="We're a UK charity that aims to help local organisations address the immediate and critical need created by food insecurity">
 {% endblock %}
 
