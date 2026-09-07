@@ -1,5 +1,10 @@
 import type { Context } from "hono";
-import { getAllConstituencySlugs, getAllOpenDonationPoints, getAllOpenFoodbanks, getAllOpenLocationSlugs } from "@givefood/db";
+import {
+  getAllConstituencySlugs,
+  getAllOpenDonationPointSlugs,
+  getAllOpenFoodbanksForSitemap,
+  getAllOpenLocationSlugs,
+} from "@givefood/db";
 import type { Locale } from "@givefood/templates";
 import { urlForLocale } from "@givefood/urls";
 import type { AppEnv } from "../../types";
@@ -28,10 +33,19 @@ export async function sitemapXml(c: Context<AppEnv>): Promise<Response> {
   const locale = c.get("lang") as Locale;
   const u = (name: string, ...args: string[]) => `${c.env.SITE_DOMAIN}${urlForLocale(locale, name, ...args)}`;
 
+  // All four queries are column-projected, matching Django's four `.only()`
+  // calls (givefood/views.py:660-679) one for one. Two of them used to be
+  // `SELECT *`: together they pulled 14.2 MB of D1 result payload per render
+  // to emit the 1,239,016-byte body, and the donation-point one alone
+  // (10.6 MB, a median 320 ms against production) set the critical path
+  // through this Promise.all -- which is now the ~40 ms of the two slug
+  // queries instead. See getAllOpenFoodbanksForSitemap and
+  // getAllOpenDonationPointSlugs for the measured figures; rows_read is
+  // unchanged, so nothing about D1 billing moves.
   const [foodbanks, locationSlugs, donationpoints, constituencySlugs] = await Promise.all([
-    getAllOpenFoodbanks(session),
+    getAllOpenFoodbanksForSitemap(session),
     getAllOpenLocationSlugs(session),
-    getAllOpenDonationPoints(session),
+    getAllOpenDonationPointSlugs(session),
     getAllConstituencySlugs(session),
   ]);
 

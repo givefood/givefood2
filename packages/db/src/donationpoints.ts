@@ -123,6 +123,38 @@ export async function getAllOpenDonationPoints(session: Session): Promise<Donati
   return result.results.map(mapDonationPointRow);
 }
 
+// sitemap.xml/md_sitemap's donation-point loops only ever need
+// foodbank_slug/slug, exactly as Django narrows the same queryset
+// (`FoodbankDonationPoint.objects.all().exclude(is_closed=True)
+// .only('foodbank_slug', 'slug')`, givefood/views.py:759-763). Same
+// narrow-column reasoning as locations.ts's getAllOpenLocationSlugs, but
+// the pressure here is row COUNT x row WIDTH rather than one large blob:
+// measured against production D1, `SELECT *` over the 5,727 open donation
+// points serialises 10,643,022 bytes in a median 320 ms (264-424, n=5) where
+// these two columns are 554,510 bytes in a median 40 ms (31-50). rows_read
+// is UNCHANGED at 11,454 either way, so
+// this is wire bytes and latency, not D1 billing. It was the slowest of
+// the four queries the sitemap runs in parallel, i.e. the whole critical
+// path.
+export async function getAllOpenDonationPointSlugs(
+  session: Session,
+): Promise<Array<{ foodbank_slug: string; slug: string }>> {
+  const result = await session.prepare("SELECT foodbank_slug, slug FROM foodbankdonationpoint_full WHERE is_closed = 0").all();
+  return result.results as unknown as Array<{ foodbank_slug: string; slug: string }>;
+}
+
+// sitemap.md's variant of the above -- same narrow-column reasoning, plus
+// `name` for the link text (the XML sitemaps have no link text, only
+// <loc>), mirroring getAllOpenLocationSlugsWithNames in locations.ts.
+export async function getAllOpenDonationPointSlugsWithNames(
+  session: Session,
+): Promise<Array<{ foodbank_slug: string; slug: string; name: string }>> {
+  const result = await session
+    .prepare("SELECT foodbank_slug, slug, name FROM foodbankdonationpoint_full WHERE is_closed = 0")
+    .all();
+  return result.results as unknown as Array<{ foodbank_slug: string; slug: string; name: string }>;
+}
+
 // WP 2.5 perf: the id+coordinate candidate set for ranking
 // `donationpoint_search`'s donation-point branch -- see queryCoordinates's
 // own comment in types.ts. Covered entirely by `dp_open_latlng_idx`.

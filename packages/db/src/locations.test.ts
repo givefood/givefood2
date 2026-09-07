@@ -4,6 +4,7 @@ import {
   getAllOpenLocationSlugs,
   getAllOpenLocationSlugsWithNames,
   getAllOpenLocations,
+  getAllOpenLocationsFlagged,
   getFoodbankLocationBySlugs,
   getLocationLatLngsByFoodbankId,
   getLocationsByFoodbankId,
@@ -363,6 +364,16 @@ beforeEach(() => {
 const ids = (rows: readonly { id: number }[]): number[] => rows.map((r) => r.id);
 const names = (rows: readonly { name: string }[]): string[] => rows.map((r) => r.name);
 const asc = (values: readonly number[]): number[] => [...values].sort((a, b) => a - b);
+
+// The columns the VIEW actually has, read from the engine rather than from a
+// list typed into this file -- the drift detector getAllOpenLocationsFlagged's
+// block leans on. Same helper, and the same reasoning, as
+// constituencies.test.ts:170.
+const columnsOf = (table: string): string[] =>
+  db
+    .prepare("SELECT name FROM pragma_table_info(?)")
+    .all(table)
+    .map((row) => String((row as { name: unknown }).name));
 
 // EXPLAIN QUERY PLAN for the statement the MODULE prepared, never for a copy
 // of it typed into the test. Planning a hand-typed string proves only that the
@@ -933,6 +944,165 @@ describe("getAllOpenLocations", () => {
     expect(row!.is_closed).toBe(false);
     expect(row!.is_donation_point).toBeNull();
     expect(row!.place_has_photo).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getAllOpenLocationsFlagged -- getAllOpenLocations with the blob replaced
+// by a 0/1 flag, for /api/2/locations/ and the all-items /needs/geo.json
+// ---------------------------------------------------------------------------
+//
+// Those two routes read this whole row and NEITHER emits boundary_geojson:
+// api2/locations.ts names its fields explicitly in both the json and geojson
+// branches, and buildGeojson.ts passes includeBoundary=false for the
+// all-items scope. Measured against production D1: 6,504,107 -> 3,037,895
+// bytes of result payload (-53%) and a median 161 -> 99 ms (n=7 each,
+// interleaved), over 1,962 open rows of which only 40 carry a boundary at
+// all. rows_read is identical (3,924), so this is wire bytes and latency,
+// not D1 billing.
+//
+// THE FAILURE MODES ARE ALL SILENT, and they are why this block is long:
+//   * a column missing from the hand-written list vanishes from the row with
+//     no error -- /api/2/locations/ just stops publishing a field.
+//   * a reordering changes ~2,000 geo.json features and ~2,000 API entries.
+//   * has_boundary getting the empty-string case wrong flips the service-area
+//     branch on a food bank page from "map" to "no map", or back.
+// Every case below therefore compares against getAllOpenLocations over the
+// same fixture, or against the view's real columns read from the pragma.
+
+describe("getAllOpenLocationsFlagged", () => {
+  // THE DRIFT DETECTOR, ported from constituencies.test.ts:961-969 (the
+  // header of that test explains why it exists). LOCATION_COLUMNS_NARROW in
+  // locations.ts is a hand-maintained 38-name string and the view is defined
+  // in a migration; those are two copies of one list and they drift -- which
+  // is exactly what 0019 did to four other queries. Comparing the returned
+  // row's keys against the view's ACTUAL columns means the next ALTER TABLE
+  // either updates the constant or turns this red, rather than silently
+  // dropping a column out of the site's largest API payload.
+  it("returns every column of foodbanklocation_full except boundary_geojson, plus has_boundary", async () => {
+    seedFoodbank({ id: SALISBURY, slug: "salisbury" });
+    seedLocation({ id: 401, foodbankId: SALISBURY, name: "Amesbury", boundaryGeojson: '{"type":"Polygon"}' });
+
+    const [row] = await getAllOpenLocationsFlagged(session);
+
+    const expected = columnsOf("foodbanklocation_full")
+      .filter((column) => column !== "boundary_geojson")
+      .concat("has_boundary");
+    expect(Object.keys(row!).sort()).toEqual(expected.sort());
+    expect(Object.keys(row!)).not.toContain("boundary_geojson");
+  });
+
+  // THE PARITY CHECK: same rows, same order, same values as the SELECT * it
+  // replaced -- everything except the one column neither caller reads. Ids
+  // ascend while latitudes descend, so rowid order and index order are two
+  // different sequences and "same order" cannot be satisfied by luck.
+  it("returns the same rows, in the same order, as getAllOpenLocations minus the blob", async () => {
+    seedFoodbank({ id: SALISBURY, slug: "salisbury" });
+    seedFoodbank({ id: WESTBURY, slug: "westbury" });
+    seedLocation({ id: 401, foodbankId: SALISBURY, name: "Zeals Outreach", latitude: 51.03, isDonationPoint: 1 });
+    seedLocation({ id: 402, foodbankId: WESTBURY, name: "Amesbury", latitude: 51.02, placeHasPhoto: null });
+    seedLocation({ id: 403, foodbankId: SALISBURY, name: "Milford", latitude: 51.01, boundaryGeojson: '{"type":"Polygon"}' });
+    seedLocation({ id: 404, foodbankId: SALISBURY, name: "Shut Hall", latitude: 51.0, isClosed: 1 });
+
+    const wide = await getAllOpenLocations(session);
+    const flagged = await getAllOpenLocationsFlagged(session);
+
+    expect(flagged).toEqual(
+      wide.map(({ boundary_geojson, ...rest }) => ({ ...rest, has_boundary: boundary_geojson ? 1 : 0 })),
+    );
+    expect(ids(flagged)).toEqual(ids(wide));
+    expect(flagged).toHaveLength(3);
+  });
+
+  // `(x IS NOT NULL AND x != '')` has to agree with JS/Nunjucks truthiness of
+  // the raw string for EVERY stored value, because the three sites that read
+  // it are a Nunjucks `not`, a Nunjucks `and` and a JS ternary. The two that
+  // a naive `boundary_geojson IS NOT NULL` gets wrong are the empty string
+  // (falsy in JS, NOT NULL in SQL) and, in the other direction,
+  // whitespace-only (truthy in JS, and `'  ' != ''` is 1, so it agrees).
+  // Production holds 40 non-empty boundaries out of 1,962 open rows; the
+  // empty-string case is the one that decides whether a food bank page draws
+  // a service-area map.
+  it.each([
+    ["a stored polygon", '{"type":"Polygon","coordinates":[[[0,0]]]}', 1],
+    ["NULL", null, 0],
+    ["the empty string", "", 0],
+    ["whitespace only", "  ", 1],
+  ])("flags %s as %o -> has_boundary %i", async (_label, stored, expected) => {
+    seedFoodbank({ id: SALISBURY, slug: "salisbury" });
+    seedLocation({ id: 401, foodbankId: SALISBURY, name: "Amesbury", boundaryGeojson: stored });
+
+    const [row] = await getAllOpenLocationsFlagged(session);
+
+    expect(row!.has_boundary).toBe(expected);
+    // Never null, whatever the column held -- `NULL IS NOT NULL` is 0 and
+    // `0 AND x` short-circuits, so the expression cannot yield NULL.
+    expect(row!.has_boundary).not.toBeNull();
+  });
+
+  // has_boundary is an INTEGER and stays one: it is NOT in
+  // LOCATION_BOOLEAN_COLUMNS, deliberately. 0/1 is falsy/truthy in both JS
+  // and Nunjucks exactly as the raw string was, and coercing it would be a
+  // second, needless divergence from the column it stands in for.
+  it("coerces the four flag columns but leaves has_boundary as 0/1", async () => {
+    seedFoodbank({ id: SALISBURY, slug: "salisbury" });
+    seedLocation({
+      id: 401,
+      foodbankId: SALISBURY,
+      name: "Amesbury",
+      isDonationPoint: null,
+      placeHasPhoto: 0,
+      boundaryGeojson: '{"type":"Polygon"}',
+    });
+
+    const [row] = await getAllOpenLocationsFlagged(session);
+
+    expect(row!.is_closed).toBe(false);
+    expect(row!.is_donation_point).toBeNull();
+    expect(row!.place_has_photo).toBe(false);
+    expect(row!.has_boundary).toBe(1);
+    expect(typeof row!.has_boundary).toBe("number");
+  });
+
+  // TWO SURVIVORS, NOT ONE -- the same `results.slice(0, 1)` mutant
+  // getAllOpenLocationSlugs's own test exists to kill. It would cut
+  // /api/2/locations/ from ~1,960 entries to one and still return a 200.
+  it("excludes closed locations and returns every open one, not just the first", async () => {
+    seedFoodbank({ id: SALISBURY, slug: "salisbury" });
+    seedLocation({ id: 401, foodbankId: SALISBURY, name: "Amesbury", isClosed: 0, latitude: 51.01 });
+    seedLocation({ id: 402, foodbankId: SALISBURY, name: "Wilton", isClosed: 1, latitude: 51.02 });
+    seedLocation({ id: 403, foodbankId: SALISBURY, name: "Bemerton Heath", isClosed: 0, latitude: 51.03 });
+
+    expect(asc(ids(await getAllOpenLocationsFlagged(session)))).toEqual([401, 403]);
+  });
+
+  // Reads the VIEW, and the JOIN stays LEFT: a location whose parent row is
+  // gone keeps its place in the feed with NULL parent fields, rather than
+  // disappearing. Same case getAllOpenLocations pins above.
+  it("keeps an open location whose parent food bank is missing", async () => {
+    seedLocation({ id: 404, foodbankId: 999, name: "Orphaned Outreach" });
+
+    const rows = await getAllOpenLocationsFlagged(session);
+
+    expect(ids(rows)).toEqual([404]);
+    expect(rows[0]!.foodbank_slug).toBeNull();
+    expect(rows[0]!.has_boundary).toBe(0);
+  });
+
+  // The whole reason the function exists, asserted on the SQL the MODULE
+  // prepared rather than on a copy retyped here -- see planFor's comment
+  // above for why that distinction matters. A "tidy-up" back to `SELECT *`
+  // would leave every other test in this block green.
+  it("names its columns instead of issuing SELECT *, and never names the blob", async () => {
+    await getAllOpenLocationsFlagged(session);
+
+    const sql = prepared[0]!;
+    expect(sql).not.toContain("SELECT *");
+    expect(sql).toContain("FROM foodbanklocation_full WHERE is_closed = 0");
+    // boundary_geojson appears ONLY inside the has_boundary expression, never
+    // as a selected column of its own.
+    expect(sql.match(/boundary_geojson/g)).toEqual(["boundary_geojson", "boundary_geojson"]);
+    expect(sql).toContain("(boundary_geojson IS NOT NULL AND boundary_geojson != '') AS has_boundary");
   });
 });
 

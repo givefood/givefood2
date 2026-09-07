@@ -43,7 +43,7 @@ import type { Session } from "./types";
 // decides whether an unparented change appears, and it is the only thing that
 // still produces that column at all.
 //
-// SIX MUTANTS SURVIVE THIS FILE AND CANNOT BE MADE TO DIE, recorded here so
+// ELEVEN MUTANTS SURVIVE THIS FILE AND CANNOT BE MADE TO DIE, recorded here so
 // the next person to run a mutation pass does not spend an afternoon
 // rediscovering them. Each was executed; each is equivalent, not uncovered.
 //
@@ -69,13 +69,62 @@ import type { Session } from "./types";
 //     kill the same mutant with the indexes in place.
 //
 //   * getRecentlyUpdatedByCountry and getMostViewedByCountry with their
-//     `JOIN` widened to `LEFT JOIN`. Both put a predicate on the joined table
-//     in the WHERE (`f.name IS NOT NULL`, `f.country = ?`), and a
-//     NULL-extended row fails either one under three-valued logic, so the
-//     outer join is narrowed straight back to an inner one. getMostViewed's
-//     join has no such predicate protecting it and DOES die -- which is the
-//     asymmetry worth remembering: the same edit is harmless in two of these
-//     statements and a bug in the third.
+//     `JOIN` widened to `LEFT JOIN` -- BOTH of the latter's two joins, and
+//     for two different reasons. getRecentlyUpdatedByCountry and
+//     getMostViewedByCountry's INNER (subquery) join each put a predicate on
+//     the joined table in the WHERE (`f.name IS NOT NULL`, `fb.country = ?`),
+//     and a NULL-extended row fails either one under three-valued logic, so
+//     the outer join is narrowed straight back to an inner one.
+//     getMostViewedByCountry's OUTER join is protected by arithmetic instead:
+//     every foodbank_id reaching it was produced by the subquery's own join,
+//     so it always matches and can never NULL-extend. getMostViewed's single
+//     join has neither protection and DOES die -- which is the asymmetry
+//     worth remembering: the same edit is harmless in three of these joins
+//     and a bug in the fourth.
+//
+//   * getMostViewed and getMostViewedByCountry with the OUTER `ORDER BY
+//     t.total_hits DESC` DELETED (issue #43's shape). SQLite compiles the
+//     subquery to a CO-ROUTINE -- `EXPLAIN QUERY PLAN` says so on node:sqlite
+//     and on production D1 alike -- and the outer query SCANs it, so rows
+//     arrive already in the subquery's sorted order and re-sorting them is a
+//     no-op. Repointing the clause (`ORDER BY f.name`) DIES, so the sort key
+//     is pinned even though the clause's presence cannot be. It is kept
+//     because a co-routine is a planner decision, not a promise.
+//
+//   * getMostViewedByCountry with its LIMIT moved OUT of the subquery. Proved
+//     equivalent by fuzz, 9,600 cases over random fixtures including
+//     orphaned hits and tied sums: zero differing rows. Its inner join is
+//     one-to-one with the outer, so limiting before or after the join selects
+//     the same rows in the same order. What it changes is only cost -- the
+//     subquery would rank and join every food bank in the window before
+//     throwing all but `limit` away, which is precisely the waste #43 removed
+//     -- and cost is not observable from node:sqlite, which reports no
+//     rows_read. The same mutant on getMostViewed DIES, on its orphaned-hit
+//     test. Anyone measuring this should use `wrangler d1 execute --remote`
+//     and read `meta.rows_read`.
+//
+//   * getMostViewedByCountry reverted WHOLESALE to its pre-#43 statement --
+//     `FROM foodbankhit h JOIN foodbank f ... GROUP BY h.foodbank_id ORDER BY
+//     SUM(h.hits) DESC LIMIT ?`, the shape PRE_43_MOST_VIEWED_BY_COUNTRY
+//     below still holds. It survives, and it has to: #43's country half is a
+//     pure COST change, so the two statements are REQUIRED to agree on every
+//     input and the oracle test that pins that agreement passes either way by
+//     construction. Fuzzed separately from the LIMIT mutant above -- 24,000
+//     cases over random fixtures carrying orphaned hits and dense exact ties
+//     (hit counts drawn from 1-4 over <= 8 food banks, so ties at the LIMIT
+//     boundary are the common case, not the corner) -- with zero differing
+//     rows. The national twin of this edit, the same wholesale revert of
+//     getMostViewed, DIES on the orphaned-hit test; the same 1,200-fixture
+//     fuzz separates them, 465 of 6,000 cases differing and every one of them
+//     an orphan consuming a slot. That asymmetry is the reason the two
+//     functions are not the same shape.
+//
+//     What the revert costs is rows_read and sort width, and node:sqlite
+//     reports neither. Measured on production D1 instead (2026-09-07, live
+//     window, England at LIMIT 10, 20 interleaved pairs): 11.60ms -> 9.60ms
+//     median, the #43 shape faster in 19 of the 20. A 10-pair run earlier the
+//     same hour gave the same ~2ms median gap but won only 6 of 10, so size
+//     this with at least 20 pairs -- at five it is inside the noise.
 //
 //   * Five rewrites that are the same statement said differently, listed so
 //     nobody mistakes them for gaps: `a.foodbank_id = ?` written as
@@ -727,6 +776,152 @@ describe("getMostViewed", () => {
   it("returns an empty array when the window is empty", async () => {
     expect(await getMostViewed(session, SINCE_DAY, UNTIL_DAY, 8)).toEqual([]);
   });
+
+  // -------------------------------------------------------------------------
+  // ISSUE #43 -- the aggregate-then-join rewrite.
+  //
+  // The statement below is what getMostViewed ran BEFORE #43, kept verbatim as
+  // an executable ORACLE rather than as a comment. The whole claim of that
+  // change is "the rows do not move", and the only way to test a claim like
+  // that is to run both statements over the same fixture and diff the output;
+  // a hand-written expected array re-states what the author believed, which is
+  // exactly the thing under question. It caught nothing at the time -- both
+  // statements were also diffed against production D1, where the rewrite
+  // returned the identical eight names in the identical order -- and it is
+  // here so a future edit to the subquery (a LIMIT that drifts outside it, a
+  // lost DESC, an ORDER BY reduced to the ungrouped column) is measured
+  // against the pre-rewrite semantics rather than against nothing.
+  //
+  // DO NOT "simplify" this back into the source. It is deliberately the old,
+  // slow shape: joining `foodbank` once per hit row read 19,582 rows to return
+  // eight names on production, against the rewrite's 13,413.
+  const PRE_43_MOST_VIEWED =
+    "SELECT f.name, f.slug FROM foodbankhit h " +
+    "JOIN foodbank f ON f.id = h.foodbank_id " +
+    "WHERE h.day >= ? AND h.day <= ? " +
+    "GROUP BY h.foodbank_id " +
+    "ORDER BY SUM(h.hits) DESC LIMIT ?";
+
+  const preRewrite = (limit: number) =>
+    db.prepare(PRE_43_MOST_VIEWED).all(SINCE_DAY, UNTIL_DAY, limit) as Array<{ name: string; slug: string }>;
+
+  // Distinct totals on purpose. Neither statement has a tie-break, so on equal
+  // sums the oracle itself is unstable and a diff against it would pin the
+  // planner rather than the query -- see the tie test below, which asserts the
+  // weaker property that is actually guaranteed.
+  function seedRankingFixture(): void {
+    // Aberdeen 46, Ballymena 30, Salisbury 21, Cardiff 13, Closed Town 7.
+    seedHit(SALISBURY, SINCE_DAY, 8); // multi-day sums, boundary day included
+    seedHit(SALISBURY, "2026-09-02", 10);
+    seedHit(SALISBURY, "2026-09-05", 3);
+    seedHit(SALISBURY, "2026-08-30", 999); // before the window
+    seedHit(ABERDEEN, UNTIL_DAY, 6);
+    seedHit(ABERDEEN, "2026-09-03", 40);
+    seedHit(CARDIFF, "2026-09-02", 4);
+    seedHit(CARDIFF, "2026-09-04", 9);
+    seedHit(BALLYMENA, "2026-09-06", 30);
+    seedHit(CLOSED_TOWN, "2026-09-01", 7);
+    seedHit(CLOSED_TOWN, "2026-09-08", 999); // after the window
+  }
+
+  it("returns byte-identical rows to the pre-#43 statement, at every limit", async () => {
+    seedRankingFixture();
+
+    for (const limit of [1, 2, 3, 4, 5, 6, 8, 20]) {
+      const rows = await getMostViewed(session, SINCE_DAY, UNTIL_DAY, limit);
+      // toEqual first, because its diff names the food bank that moved.
+      expect(rows, `limit ${limit}`).toEqual(preRewrite(limit));
+      // Then serialised, which additionally pins COLUMN ORDER -- toEqual
+      // compares keys as a set, and the templates read `.name`/`.slug` by
+      // name, but D1 hands JSON back in column order and #43's claim was
+      // byte-identity.
+      expect(JSON.stringify(rows), `limit ${limit}`).toBe(JSON.stringify(preRewrite(limit)));
+    }
+    // Guard against the fixture quietly emptying: a suite where both sides
+    // return [] would pass this loop and prove nothing.
+    expect(slugs(await getMostViewed(session, SINCE_DAY, UNTIL_DAY, 20))).toEqual([
+      "aberdeen",
+      "ballymena",
+      "salisbury",
+      "cardiff",
+      "closed-town",
+    ]);
+  });
+
+  // THE ONE BEHAVIOUR #43 CHANGED, pinned deliberately rather than discovered
+  // later. The join that drops hits belonging to a deleted food bank now runs
+  // AFTER the LIMIT, so an orphaned hit ranked inside the top `limit` occupies
+  // a slot and the caller gets fewer rows than it asked for. The pre-#43
+  // statement dropped the orphan first and back-filled the slot -- the oracle
+  // assertion here is what that difference looks like, so nobody has to
+  // reconstruct it from the git history.
+  //
+  // Reachable rather than theoretical: D1 has no foreign keys (PLAN.md §4.5)
+  // and `foodbankhit` is ETL-loaded independently of `foodbank`. Currently
+  // moot on production, where all 1,051 grouped foodbank_ids resolve. The
+  // homepage renders a shorter list; it does not error.
+  it("lets an orphaned hit consume a slot, where the pre-#43 statement back-filled it", async () => {
+    seedHit(9999, "2026-09-02", 5000);
+    seedHit(SALISBURY, "2026-09-02", 5);
+
+    expect(await getMostViewed(session, SINCE_DAY, UNTIL_DAY, 1)).toEqual([]);
+    expect(slugs(preRewrite(1))).toEqual(["salisbury"]);
+    // Raise the limit past the orphan and the two agree again, which is why
+    // the homepage's LIMIT 8 over 1,051 food banks never sees this.
+    expect(slugs(await getMostViewed(session, SINCE_DAY, UNTIL_DAY, 2))).toEqual(["salisbury"]);
+  });
+
+  // The ranking has to survive the OUTER join, not just happen inside the
+  // subquery. Without `ORDER BY t.total_hits DESC` on the outer query nothing
+  // in SQL guarantees the join preserves the subquery's order, and the rows
+  // would arrive in whatever order the planner produced them -- silently, and
+  // differently on D1's build than on this one.
+  //
+  // MUTANT NOTE, measured, not assumed: deleting that outer ORDER BY SURVIVES
+  // this file and cannot be killed here. SQLite compiles the subquery to a
+  // CO-ROUTINE (`EXPLAIN QUERY PLAN` says so on both node:sqlite and
+  // production D1), the outer query SCANs it, and a scan of a co-routine
+  // yields rows in the order the co-routine emitted them -- already sorted.
+  // The clause is kept because that is a planner detail and not a promise;
+  // this test pins the observable ordering so a rewrite that DOES lose it
+  // (materialising the subquery, or the outer ORDER BY repointed at
+  // `f.name`) fails.
+  it("ranks by total hits after the outer join, not by anything the join imposes", async () => {
+    // Ranked against name, slug AND id, so an ORDER BY that latched onto any
+    // of the outer table's own columns lands somewhere else. By total hits:
+    // salisbury 3, aberdeen 2, ballymena 1. By f.name: Aberdeen, Ballymena,
+    // Salisbury. By f.slug: same. By f.id/rowid: Salisbury, Aberdeen,
+    // Ballymena -- which is the ORDER the plain join would produce, so the
+    // fixture disagrees with it too.
+    seedHit(BALLYMENA, "2026-09-02", 1);
+    seedHit(ABERDEEN, "2026-09-02", 2);
+    seedHit(SALISBURY, "2026-09-02", 3);
+
+    expect(slugs(await getMostViewed(session, SINCE_DAY, UNTIL_DAY, 8))).toEqual(["salisbury", "aberdeen", "ballymena"]);
+    // ASC, the other half of the mutant pair.
+    expect(slugs(await getMostViewed(session, SINCE_DAY, UNTIL_DAY, 1))).toEqual(["salisbury"]);
+  });
+
+  // Ties, called out in #43's own risk section: neither statement has a
+  // tie-break, so which of two equal food banks survives a LIMIT at the
+  // boundary is the planner's choice and asserting a particular one would pin
+  // an accident. What IS guaranteed either way is the count and the set, so
+  // that is what this asserts -- and it still fails for a LIMIT that stopped
+  // applying, a GROUP BY that collapsed, or a rewrite that started emitting
+  // one row per hit day.
+  it("truncates a tie at the limit boundary to exactly the limit, without duplicating a food bank", async () => {
+    seedHit(SALISBURY, "2026-09-02", 50);
+    seedHit(ABERDEEN, "2026-09-02", 50);
+    seedHit(CARDIFF, "2026-09-02", 50);
+    seedHit(BALLYMENA, "2026-09-02", 1);
+
+    const rows = await getMostViewed(session, SINCE_DAY, UNTIL_DAY, 2);
+    expect(rows).toHaveLength(2);
+    expect(new Set(slugs(rows)).size).toBe(2);
+    // Ballymena is not tied and is not in the top two, so it is excluded
+    // whichever way the tie falls.
+    for (const slug of slugs(rows)) expect(["salisbury", "aberdeen", "cardiff"]).toContain(slug);
+  });
 });
 
 // ===========================================================================
@@ -1095,13 +1290,19 @@ describe("getMostViewedByCountry", () => {
   // Hit rows whose food bank is missing are absent here too, as they are in
   // getMostViewed -- but for a DIFFERENT reason, and the difference is worth
   // knowing before someone "simplifies" one of the two statements to match
-  // the other. getMostViewed relies on the join being INNER, and widening it
-  // to LEFT JOIN breaks that test. Here the widening is harmless: an
-  // unmatched row is NULL-extended, `f.country = ?` is then NULL rather than
-  // true, and the row falls out anyway. So the LEFT JOIN mutant survives this
-  // statement no matter what is seeded. This test pins the OBSERVABLE
-  // behaviour rather than the mechanism, so it still fails if someone removes
-  // both the join's inner-ness and the country filter.
+  // the other. getMostViewed relies on its join being INNER, and widening it
+  // to LEFT JOIN breaks that test. Here the widening is harmless in the
+  // subquery: an unmatched row is NULL-extended, `fb.country = ?` is then
+  // NULL rather than true, and the row falls out anyway. So the LEFT JOIN
+  // mutant survives this statement no matter what is seeded. This test pins
+  // the OBSERVABLE behaviour rather than the mechanism, so it still fails if
+  // someone removes both the join's inner-ness and the country filter.
+  //
+  // Since #43 there is a SECOND, later divergence hiding under the same
+  // words: the LIMIT. At limit 10 with one real candidate both statements
+  // return Salisbury, but getMostViewed at limit 1 on this exact fixture now
+  // returns nothing at all. "does not let an orphaned hit consume a slot"
+  // below is where that is pinned.
   it("drops hits belonging to a food bank that is not in the table", async () => {
     seedHit(9999, "2026-09-02", 5000);
     seedHit(SALISBURY, "2026-09-02", 5);
@@ -1163,5 +1364,106 @@ describe("getMostViewedByCountry", () => {
     seedHit(ABERDEEN, "2026-09-02", 5);
 
     expect(await getMostViewedByCountry(session, SINCE_DAY, UNTIL_DAY, "Wales", 10)).toEqual([]);
+  });
+
+  // -------------------------------------------------------------------------
+  // ISSUE #43 -- the aggregate-then-join rewrite, country half.
+  //
+  // Same oracle technique as getMostViewed's, and the same instruction: this
+  // is the pre-#43 statement verbatim, kept to be executed, not restored.
+  const PRE_43_MOST_VIEWED_BY_COUNTRY =
+    "SELECT f.name, f.slug FROM foodbankhit h " +
+    "JOIN foodbank f ON f.id = h.foodbank_id " +
+    "WHERE h.day >= ? AND h.day <= ? AND f.country = ? " +
+    "GROUP BY h.foodbank_id " +
+    "ORDER BY SUM(h.hits) DESC LIMIT ?";
+
+  const preRewrite = (country: string, limit: number) =>
+    db.prepare(PRE_43_MOST_VIEWED_BY_COUNTRY).all(SINCE_DAY, UNTIL_DAY, country, limit) as Array<{ name: string; slug: string }>;
+
+  it("returns byte-identical rows to the pre-#43 statement, for every country at every limit", async () => {
+    // Three English food banks, so the limit has something to cut inside the
+    // country as well as across countries. Totals distinct within each country
+    // for the reason getMostViewed's fixture is -- an untied oracle.
+    seedFoodbank({ id: 6, name: "Andover", slug: "andover", country: "England" });
+    seedHit(SALISBURY, SINCE_DAY, 8); // England 21
+    seedHit(SALISBURY, "2026-09-02", 10);
+    seedHit(SALISBURY, "2026-09-05", 3);
+    seedHit(6, "2026-09-03", 40); // England 40
+    seedHit(CLOSED_TOWN, "2026-09-01", 7); // England 7
+    seedHit(CLOSED_TOWN, "2026-09-08", 999); // after the window
+    seedHit(ABERDEEN, UNTIL_DAY, 46); // Scotland
+    seedHit(CARDIFF, "2026-09-04", 13); // Wales
+    seedHit(CARDIFF, "2026-08-30", 999); // before the window
+    seedHit(BALLYMENA, "2026-09-06", 30); // Northern Ireland
+
+    for (const country of ["England", "Scotland", "Wales", "Northern Ireland", "Isle of Man"]) {
+      for (const limit of [1, 2, 3, 10]) {
+        const rows = await getMostViewedByCountry(session, SINCE_DAY, UNTIL_DAY, country, limit);
+        expect(rows, `${country} limit ${limit}`).toEqual(preRewrite(country, limit));
+        expect(JSON.stringify(rows), `${country} limit ${limit}`).toBe(JSON.stringify(preRewrite(country, limit)));
+      }
+    }
+    // The fixture is non-empty and ranked, so the loop above compared real
+    // rows rather than agreeing on nothing.
+    expect(slugs(await getMostViewedByCountry(session, SINCE_DAY, UNTIL_DAY, "England", 10))).toEqual([
+      "andover",
+      "salisbury",
+      "closed-town",
+    ]);
+  });
+
+  // THE COUNTRY FILTER STAYS INSIDE THE SUBQUERY, and this is the test that
+  // says so. #43 moved the name/slug join outward on both statements; moving
+  // `country` outward too looks like the same edit and is a silent bug --
+  // the subquery would then rank every food bank in the UK, the LIMIT would
+  // spend its slots on food banks the outer filter is about to delete, and an
+  // England page would show a short list (or an empty one) whenever Scotland
+  // was busier that week.
+  //
+  // It is invisible at limit 10 with three candidates, which is why the
+  // existing "excludes a busier food bank in another country" test above does
+  // NOT catch it: with the slots to spare, the outer filter still leaves the
+  // right two. It needs a limit the interloper can actually exhaust.
+  it("spends its limit on the country's own food banks, not on a busier one elsewhere", async () => {
+    seedHit(ABERDEEN, "2026-09-02", 5000); // Scotland, would top a UK-wide ranking
+    seedHit(CARDIFF, "2026-09-02", 4000); // Wales, likewise
+    seedHit(CLOSED_TOWN, "2026-09-02", 7);
+    seedHit(SALISBURY, "2026-09-02", 5);
+
+    expect(slugs(await getMostViewedByCountry(session, SINCE_DAY, UNTIL_DAY, "England", 2))).toEqual(["closed-town", "salisbury"]);
+    expect(slugs(await getMostViewedByCountry(session, SINCE_DAY, UNTIL_DAY, "England", 1))).toEqual(["closed-town"]);
+  });
+
+  // The contrast with getMostViewed's orphan test, and the reason the two
+  // statements are NOT the same shape. Here the join to `foodbank` is still
+  // inside the LIMIT -- it has to be, `country` lives on that table -- so an
+  // orphaned hit row never reaches the ranking and cannot consume a slot.
+  // getMostViewed at limit 1 on this same fixture returns []; this returns
+  // Salisbury. Anyone unifying the two statements has to break one of these
+  // two tests, which is the point of having both.
+  it("does not let an orphaned hit consume a slot, unlike getMostViewed", async () => {
+    seedHit(9999, "2026-09-02", 5000);
+    seedHit(SALISBURY, "2026-09-02", 5);
+
+    expect(slugs(await getMostViewedByCountry(session, SINCE_DAY, UNTIL_DAY, "England", 1))).toEqual(["salisbury"]);
+    expect(slugs(await getMostViewedByCountry(session, SINCE_DAY, UNTIL_DAY, "England", 1))).toEqual(slugs(preRewrite("England", 1)));
+    expect(await getMostViewed(session, SINCE_DAY, UNTIL_DAY, 1)).toEqual([]);
+  });
+
+  // Same reasoning as getMostViewed's outer-ordering test: the ranking has to
+  // survive the outer join. Ranked against name, slug and id so no column of
+  // `foodbank` produces this order by accident.
+  it("ranks by total hits after the outer join", async () => {
+    seedFoodbank({ id: 6, name: "Andover", slug: "andover", country: "England" });
+    seedHit(6, "2026-09-02", 1);
+    seedHit(CLOSED_TOWN, "2026-09-02", 2);
+    seedHit(SALISBURY, "2026-09-02", 3);
+
+    expect(slugs(await getMostViewedByCountry(session, SINCE_DAY, UNTIL_DAY, "England", 10))).toEqual([
+      "salisbury",
+      "closed-town",
+      "andover",
+    ]);
   });
 });

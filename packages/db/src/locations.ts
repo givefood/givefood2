@@ -109,6 +109,61 @@ export async function getAllOpenLocations(session: Session): Promise<FoodbankLoc
   return result.results.map(mapLocationRow);
 }
 
+// Every column of `foodbanklocation_full` EXCEPT boundary_geojson, for the
+// projected variants below. constituencies.ts holds a second copy of this
+// same list (LOCATION_COLUMNS_NARROW there, for getFoodbanksForConstituency)
+// -- deliberately not shared, because importing it from there would close an
+// import cycle (constituencies.ts already imports FoodbankLocationRow and
+// LOCATION_BOOLEAN_COLUMNS from this file). Both copies are guarded the same
+// way, by a pragma-driven drift test that reads the view's real columns and
+// fails when a migration adds one: see locations.test.ts and
+// constituencies.test.ts:961-969.
+const LOCATION_COLUMNS_NARROW =
+  "id, uuid, foodbank_id, foodbank_name, foodbank_slug, foodbank_network, foodbank_phone_number, foodbank_email, " +
+  "name, slug, address, postcode, country, lat_lng, latitude, longitude, place_id, plus_code_compound, plus_code_global, " +
+  "place_has_photo, county, district, ward, lsoa, msoa, parliamentary_constituency_id, parliamentary_constituency_name, " +
+  "parliamentary_constituency_slug, mp, mp_party, mp_parl_id, is_closed, is_donation_point, is_mobile, phone_number, " +
+  "email, modified, edited";
+
+// The full row with the blob replaced by a 0/1 flag. `has_boundary` is
+// deliberately NOT run through coerceBooleans: 0/1 is what the SQL yields,
+// it is falsy/truthy in both JS and Nunjucks exactly as the raw string was,
+// and the three sites that test the original column
+// (public/wfbn/locations.njk, location.njk, wfbn/locationDetail.ts) are a
+// Nunjucks `not`, a Nunjucks `and` and a JS ternary -- all correct on 0/1.
+//
+// `(x IS NOT NULL AND x != '')` yields 0 or 1 and never NULL: `NULL IS NOT
+// NULL` is 0 and `0 AND ...` short-circuits. It matches JS/Nunjucks
+// truthiness of the raw string for every stored value, whitespace-only
+// included ('  ' is truthy in both, and '  ' != '' is 1).
+export type FoodbankLocationRowFlagged = Omit<FoodbankLocationRow, "boundary_geojson"> & { has_boundary: 0 | 1 };
+
+// getAllOpenLocations, minus the blob. /api/2/locations/ (the site's largest
+// payload) and the all-items /needs/geo.json feed both read this whole row
+// and neither emits boundary_geojson -- buildGeojson.ts's `includeBoundary`
+// is false for the all-items scope, and api2/locations.ts names its fields
+// explicitly in both the json and geojson branches.
+//
+// PLAN.md:2982's hard rule -- the one that justifies keeping boundaries in
+// D1 at all, "nothing in the codebase issues SELECT * on
+// parliamentaryconstituency or foodbanklocation" -- is what this restores.
+// Measured against production D1: 6,504,107 -> 3,037,895 bytes of result
+// payload (-3,466,212, -53%) and, over 7 interleaved runs of each, a median
+// D1-reported duration of 161 ms (115-219) -> 99 ms (84-128). 1,962 rows, of
+// which only 40 carry a boundary at all. rows_read is UNCHANGED at 3,924 --
+// D1 bills rows read, so this is wire bytes and latency, not money. Timed
+// through the D1 REST API from a laptop, not inside the Worker: the byte
+// figures are hard, the millisecond ones are indicative.
+export async function getAllOpenLocationsFlagged(session: Session): Promise<FoodbankLocationRowFlagged[]> {
+  const result = await session
+    .prepare(
+      `SELECT ${LOCATION_COLUMNS_NARROW}, (boundary_geojson IS NOT NULL AND boundary_geojson != '') AS has_boundary ` +
+        "FROM foodbanklocation_full WHERE is_closed = 0",
+    )
+    .all();
+  return result.results.map((r) => coerceBooleans<FoodbankLocationRowFlagged>(r as Record<string, unknown>, BOOLEAN_COLUMNS));
+}
+
 // sitemap.xml only ever needs foodbank_slug/slug -- PLAN.md's hard rule
 // ("nothing in the codebase issues SELECT * on parliamentaryconstituency
 // or foodbanklocation") exists specifically because boundary_geojson is a

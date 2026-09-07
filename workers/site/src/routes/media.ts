@@ -237,6 +237,14 @@ async function serveVariant(c: Context<AppEnv>, variant: Variant): Promise<Respo
   //
   // accept-encoding is kept -- that one is real (gzip/br) and is the only
   // Vary Cloudflare honours by default.
+  //
+  // AND THIS SET IS NOW WHAT SHIPS. Until issue #39 it was not:
+  // middleware/resolveLanguage.ts appended Accept-Language to every response
+  // that was not locale-prefixed, so a photo actually went out as
+  // "vary: accept-encoding, Accept-Language" and the fix above was defeated
+  // from the other end -- measured on production 2026-09-07, before #39
+  // landed. That append is gone. Noted here because this is the second place
+  // the same bug was diagnosed, and without a pointer it would be a third.
   h.set("vary", "accept-encoding");
   return new Response(res.body, { status: 200, headers: h });
 }

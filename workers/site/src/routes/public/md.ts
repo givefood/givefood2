@@ -2,8 +2,10 @@ import type { Context } from "hono";
 import {
   getAllConstituencySlugs,
   getAllConstituencySlugsWithNames,
-  getAllOpenDonationPoints,
-  getAllOpenFoodbanks,
+  getAllOpenDonationPointSlugs,
+  getAllOpenDonationPointSlugsWithNames,
+  getAllOpenFoodbankSlugs,
+  getAllOpenFoodbankSlugsWithNames,
   getAllOpenLocationSlugs,
   getAllOpenLocationSlugsWithNames,
   getMostViewed,
@@ -65,17 +67,22 @@ export async function mdSitemapXml(c: Context<AppEnv>): Promise<Response> {
   const session = dbSession(c);
   const domain = c.env.SITE_DOMAIN;
 
-  const [foodbanks, locations, donationpoints, constituencySlugs] = await Promise.all([
-    getAllOpenFoodbanks(session),
+  // Column-projected, like ../sitemaps.ts's sitemapXml and for the same
+  // measured reason -- this handler's loops read one string off each food
+  // bank and two off each donation point, and used to fetch every column of
+  // both to do it (14.2 MB of D1 result payload per render). See
+  // getAllOpenFoodbankSlugs / getAllOpenDonationPointSlugs.
+  const [foodbankSlugs, locations, donationpoints, constituencySlugs] = await Promise.all([
+    getAllOpenFoodbankSlugs(session),
     getAllOpenLocationSlugs(session),
-    getAllOpenDonationPoints(session),
+    getAllOpenDonationPointSlugs(session),
     getAllConstituencySlugs(session),
   ]);
 
   const urls: string[] = [];
   for (const name of SITEMAP_URL_NAMES) urls.push(`  <url><loc>${domain}${url(name)}</loc></url>`);
   for (const countrySlug of Object.keys(COUNTRY_MAPPING)) urls.push(`  <url><loc>${domain}${url("country", countrySlug)}</loc></url>`);
-  for (const foodbank of foodbanks) urls.push(`  <url><loc>${domain}${url("wfbn-md:md_foodbank", foodbank.slug)}</loc></url>`);
+  for (const slug of foodbankSlugs) urls.push(`  <url><loc>${domain}${url("wfbn-md:md_foodbank", slug)}</loc></url>`);
   for (const location of locations) {
     urls.push(`  <url><loc>${domain}${url("wfbn-md:md_foodbank_location", location.foodbank_slug, location.slug)}</loc></url>`);
   }
@@ -91,14 +98,16 @@ export async function mdSitemapXml(c: Context<AppEnv>): Promise<Response> {
 // md_sitemap_md() -- same query shape as mdSitemapXml above, fetched
 // independently (not shared) matching how ../sitemaps.ts already handles
 // the analogous text/xml + text/markdown pairing, plus .name via the
-// wider getAllOpenLocationSlugsWithNames/getAllConstituencySlugsWithNames.
+// wider ...WithNames variant of each of the four queries (public/md/
+// sitemap.njk renders each entry as a Markdown link, so it needs link text
+// where the XML sitemaps only need a <loc>).
 export async function mdSitemapMd(c: Context<AppEnv>): Promise<Response> {
   const session = dbSession(c);
 
   const [foodbanks, locations, donationpoints, constituencies] = await Promise.all([
-    getAllOpenFoodbanks(session),
+    getAllOpenFoodbankSlugsWithNames(session),
     getAllOpenLocationSlugsWithNames(session),
-    getAllOpenDonationPoints(session),
+    getAllOpenDonationPointSlugsWithNames(session),
     getAllConstituencySlugsWithNames(session),
   ]);
 

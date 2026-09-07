@@ -2,6 +2,8 @@ import { DatabaseSync } from "node:sqlite";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   companyDonationPointsExist,
+  getAllOpenDonationPointSlugs,
+  getAllOpenDonationPointSlugsWithNames,
   getAllOpenDonationPoints,
   getDonationPointBySlugs,
   getDonationPointIdByUuid,
@@ -917,6 +919,117 @@ describe("getAllOpenDonationPoints", () => {
     expect(byId.get(101)!.wheelchair_accessible).toBe(false);
     expect(byId.get(102)!.in_store_only).toBe(false);
     expect(byId.get(102)!.wheelchair_accessible).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getAllOpenDonationPointSlugs / ...WithNames -- the projected variants
+// behind /sitemap.xml, /md/sitemap.xml and /md/sitemap.md
+// ---------------------------------------------------------------------------
+//
+// getAllOpenDonationPoints above was the single most expensive query on the
+// sitemap routes: measured against production D1, `SELECT *` over the 5,727
+// open donation points serialises 10,643,022 bytes in a median 320 ms
+// (264-424, n=5) where these two columns are 554,510 bytes in a median
+// 40 ms. Because the sitemap's four queries run in a Promise.all, that one
+// query WAS the critical path. rows_read is identical (11,454) either way,
+// so nothing about D1 billing changes.
+//
+// WHAT THESE TESTS ARE FOR IS ORDER, not bytes. Neither the wide query nor
+// the narrow ones have an ORDER BY, and the note on "does not sort by name"
+// above records why that is load-bearing: SQLite answers `is_closed = 0`
+// from the partial dp_open_latlng_idx, so these rows arrive in latitude
+// order rather than rowid order. A projection narrow enough to change which
+// index the planner picks would reorder every one of the ~5,700 <loc>
+// entries in the sitemap -- a silent, whole-body diff that no status code
+// would report. So every case below compares against getAllOpenDonationPoints
+// over the same fixture rather than against a hand-written list.
+//
+// (Checked against production as well as here: the wide and both narrow
+// queries return the same 5,727 (foodbank_slug, slug, name) triples in the
+// same sequence on the real database.)
+
+describe("getAllOpenDonationPointSlugs / ...WithNames", () => {
+  // Rows seeded with descending latitude and ascending id, so latitude order,
+  // rowid order and name order are three different sequences here. Whichever
+  // one the engine picks, the narrow queries have to pick the same.
+  function seedThree(): void {
+    seedFoodbank({ id: SALISBURY, slug: "salisbury" });
+    seedFoodbank({ id: WESTBURY, slug: "westbury" });
+    seedDonationPoint({ id: 101, foodbankId: SALISBURY, name: "Zeds Convenience", latitude: 51.03 });
+    seedDonationPoint({ id: 102, foodbankId: WESTBURY, name: "Aldi Westbury", latitude: 51.02 });
+    seedDonationPoint({ id: 103, foodbankId: SALISBURY, name: "Morrisons Daily", latitude: 51.01 });
+    seedDonationPoint({ id: 104, foodbankId: SALISBURY, name: "Shut Wilko", latitude: 51.0, isClosed: 1 });
+  }
+
+  it("returns the same foodbank_slug/slug pairs, in the same order, as SELECT *", async () => {
+    seedThree();
+
+    const wide = await getAllOpenDonationPoints(session);
+    const narrow = await getAllOpenDonationPointSlugs(session);
+
+    expect(narrow).toEqual(wide.map((row) => ({ foodbank_slug: row.foodbank_slug, slug: row.slug })));
+    // ...and the closed one is gone from BOTH, which is what makes the
+    // comparison above more than "two identical bugs agree".
+    expect(narrow.map((r) => r.slug)).not.toContain("shut-wilko");
+    expect(narrow).toHaveLength(3);
+  });
+
+  it("returns the same triples, in the same order, as SELECT * -- WithNames", async () => {
+    seedThree();
+
+    const wide = await getAllOpenDonationPoints(session);
+    const narrow = await getAllOpenDonationPointSlugsWithNames(session);
+
+    expect(narrow).toEqual(
+      wide.map((row) => ({ foodbank_slug: row.foodbank_slug, slug: row.slug, name: row.name })),
+    );
+    expect(narrow).toHaveLength(3);
+  });
+
+  // The columns, pinned exactly. `name` is the link text on /md/sitemap.md
+  // (`[{{ donationpoint.name }}](...)`); the XML sitemaps have no link text,
+  // so the two-column variant deliberately does not fetch it.
+  it("projects exactly the columns each caller reads", async () => {
+    seedThree();
+
+    const [pair] = await getAllOpenDonationPointSlugs(session);
+    const [triple] = await getAllOpenDonationPointSlugsWithNames(session);
+
+    expect(Object.keys(pair!).sort()).toEqual(["foodbank_slug", "slug"]);
+    expect(Object.keys(triple!).sort()).toEqual(["foodbank_slug", "name", "slug"]);
+  });
+
+  // READS THE VIEW, NOT THE BASE TABLE. foodbank_slug was dropped off
+  // foodbankdonationpoint by 0019 and now comes from the LEFT JOIN, so a
+  // narrow query pointed at the base table would not throw here -- it would
+  // fail to prepare, which is the same live 500 0019 already caused once.
+  // The orphan row is the other half: the JOIN must stay LEFT, or a donation
+  // point whose parent row is missing silently vanishes off the sitemap.
+  it("takes foodbank_slug live from the parent, and keeps an orphaned row with a NULL one", async () => {
+    seedFoodbank({ id: SALISBURY, slug: "salisbury" });
+    seedDonationPoint({ id: 101, foodbankId: SALISBURY, name: "Tesco Extra", latitude: 51.02 });
+    seedDonationPoint({ id: 102, foodbankId: 999, name: "Orphaned Co-op", latitude: 51.01 });
+
+    db.prepare("UPDATE foodbank SET slug = ? WHERE id = ?").run("salisbury-and-district", SALISBURY);
+
+    const rows = await getAllOpenDonationPointSlugs(session);
+
+    expect(rows).toContainEqual({ foodbank_slug: "salisbury-and-district", slug: "tesco-extra" });
+    // The declared type says `foodbank_slug: string`; the view can produce
+    // null. Pinned rather than fixed, exactly as getAllOpenLocationSlugs's
+    // own case is in locations.test.ts -- the sitemap emits
+    // "/needs/at/null/orphaned-co-op/" for such a row, and that is current
+    // behaviour, not a wish.
+    expect(rows).toContainEqual({ foodbank_slug: null as unknown as string, slug: "orphaned-co-op" });
+  });
+
+  it("both name their columns instead of issuing SELECT *", async () => {
+    await getAllOpenDonationPointSlugs(session);
+    await getAllOpenDonationPointSlugsWithNames(session);
+
+    expect(prepared[0]).toBe("SELECT foodbank_slug, slug FROM foodbankdonationpoint_full WHERE is_closed = 0");
+    expect(prepared[1]).toBe("SELECT foodbank_slug, slug, name FROM foodbankdonationpoint_full WHERE is_closed = 0");
   });
 });
 

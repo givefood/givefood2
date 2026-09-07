@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import type { MiddlewareHandler } from "hono";
 import { describe, expect, it, vi } from "vitest";
 import { LOCALES } from "@givefood/templates";
 import { PREFIXES, resolveLanguage } from "./resolveLanguage";
@@ -23,18 +24,31 @@ import type { AppEnv } from "../types";
 //      Accept-Language and Cookie headers that a negotiating implementation
 //      would act on, and assert they are ignored.
 //
-//   2. THE Vary SPLIT. `/en/` and `/de/` both 404 with Content-Language: en,
-//      yet only `/de/` carries `Vary: Accept-Language`. That is not a
-//      cosmetic difference: it is the visible trace of whether Django's
-//      language-negotiation function ran at all. `get_language_from_path`
-//      recognises "en" (it is a real LANGUAGES entry, just never a
-//      registered prefix), so LocaleMiddleware never falls through to
-//      get_language_from_request() -- and it is that function which patches
-//      Vary on the way out. The module's own comment records that this was
-//      found by testing output against PLAN.md's header table, not by
-//      reading the code: the comment was right and the condition was wrong.
-//      A single `if (!prefixed)` looks perfectly reasonable in a diff, so
-//      these two rows are asserted separately and explicitly.
+//   2. NO Vary HEADER, ON ANY RESPONSE. This file used to pin the opposite,
+//      in about twenty assertions: Django patches `Vary: Accept-Language`
+//      onto every response where get_language_from_request() ran, so `/de/`
+//      carried it and `/en/` did not, and the port reproduced that split.
+//      Issue #39 measured what it cost. Cloudflare honours Vary on this
+//      zone, so every distinct Accept-Language string minted its own edge
+//      object for byte-identical content -- on the live /needs/geo.json,
+//      `en-GB,en-US;q=0.9,en;q=0.8` HIT with age=814 while
+//      `en-US,en;q=0.9` MISSed at the same colo seconds later, two 2 MB
+//      copies of one document, ~963ms of TTFB and a full-table D1 read for
+//      the second. The header was deleted outright on 2026-09-07.
+//
+//      The old expectations are not simply deleted with it. Rule 1 is what
+//      makes the removal legal -- a response that never reads the header
+//      cannot vary by it -- so the tests that used to prove the SPLIT now
+//      prove ABSENCE, on exactly the same inputs, alongside the
+//      Content-Language and body assertions that must NOT have moved. There
+//      is also a differential test (`legacyResolveLanguage` below) that runs
+//      the pre-#39 implementation beside the current one and requires the
+//      two to agree on every observable except this one header.
+//
+//      The removal costs Django parity on the §6.1.2 404 header table, which
+//      nothing functional reads, and it removes the safety net that would
+//      have covered a future content negotiator. Rule 1 is therefore now
+//      load-bearing for caching, not just for what visitors see.
 
 // Nothing in this middleware touches a binding; Hono just needs something
 // to pass through as c.env.
@@ -52,6 +66,46 @@ async function resolve(url: string, init: RequestInit = {}) {
     status: res.status,
     contentLanguage: res.headers.get("Content-Language"),
     vary: res.headers.get("Vary"),
+  };
+}
+
+/**
+ * The middleware exactly as it stood before issue #39, kept as executable
+ * documentation of what was removed.
+ *
+ * Copied from git 4e41a6b, comments stripped. It exists so the removal can be
+ * asserted as a DIFFERENCE rather than as a new set of expectations: the
+ * differential test below runs both implementations over every path in
+ * PATH_TABLE and requires them to agree on status, body, Content-Language,
+ * `lang` and `pathAfterPrefix`, and to disagree on nothing but `Vary`. That is
+ * the "the output did not move" proof for a change whose whole point is that
+ * one header moved and nothing else did.
+ */
+const legacyResolveLanguage: MiddlewareHandler<AppEnv> = async (c, next) => {
+  const url = new URL(c.req.url);
+  const first = url.pathname.split("/")[1] ?? "";
+  const prefixed = PREFIXES.has(first);
+  const bareEn = first === "en";
+
+  c.set("lang", prefixed ? first : "en");
+  c.set("pathAfterPrefix", prefixed ? url.pathname.slice(first.length + 1) : url.pathname);
+
+  await next();
+
+  c.header("Content-Language", c.get("lang"));
+  if (!prefixed && !bareEn) c.header("Vary", "Accept-Language", { append: true });
+};
+
+/** Every observable of a response, for the differential test. */
+async function observe(mw: MiddlewareHandler<AppEnv>, url: string, init: RequestInit = {}) {
+  const app = new Hono<AppEnv>();
+  app.use("*", mw);
+  app.all("*", (c) => c.json({ lang: c.get("lang"), pathAfterPrefix: c.get("pathAfterPrefix") }));
+  const res = await app.request(url, init, env);
+  return {
+    status: res.status,
+    body: await res.text(),
+    headers: [...res.headers].sort(),
   };
 }
 
@@ -177,7 +231,7 @@ describe("PREFIXES", () => {
     // pick it up, not remembering to update N independent copies") is only
     // actually testable by changing LOCALES, so this changes it: swap in a
     // Cornish locale, re-import the module, and require that the new code
-    // routes -- resolves, strips its prefix and suppresses Vary -- with no
+    // routes -- resolves, strips its prefix and labels itself -- with no
     // edit to this file's own list. If someone re-hardcodes the set, the
     // translations for language five would ship and the URLs would 404.
     await withLocales(["en", "cy", "ga", "gd", "kw"], async (fresh) => {
@@ -201,7 +255,9 @@ describe("PREFIXES", () => {
     //
     // The real filter is on the VALUE, so put "en" last and require the same
     // three prefixes, and require /en/ to keep behaving like /en/ (path
-    // handed on whole, no Vary) rather than becoming a stripped prefix.
+    // handed on WHOLE) rather than becoming a stripped prefix. Since #39 the
+    // Vary column can no longer tell those two apart -- there is no Vary on
+    // anything -- so pathAfterPrefix is the whole of the evidence here.
     await withLocales(["cy", "ga", "gd", "en"], async (fresh) => {
       expect([...fresh.PREFIXES].sort()).toEqual(["cy", "ga", "gd"]);
       expect(fresh.PREFIXES.has("en")).toBe(false);
@@ -229,14 +285,13 @@ describe("PREFIXES", () => {
       expect([...fresh.PREFIXES].sort()).toEqual(["cy"]);
       expect(fresh.PREFIXES.has("gd")).toBe(false);
 
-      // /gd/ must now be indistinguishable from /de/: English, path intact,
-      // negotiation "ran" so Vary is present.
+      // /gd/ must now be indistinguishable from /de/: English, path intact.
       const gd = await resolveWith(fresh, "https://www.givefood.org.uk/gd/needs/");
       expect(gd).toMatchObject({
         lang: "en",
         pathAfterPrefix: "/gd/needs/",
         contentLanguage: "en",
-        vary: "Accept-Language",
+        vary: null,
       });
       // ...and the survivor still routes, so this is a narrowing, not a break.
       expect(await resolveWith(fresh, "https://www.givefood.org.uk/cy/")).toMatchObject({ lang: "cy" });
@@ -256,10 +311,13 @@ describe("PREFIXES", () => {
       expect(fresh.PREFIXES.size).toBe(0);
 
       const cy = await resolveWith(fresh, "https://www.givefood.org.uk/cy/needs/");
-      expect(cy).toMatchObject({ lang: "en", pathAfterPrefix: "/cy/needs/", vary: "Accept-Language" });
+      expect(cy).toMatchObject({ lang: "en", pathAfterPrefix: "/cy/needs/", vary: null });
       const root = await resolveWith(fresh, "https://www.givefood.org.uk/");
       expect(root).toMatchObject({ lang: "en", pathAfterPrefix: "/", contentLanguage: "en" });
-      // "en" is still special even with nothing to be special against.
+      // /en/ is now an ordinary unrecognised segment like any other -- since
+      // #39 nothing anywhere distinguishes it from /de/ -- but it must still
+      // resolve to English with its path intact rather than becoming a
+      // prefix in a world where the prefix set is empty.
       const en = await resolveWith(fresh, "https://www.givefood.org.uk/en/");
       expect(en).toMatchObject({ lang: "en", pathAfterPrefix: "/en/", vary: null });
     });
@@ -342,8 +400,11 @@ describe("resolveLanguage: rule 1, the path prefix wins", () => {
     // And says so on the wire: no Vary means the edge may serve this one
     // cached Welsh page to every visitor regardless of their
     // Accept-Language, which is only safe because the header was ignored.
-    // An implementation that read Accept-Language "just to be helpful" and
-    // still answered cy would pass the two assertions above.
+    // Since #39 that is true of every response this middleware touches, so
+    // the assertion has stopped being about /cy/ in particular -- but it is
+    // still the wire-level statement of rule 1, and it is now the statement
+    // the edge acts on for the whole site rather than for prefixed URLs
+    // alone.
     expect(r.vary).toBeNull();
   });
 });
@@ -360,10 +421,14 @@ describe("resolveLanguage: rule 2, no prefix means hard-coded en", () => {
     expect(r.lang).toBe("en");
     expect(r.contentLanguage).toBe("en");
     // "cy;q=0.9" is deliberately a language this Worker DOES have a
-    // catalogue for, so a negotiator would have something real to switch
-    // to; the Vary header is present because Django's negotiation function
-    // ran and patched it, not because its answer was used.
-    expect(r.vary).toBe("Accept-Language");
+    // catalogue for, so a negotiator would have something real to switch to.
+    // Nothing switched, and the response says so: no Vary. Before #39 this
+    // row asserted `Vary: Accept-Language` -- Django patches it because its
+    // negotiation function RAN, not because the answer was used -- and the
+    // edge duly kept one copy of the English home page per Accept-Language
+    // string in the wild. The header is gone; what it described (a header
+    // read and discarded) is unchanged.
+    expect(r.vary).toBeNull();
   });
 
   it("ignores Accept-Language even when it asks, first and unambiguously, for Welsh", async () => {
@@ -403,7 +468,7 @@ describe("resolveLanguage: rule 2, no prefix means hard-coded en", () => {
     expect(de.lang).toBe("en");
     expect(de.contentLanguage).toBe("en");
     expect(de.pathAfterPrefix).toBe("/de/");
-    expect(de.vary).toBe("Accept-Language");
+    expect(de.vary).toBeNull();
   });
 
   it("ignores a django_language cookie", async () => {
@@ -416,14 +481,15 @@ describe("resolveLanguage: rule 2, no prefix means hard-coded en", () => {
     });
     expect(r.lang).toBe("en");
     expect(r.contentLanguage).toBe("en");
-    // Vary carries Accept-Language and nothing else. This middleware must
-    // never add Cookie: noStore.ts owns that (and only for /admin and
-    // /auth), and a Vary: Cookie on a public page would make every visitor
-    // with any cookie at all a separate edge-cache entry -- the exact
-    // fragmentation PLAN.md's "no content negotiation" rule exists to
-    // avoid. Reading the cookie is only harmless while nothing is recorded
-    // about having read it.
-    expect(r.vary).toBe("Accept-Language");
+    // No Vary at all, and in particular no `Vary: Cookie`. This middleware
+    // must never add that: noStore.ts owns it, and only for /admin and
+    // /auth, because a Vary: Cookie on a public page would make every
+    // visitor carrying any cookie at all a separate edge-cache entry -- the
+    // exact fragmentation PLAN.md's "no content negotiation" rule exists to
+    // avoid, and the same fragmentation #39 measured for Accept-Language.
+    // Reading the cookie is only harmless while nothing is recorded about
+    // having read it.
+    expect(r.vary).toBeNull();
   });
 
   it("leaves the path untouched when nothing was stripped", async () => {
@@ -436,17 +502,22 @@ describe("resolveLanguage: rule 2, no prefix means hard-coded en", () => {
 });
 
 describe("resolveLanguage: what does NOT count as a prefix", () => {
-  it("never strips /en/, even though it does suppress Vary", async () => {
-    // The one case where the two halves of the module disagree on purpose:
-    // `bareEn` suppresses Vary, but `prefixed` -- which is what drives the
-    // slice -- stays false, so the path is handed on WHOLE. The header table
-    // below cannot see this: /en/ 404s identically whether the path was
-    // stripped or not. So an implementation that folded the two conditions
-    // together (`const prefixed = PREFIXES.has(first) || first === "en"`,
-    // or a single `new Set(LOCALES)` used for both) passes every other test
-    // in this file while handing render404 an unprefixedPath of "/needs/"
-    // for a request to /en/needs/ -- and context.ts would then advertise
-    // /cy/needs/ as the Welsh alternate of a URL that does not exist.
+  it("never strips /en/", async () => {
+    // "en" is a real language this app knows about and never a registered
+    // prefix (prefix_default_language=False), so `prefixed` stays false and
+    // the path is handed on WHOLE. An implementation that put "en" in the
+    // prefix set (`const prefixed = PREFIXES.has(first) || first === "en"`,
+    // or a single `new Set(LOCALES)`) passes every 200 test in this file
+    // while handing render404 an unprefixedPath of "/needs/" for a request
+    // to /en/needs/ -- and context.ts would then advertise /cy/needs/ as the
+    // Welsh alternate of a URL that does not exist.
+    //
+    // Until #39 this row also carried the module's only other "en" fact:
+    // /en/ suppressed Vary where /de/ did not, because Django's
+    // get_language_from_path recognises "en" and so never runs the
+    // negotiation function that patches the header. There is no Vary on
+    // anything now, so pathAfterPrefix is the whole of the evidence and the
+    // `bareEn` condition it needed is gone from the module.
     for (const path of ["/en/", "/en/needs/", "/en/needs/at/sid-valley/", "/en"]) {
       const r = await resolve(`https://www.givefood.org.uk${path}`);
       expect(r.lang).toBe("en");
@@ -465,38 +536,38 @@ describe("resolveLanguage: what does NOT count as a prefix", () => {
       const r = await resolve(`https://www.givefood.org.uk${path}`);
       expect(r.lang).toBe("en");
       expect(r.pathAfterPrefix).toBe(path);
-      // And the Vary column agrees that no prefix matched. Asserted because
-      // `lang` and `pathAfterPrefix` alone cannot distinguish "startsWith
-      // matched but the slice was a no-op" from "nothing matched" on some
-      // inputs; the header is the branch made visible.
-      expect(r.vary).toBe("Accept-Language");
+      // Before #39 the Vary column was asserted here too, because a
+      // startsWith() match whose slice happened to be a no-op is
+      // indistinguishable from "nothing matched" in `lang` alone. With the
+      // header gone, `pathAfterPrefix` carries that weight by itself -- and
+      // it does carry it: every path here is longer than its stem, so a
+      // startsWith() implementation slices and the value moves.
+      expect(r.vary).toBeNull();
     }
   });
 
-  it("does not treat an 'en' stem or subtag as the bare-en case", async () => {
-    // `bareEn` is an exact `first === "en"`, and Vary is the ONLY place a
-    // loosened version of it shows up: /english/ and /en/ both resolve to
-    // English and both hand the path on whole, so lang and pathAfterPrefix
-    // are identical for the right and the wrong answer. Before this test,
-    // nothing in the file asserted the Vary column for an en-lookalike, so
-    // `first.startsWith("en")` -- or `pathname.startsWith("/en")`, which is
-    // how the condition would most plausibly be rewritten -- passed
-    // everything while silently suppressing Vary on an entire family of
-    // ordinary English 404s. Suppressing Vary is the dangerous direction: it
-    // tells the edge the response does not depend on Accept-Language for
-    // URLs where Django says it does.
+  it("does not treat an 'en' stem or subtag as anything special", async () => {
+    // Kept from before #39, when the module had a `bareEn` condition and Vary
+    // was the ONLY place a loosened version of it showed up (/english/ and
+    // /en/ both resolve to English and both hand the path on whole, so lang
+    // and pathAfterPrefix agree for the right and the wrong answer). The
+    // condition is gone with the header, so nothing distinguishes these paths
+    // from /en/ any more -- which is precisely what is asserted: they are all
+    // ordinary unrecognised segments, resolving to English with the path
+    // intact, and no rewrite may reintroduce a special case for them.
     //
-    // /en-gb/ is here as a Django divergence as well, the mirror of the
-    // /cy-gb/ case below: get_supported_language_variant("en-gb") walks back
-    // to "en", so Django's 404 for /en-gb/ carries no Vary. This one does.
-    // Recorded, not fixed -- for the same reason: a subtag that resolves is
-    // a second URL for a page that already has one.
+    // /en-gb/ is here as a Django divergence too, the mirror of the /cy-gb/
+    // case below: get_supported_language_variant("en-gb") walks back to "en",
+    // so Django serves this 404 with Content-Language: en (as here) and no
+    // Vary (as here, now, though for an entirely different reason). Do not
+    // "fix" it by loosening the match: a subtag that resolves is a second URL
+    // for a page that already has one.
     for (const path of ["/english/", "/energy/needs/", "/en-gb/", "/ent/", "/enw/"]) {
       const r = await resolve(`https://www.givefood.org.uk${path}`);
       expect(r.lang).toBe("en");
       expect(r.pathAfterPrefix).toBe(path);
       expect(r.contentLanguage).toBe("en");
-      expect(r.vary).toBe("Accept-Language");
+      expect(r.vary).toBeNull();
     }
   });
 
@@ -508,18 +579,18 @@ describe("resolveLanguage: what does NOT count as a prefix", () => {
     const r = await resolve("https://www.givefood.org.uk/CY/needs/");
     expect(r.lang).toBe("en");
     expect(r.pathAfterPrefix).toBe("/CY/needs/");
-    // /CY/ is an unrecognised segment, so negotiation "ran": Vary is
-    // present, unlike the /cy/ row.
-    expect(r.vary).toBe("Accept-Language");
+    expect(r.vary).toBeNull();
 
-    // The `bareEn` comparison is case-sensitive too, and this is the pair
-    // that proves it: /en/ and /EN/ differ in the Vary column alone. A
-    // `first.toLowerCase() === "en"` tidy-up would silently move /EN/ into
-    // the /en/ row and change a cache key for a URL nobody tests by hand.
+    // /EN/ used to be the pair that proved the `bareEn` comparison was
+    // case-sensitive as well: /en/ and /EN/ differed in the Vary column and
+    // nowhere else. Neither the condition nor the header survives #39, so
+    // this is now only the lowercase-prefix claim again -- kept because a
+    // `first.toLowerCase()` tidy-up applied to PREFIXES would make /CY/ a
+    // second URL for every Welsh page, and Cloudflare would cache both.
     const upper = await resolve("https://www.givefood.org.uk/EN/needs/");
     expect(upper.lang).toBe("en");
     expect(upper.pathAfterPrefix).toBe("/EN/needs/");
-    expect(upper.vary).toBe("Accept-Language");
+    expect(upper.vary).toBeNull();
   });
 
   it("does not walk a subtag variant back to its base language", async () => {
@@ -529,24 +600,24 @@ describe("resolveLanguage: what does NOT count as a prefix", () => {
     // walks "cy-gb" back through its "-" boundaries to "cy", so
     // get_language_from_path() recognises /cy-gb/ and /CY/ as Welsh. Both
     // still 404 there -- LocalePrefixPattern only ever matches the exact
-    // "cy/" prefix -- but Django's 404 carries Content-Language: cy and no
-    // Vary, where this one carries en and Vary: Accept-Language.
+    // "cy/" prefix -- but Django's 404 carries Content-Language: cy where
+    // this one carries en.
     //
-    // Status codes agree; only the headers on a 404 differ, so this is
-    // recorded, not fixed. Do not "correct" it by loosening the match: the
+    // Status codes agree; only Content-Language on a 404 differs now, so this
+    // is recorded, not fixed. Do not "correct" it by loosening the match: the
     // moment /cy-gb/ resolves to Welsh, every Welsh page has a second URL.
+    // (Django also emits no Vary here, and neither does this -- but since #39
+    // that is agreement by coincidence, not by parity: nothing this Worker
+    // serves carries the header any more.)
     for (const path of ["/cy-gb/", "/gd-scotland/needs/", "/GA/"]) {
       const r = await resolve(`https://www.givefood.org.uk${path}`);
       expect(r.lang).toBe("en");
       expect(r.pathAfterPrefix).toBe(path);
-      // The comment above states the divergence as a header difference --
-      // "Django's 404 carries Content-Language: cy and no Vary, where this
-      // one carries en and Vary: Accept-Language" -- so assert both halves
-      // of it. Without these two lines the claim is documentation only, and
-      // the half that matters (Vary present ⇒ the edge keys this 404 on
-      // Accept-Language) is exactly the half a loosened match would flip.
+      // The comment above states the divergence as a header difference, so
+      // assert it rather than leaving it as documentation: a loosened match
+      // flips this to "cy" and takes the URL count with it.
       expect(r.contentLanguage).toBe("en");
-      expect(r.vary).toBe("Accept-Language");
+      expect(r.vary).toBeNull();
     }
   });
 
@@ -663,12 +734,18 @@ describe("resolveLanguage: the path, not the URL", () => {
 // and Vary are written out as literals rather than recomputed from PREFIXES,
 // because a test that re-derives the answer the same way the middleware does
 // agrees with any bug the middleware has.
+//
+// The `vary` column is null on every row since #39 and is kept, rather than
+// deleted as a constant, for two reasons: it is asserted per path rather than
+// as a blanket rule, so a reintroduced header names the URL it came back on;
+// and this is the table the differential test replays against the pre-#39
+// implementation, where the column is exactly the difference being measured.
 const PATH_TABLE: ReadonlyArray<{ path: string; lang: string; vary: string | null }> = [
-  { path: "/", lang: "en", vary: "Accept-Language" },
-  { path: "//", lang: "en", vary: "Accept-Language" },
-  { path: "///", lang: "en", vary: "Accept-Language" },
-  { path: "/needs/", lang: "en", vary: "Accept-Language" },
-  { path: "/needs/at/sid-valley/", lang: "en", vary: "Accept-Language" },
+  { path: "/", lang: "en", vary: null },
+  { path: "//", lang: "en", vary: null },
+  { path: "///", lang: "en", vary: null },
+  { path: "/needs/", lang: "en", vary: null },
+  { path: "/needs/at/sid-valley/", lang: "en", vary: null },
   { path: "/cy", lang: "cy", vary: null },
   { path: "/cy/", lang: "cy", vary: null },
   { path: "/cy/needs/", lang: "cy", vary: null },
@@ -676,45 +753,49 @@ const PATH_TABLE: ReadonlyArray<{ path: string; lang: string; vary: string | nul
   { path: "/en", lang: "en", vary: null },
   { path: "/en/", lang: "en", vary: null },
   { path: "/en/needs/", lang: "en", vary: null },
-  // The three rows either side of the bareEn boundary: "en" exactly is the
-  // only spelling that suppresses Vary, and a stem, a subtag or a different
-  // case does not.
-  { path: "/english/", lang: "en", vary: "Accept-Language" },
-  { path: "/en-gb/", lang: "en", vary: "Accept-Language" },
-  { path: "/EN/", lang: "en", vary: "Accept-Language" },
-  { path: "/de/", lang: "en", vary: "Accept-Language" },
-  { path: "/zh-hans/", lang: "en", vary: "Accept-Language" },
-  { path: "//cy/", lang: "en", vary: "Accept-Language" },
-  { path: "/CY/needs/", lang: "en", vary: "Accept-Language" },
-  { path: "/cy-gb/", lang: "en", vary: "Accept-Language" },
-  { path: "/cymru/", lang: "en", vary: "Accept-Language" },
-  { path: "/%63y/", lang: "en", vary: "Accept-Language" },
+  // The rows either side of what used to be the bareEn boundary, kept because
+  // /en/ and its lookalikes must now be indistinguishable: an exact "en", a
+  // stem, a subtag and a different case all resolve to English with the path
+  // handed on whole and no header of any kind.
+  { path: "/english/", lang: "en", vary: null },
+  { path: "/en-gb/", lang: "en", vary: null },
+  { path: "/EN/", lang: "en", vary: null },
+  { path: "/de/", lang: "en", vary: null },
+  { path: "/zh-hans/", lang: "en", vary: null },
+  { path: "//cy/", lang: "en", vary: null },
+  { path: "/CY/needs/", lang: "en", vary: null },
+  { path: "/cy-gb/", lang: "en", vary: null },
+  { path: "/cymru/", lang: "en", vary: null },
+  { path: "/%63y/", lang: "en", vary: null },
   // An encoded slash cannot fake a segment boundary: URL.pathname leaves
   // %2F alone, so the first segment is the whole "cy%2Fneeds" and matches
   // nothing. A middleware that decoded before splitting would read this as
   // /cy/needs/ and serve Welsh from a URL the router will 404 -- language
   // and route disagreeing on the same request.
-  { path: "/cy%2Fneeds/", lang: "en", vary: "Accept-Language" },
-  { path: "/0/", lang: "en", vary: "Accept-Language" },
-  { path: "/./", lang: "en", vary: "Accept-Language" },
-  { path: "/café/needs/", lang: "en", vary: "Accept-Language" },
-  { path: "/日本語/", lang: "en", vary: "Accept-Language" },
-  { path: "/cy;jsessionid=1/", lang: "en", vary: "Accept-Language" },
-  { path: `/${"a".repeat(2000)}/`, lang: "en", vary: "Accept-Language" },
+  { path: "/cy%2Fneeds/", lang: "en", vary: null },
+  { path: "/0/", lang: "en", vary: null },
+  { path: "/./", lang: "en", vary: null },
+  { path: "/café/needs/", lang: "en", vary: null },
+  { path: "/日本語/", lang: "en", vary: null },
+  { path: "/cy;jsessionid=1/", lang: "en", vary: null },
+  { path: `/${"a".repeat(2000)}/`, lang: "en", vary: null },
 ];
 
 describe("resolveLanguage: invariants that hold for every path", () => {
-  it("resolves the whole table to the expected language and Vary", async () => {
-    // The Vary rule stated as a rule rather than as six live-verified rows:
-    // the header is present if and only if the first segment was neither a
-    // registered prefix nor "en". Spelling out the odd inputs no header-table
-    // row mentions ("//", "/0/", ";jsessionid", the 2000-character segment)
-    // is the point -- those are where a rewrite loses track of which branch
-    // it is in, and where a stray Vary quietly multiplies edge-cache entries
-    // for one page. Content-Language is asserted alongside because the two
-    // are one decision seen twice: the templates read the context variable,
-    // caches read the header, and a page rendered in Welsh but labelled
-    // English is worse than either being wrong alone.
+  it("resolves the whole table to the expected language, and to no Vary at all", async () => {
+    // The #39 rule stated as a rule rather than as a list of endpoints: this
+    // middleware never writes Vary, for any path, prefixed or not. Spelling
+    // out the odd inputs no header-table row mentions ("//", "/0/",
+    // ";jsessionid", the 2000-character segment) is the point -- those are
+    // where a rewrite loses track of which branch it is in, and a stray Vary
+    // on any one of them silently multiplies edge-cache entries for that page
+    // by the number of Accept-Language strings in the wild (measured: two
+    // ordinary Chrome strings, two 2 MB copies of /needs/geo.json).
+    // Content-Language is asserted alongside because the two used to be one
+    // decision seen twice: the templates read the context variable, caches
+    // read the header, and a page rendered in Welsh but labelled English is
+    // worse than either being wrong alone. Content-Language did NOT change in
+    // #39, and this loop is where that is pinned across the whole surface.
     for (const row of PATH_TABLE) {
       const r = await resolve(`https://www.givefood.org.uk${row.path}`);
       expect({ path: row.path, lang: r.lang, vary: r.vary }).toEqual(row);
@@ -753,14 +834,25 @@ describe("resolveLanguage: invariants that hold for every path", () => {
 });
 
 describe("resolveLanguage: PLAN.md §6.1.2 header table", () => {
-  // The six live-verified production rows, adjusted only where PLAN.md
-  // §2.7.1 deliberately changed the supported-language set. Each row asserts
-  // status, Content-Language and the presence or absence of
-  // Vary: Accept-Language together, because it is the combination that was
-  // verified against production, and two of the rows differ from each other
-  // in the Vary column alone.
+  // The six live-verified production rows, adjusted where PLAN.md §2.7.1
+  // deliberately changed the supported-language set and, since #39, in the
+  // Vary column throughout.
+  //
+  // THE VARY COLUMN OF THIS TABLE IS NO LONGER DJANGO PARITY. That is the
+  // accepted cost of #39, written here rather than left as a silent
+  // rewrite: Django patches Vary: Accept-Language onto the /-with-pl, /de/
+  // and dropped-language rows, and this Worker no longer does, because
+  // Cloudflare honoured it and minted an edge object per Accept-Language
+  // string for byte-identical content. Status and Content-Language -- the
+  // columns anything actually reads -- are untouched, and every row below
+  // still asserts them exactly as it did before.
+  //
+  // Two rows (/en/ and /de/) used to differ from each other in the Vary
+  // column alone. They are now indistinguishable, and each still asserts the
+  // full triple so that a reintroduced header fails loudly at the row it
+  // came back on.
 
-  it("GET / with Accept-Language: pl -- 200, en, WITH Vary", async () => {
+  it("GET / with Accept-Language: pl -- 200, en, and (post-#39) no Vary", async () => {
     const res = await siteLikeApp().request(
       "https://www.givefood.org.uk/",
       { headers: { "Accept-Language": "pl" } },
@@ -768,7 +860,11 @@ describe("resolveLanguage: PLAN.md §6.1.2 header table", () => {
     );
     expect(res.status).toBe(200);
     expect(res.headers.get("Content-Language")).toBe("en");
-    expect(res.headers.get("Vary")).toBe("Accept-Language");
+    // Django's row says `Accept-Language, Accept-Encoding` here. This is the
+    // single most valuable row of the divergence: the site's busiest URL,
+    // one document, and previously one edge object per browser language
+    // string that ever asked for it.
+    expect(res.headers.get("Vary")).toBeNull();
   });
 
   it("GET /cy/ -- 200, cy, WITHOUT Vary", async () => {
@@ -788,11 +884,13 @@ describe("resolveLanguage: PLAN.md §6.1.2 header table", () => {
   });
 
   it("GET /en/ -- 404, en, WITHOUT Vary", async () => {
-    // The counter-intuitive row, and the reason `bareEn` exists as a
-    // separate condition. LocalePrefixPattern emits an empty prefix for the
-    // default language so /en/ matches no route -- but
-    // get_language_from_path('/en/') still returns "en", so Django's
-    // negotiation function never runs and never patches Vary.
+    // The counter-intuitive row, and the reason a `bareEn` condition used to
+    // exist. LocalePrefixPattern emits an empty prefix for the default
+    // language so /en/ matches no route -- but get_language_from_path('/en/')
+    // still returns "en", so Django's negotiation function never runs and
+    // never patches Vary. This is now the only row whose Vary column still
+    // matches Django, and it matches by accident: nothing here emits the
+    // header for any URL.
     const res = await siteLikeApp().request("https://www.givefood.org.uk/en/", {}, env);
     expect(res.status).toBe(404);
     expect(res.headers.get("Content-Language")).toBe("en");
@@ -818,21 +916,25 @@ describe("resolveLanguage: PLAN.md §6.1.2 header table", () => {
     expect(res.headers.get("Vary")).toBeNull();
   });
 
-  it("GET /de/ -- 404, en, WITH Vary", async () => {
-    // Byte-for-byte the same 404 body as /en/ above, and the same
-    // Content-Language, differing only in this header. An implementation
-    // that keyed Vary on "did a prefix match?" alone passes every other test
-    // in this file and fails this pair.
+  it("GET /de/ -- 404, en, and (post-#39) no Vary either", async () => {
+    // Django's row has the header; this one does not. The /en/ and /de/ 404s
+    // are now identical on the wire in every respect -- same status, same
+    // Content-Language, same body, no Vary on either -- where they used to be
+    // the file's showpiece pair. That collapse is the divergence, so it is
+    // asserted here rather than inferred from the rule.
     const res = await siteLikeApp().request("https://www.givefood.org.uk/de/", {}, env);
     expect(res.status).toBe(404);
     expect(res.headers.get("Content-Language")).toBe("en");
-    expect(res.headers.get("Vary")).toBe("Accept-Language");
+    expect(res.headers.get("Vary")).toBeNull();
+
+    const en = await siteLikeApp().request("https://www.givefood.org.uk/en/", {}, env);
+    expect([...res.headers].sort()).toEqual([...en.headers].sort());
   });
 
-  it("suppresses Vary for any path under /en/, not just the bare /en/", async () => {
-    // bareEn is computed from the first path segment, so the whole /en/*
-    // family behaves like the /en/ row -- which is right: Django's
-    // get_language_from_path matches the prefix, not the whole path.
+  it("emits no Vary for any path under /en/, just as for the bare /en/", async () => {
+    // The whole /en/* family behaves like the /en/ row, as it always has --
+    // Django's get_language_from_path matches the prefix, not the whole path,
+    // and this middleware reads the first segment for the same reason.
     const res = await siteLikeApp().request("https://www.givefood.org.uk/en/needs/at/sid-valley/", {}, env);
     expect(res.status).toBe(404);
     expect(res.headers.get("Content-Language")).toBe("en");
@@ -842,26 +944,27 @@ describe("resolveLanguage: PLAN.md §6.1.2 header table", () => {
   it("serves the 17 dropped languages as unrecognised segments (the §2.7.1 divergence)", async () => {
     // Django answered /zh-hans/ and /tlh/ with 200 and Content-Language:
     // zh-hans/tlh. This Worker ships 4 catalogues, so those URLs now take
-    // the same path /de/ already took: English, 404, Vary present. The
-    // module comment calls this "not a new code path, just a larger set of
-    // inputs landing on the existing one" -- so assert they are
-    // indistinguishable from /de/.
+    // the same path /de/ already took: English, 404. The module comment calls
+    // this "not a new code path, just a larger set of inputs landing on the
+    // existing one" -- so assert they are indistinguishable from /de/, which
+    // since #39 means no Vary on any of them.
     for (const code of DROPPED_DJANGO_LANGUAGES) {
       const res = await siteLikeApp().request(`https://www.givefood.org.uk/${code}/`, {}, env);
       expect(res.status).toBe(404);
       expect(res.headers.get("Content-Language")).toBe("en");
-      expect(res.headers.get("Vary")).toBe("Accept-Language");
+      expect(res.headers.get("Vary")).toBeNull();
     }
   });
 });
 
 describe("resolveLanguage: how the headers are written", () => {
-  it("appends to a Vary the handler already set instead of replacing it", async () => {
+  it("leaves a Vary the handler set exactly as the handler set it", async () => {
     // noStore.ts sets Vary: Cookie on every /admin and /auth response, and
-    // those paths carry no language prefix -- so both middlewares write this
-    // header on the same response. A plain c.header("Vary", ...) here would
-    // drop the Cookie half and let the edge serve one visitor's admin page
-    // to another.
+    // those paths carry no language prefix, so before #39 both middlewares
+    // wrote this header on the same response and the value was
+    // "Cookie, Accept-Language". This middleware no longer participates: the
+    // Cookie half -- the one that stops the edge serving one admin's page to
+    // another -- must arrive untouched, neither replaced nor appended to.
     const app = new Hono<AppEnv>();
     app.use("*", resolveLanguage);
     app.get("*", (c) => {
@@ -869,12 +972,14 @@ describe("resolveLanguage: how the headers are written", () => {
       return c.text("admin");
     });
     const res = await app.request("https://www.givefood.org.uk/admin/", {}, env);
-    expect(res.headers.get("Vary")).toBe("Cookie, Accept-Language");
+    expect(res.headers.get("Vary")).toBe("Cookie");
   });
 
-  it("leaves a handler's Vary alone on a prefixed request", async () => {
-    // The append is conditional, not unconditional-then-filtered: on /cy/
-    // nothing is added, and crucially nothing already there is disturbed.
+  it("leaves a handler's Vary alone on a prefixed request too", async () => {
+    // The prefixed half of the pair above. It passed before #39 as well --
+    // the append was conditional -- and it must keep passing, because "the
+    // middleware writes no Vary" has to hold on every branch, not just on
+    // the one that changed.
     const app = new Hono<AppEnv>();
     app.use("*", resolveLanguage);
     app.get("*", (c) => {
@@ -885,23 +990,27 @@ describe("resolveLanguage: how the headers are written", () => {
     expect(res.headers.get("Vary")).toBe("Cookie");
   });
 
-  it("adds Accept-Language once when nothing else set Vary", async () => {
-    // Appending is per-response, so a repeated value would be a caching
-    // wart rather than an error -- invisible unless asserted.
+  it("adds no Vary at all when nothing else set one", async () => {
+    // The /de/ row again, at the level of the header rather than the table:
+    // the response reaches the edge with no Vary header present, so
+    // Cloudflare stores one object for the URL instead of one per
+    // Accept-Language string.
     const res = await siteLikeApp().request("https://www.givefood.org.uk/de/", {}, env);
-    expect(res.headers.get("Vary")).toBe("Accept-Language");
+    expect(res.headers.get("Vary")).toBeNull();
+    expect(res.headers.has("Vary")).toBe(false);
   });
 
-  it("does NOT de-duplicate a Vary the handler already spelled Accept-Language", async () => {
-    // Recorded, not endorsed. `{ append: true }` is Headers.append: it never
-    // inspects what is already there, so a handler that set the same value
-    // gets it twice. Nothing in the Worker does that today -- noStore.ts
-    // appends Cookie, media.ts overwrites vary with accept-encoding -- but
-    // media.ts also builds its headers with `new Headers(res.headers)` from
-    // a subrequest, and its own comment documents that a Vary arriving that
-    // way was "simply missed" once already. The duplicate is legal and
-    // harmless per RFC 9110, but it is not what the "exactly once" test
-    // above proves, so the real boundary is pinned here rather than assumed.
+  it("does not duplicate a Vary a handler spelled Accept-Language itself", async () => {
+    // This row used to assert "Accept-Language, Accept-Language" -- the
+    // documented consequence of `{ append: true }` being Headers.append,
+    // which never inspects what is already there. Nothing in the Worker sets
+    // that value today (noStore.ts appends Cookie, media.ts overwrites vary
+    // with accept-encoding), but media.ts builds its headers with
+    // `new Headers(res.headers)` from a subrequest and its own comment
+    // records a Vary arriving that way being "simply missed" once already.
+    // So the case is kept: whatever a handler or a subrequest puts in this
+    // header now survives verbatim, doubling included -- and NOT doubled by
+    // this middleware.
     const app = new Hono<AppEnv>();
     app.use("*", resolveLanguage);
     app.get("*", (c) => {
@@ -909,7 +1018,7 @@ describe("resolveLanguage: how the headers are written", () => {
       return c.text("page");
     });
     const res = await app.request("https://www.givefood.org.uk/needs/", {}, env);
-    expect(res.headers.get("Vary")).toBe("Accept-Language, Accept-Language");
+    expect(res.headers.get("Vary")).toBe("Accept-Language");
   });
 
   it("decorates a raw Response a handler returned, without disturbing its body", async () => {
@@ -917,10 +1026,10 @@ describe("resolveLanguage: how the headers are written", () => {
     // `new Response(...)` directly rather than going through c.text/c.json,
     // and media.ts streams an R2 body it must never buffer. Hono implements
     // a post-next() c.header() on a finalised response by rebuilding the
-    // Response around the same body -- twice here, once per header -- so
-    // this asserts both halves of that: the headers land, and the bytes are
-    // still readable afterwards. If either stopped being true, every image
-    // on the site would lose its Content-Language or its body, and only in
+    // Response around the same body -- once now, twice before #39 -- so this
+    // asserts both halves of that: the header lands, and the bytes are still
+    // readable afterwards. If either stopped being true, every image on the
+    // site would lose its Content-Language or its body, and only in
     // production.
     const app = new Hono<AppEnv>();
     app.use("*", resolveLanguage);
@@ -932,11 +1041,18 @@ describe("resolveLanguage: how the headers are written", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("Content-Type")).toBe("image/png");
     expect(res.headers.get("Content-Language")).toBe("en");
-    // media.ts deliberately keeps accept-encoding and only that; the
-    // language append must add to it rather than replace it, or the fix
-    // recorded in media.ts's long `h.set("vary", ...)` comment is undone
-    // from the other end of the chain.
-    expect(res.headers.get("Vary")).toBe("accept-encoding, Accept-Language");
+    // THE MEDIA.TS ROW. media.ts:240 sets `vary: accept-encoding` and only
+    // that, with a long comment explaining that the resizing service's own
+    // `Vary: Accept` had to be stripped because this zone has "Vary for
+    // Images" on and every distinct Accept string minted its own edge object
+    // (measured: 4.0% jpeg hit rate against an expected ~67%). This
+    // middleware then appended Accept-Language to it, so the observed header
+    // in production was `accept-encoding, Accept-Language` and the fix was
+    // defeated from the other end -- the same mechanism, on the same
+    // responses, re-diagnosed twice. Since #39 what media.ts wrote is what
+    // ships. Asserted verbatim, lowercase and all, so that a reintroduced
+    // append shows up here as well as in the tables above.
+    expect(res.headers.get("Vary")).toBe("accept-encoding");
     expect(await res.text()).toBe("PNGBYTES");
   });
 
@@ -954,7 +1070,11 @@ describe("resolveLanguage: how the headers are written", () => {
     expect(res.status).toBe(304);
     expect(res.headers.get("ETag")).toBe('"abc123"');
     expect(res.headers.get("Content-Language")).toBe("en");
-    expect(res.headers.get("Vary")).toBe("Accept-Language");
+    // A 304 carries no Content-Type, so a Vary rule gated on `text/html`
+    // would have dropped the header here by accident rather than by choice.
+    // #39 dropped it everywhere on purpose, and this row is the record that
+    // the bodyless case was considered rather than overlooked.
+    expect(res.headers.get("Vary")).toBeNull();
   });
 
   it("overrides a Content-Language the handler set for itself", async () => {
@@ -971,11 +1091,13 @@ describe("resolveLanguage: how the headers are written", () => {
     expect(res.headers.get("Content-Language")).toBe("gd");
   });
 
-  it("writes both headers on a redirect response", async () => {
+  it("writes Content-Language, and nothing else, on a redirect response", async () => {
     // slugRedirect (301) and several locale routes return redirects, and
-    // resolveLanguage still has to decorate them -- a redirect that a
-    // language-blind cache treats as universal is exactly the kind of bug
-    // the Vary rule exists to prevent.
+    // resolveLanguage still has to decorate them. A 301 carries no
+    // Content-Type either, so this is the second case a `text/html` gate
+    // would have caught by accident; #39 removed the header from it
+    // deliberately, and these redirects are highly cacheable, which is the
+    // point.
     const app = new Hono<AppEnv>();
     app.use("*", resolveLanguage);
     app.get("*", (c) => c.redirect("/needs/at/county-durham/", 301));
@@ -983,7 +1105,7 @@ describe("resolveLanguage: how the headers are written", () => {
     expect(res.status).toBe(301);
     expect(res.headers.get("Location")).toBe("/needs/at/county-durham/");
     expect(res.headers.get("Content-Language")).toBe("en");
-    expect(res.headers.get("Vary")).toBe("Accept-Language");
+    expect(res.headers.get("Vary")).toBeNull();
   });
 
   it("decorates POSTs the same way it decorates GETs", async () => {
@@ -1030,10 +1152,10 @@ describe("resolveLanguage: the error path", () => {
   it("still writes the header contract onto a 500", async () => {
     // Hono runs onError inside the middleware chain rather than outside it,
     // so the post-next() half of this middleware DOES run for a failed
-    // request and the 500 carries the same headers Django's
+    // request and the 500 carries the Content-Language Django's
     // process_response would have patched onto it. Pinned because the
-    // opposite -- an error page silently missing Content-Language/Vary --
-    // would be entirely invisible in a diff.
+    // opposite -- an error page silently missing Content-Language -- would be
+    // entirely invisible in a diff.
     const app = new Hono<AppEnv>();
     app.use("*", resolveLanguage);
     app.get("*", () => {
@@ -1043,7 +1165,7 @@ describe("resolveLanguage: the error path", () => {
     const res = await app.request("https://www.givefood.org.uk/needs/", {}, env);
     expect(res.status).toBe(500);
     expect(res.headers.get("Content-Language")).toBe("en");
-    expect(res.headers.get("Vary")).toBe("Accept-Language");
+    expect(res.headers.get("Vary")).toBeNull();
   });
 
   it("runs the downstream handler exactly once", async () => {
@@ -1060,5 +1182,119 @@ describe("resolveLanguage: the error path", () => {
     });
     await app.request("https://www.givefood.org.uk/ga/needs/", {}, env);
     expect(calls).toBe(1);
+  });
+});
+
+// Issue #39. The header is gone; these are the tests that say so as a
+// property rather than row by row, and the ones that prove nothing else
+// moved with it.
+describe("resolveLanguage: no Vary, and nothing else changed (issue #39)", () => {
+  it("differs from the pre-#39 implementation in the Vary header and in nothing else", async () => {
+    // THE "OUTPUT DID NOT MOVE" TEST. legacyResolveLanguage is the middleware
+    // exactly as it stood at 4e41a6b. Both run over every path in PATH_TABLE;
+    // status, body (which carries `lang` and `pathAfterPrefix` out of the
+    // context) and every header but Vary must be identical, and Vary must
+    // differ in exactly the direction claimed -- present-then-absent on the
+    // unprefixed rows, absent-then-absent on the prefixed and /en/ ones.
+    //
+    // Written as a diff rather than as new expectations because a change that
+    // deletes twenty assertions and writes twenty replacements can hide an
+    // unrelated regression inside the churn. This cannot: anything else that
+    // moved shows up as an inequality here, named by path.
+    let sawRemoval = 0;
+    for (const row of PATH_TABLE) {
+      const url = `https://www.givefood.org.uk${row.path}`;
+      const before = await observe(legacyResolveLanguage, url);
+      const after = await observe(resolveLanguage, url);
+
+      expect({ path: row.path, status: after.status }).toEqual({ path: row.path, status: before.status });
+      expect({ path: row.path, body: after.body }).toEqual({ path: row.path, body: before.body });
+      expect({ path: row.path, headers: after.headers.filter(([k]) => k !== "vary") }).toEqual({
+        path: row.path,
+        headers: before.headers.filter(([k]) => k !== "vary"),
+      });
+
+      const beforeVary = before.headers.find(([k]) => k === "vary")?.[1] ?? null;
+      const afterVary = after.headers.find(([k]) => k === "vary")?.[1] ?? null;
+      expect({ path: row.path, vary: afterVary }).toEqual({ path: row.path, vary: null });
+      if (beforeVary !== null) {
+        expect(beforeVary).toBe("Accept-Language");
+        sawRemoval += 1;
+      }
+    }
+    // The table has to contain enough of the affected shape for the test to
+    // mean anything: if a future edit trimmed PATH_TABLE down to prefixed
+    // paths, every assertion above would still pass while proving nothing.
+    // 22 of the 29 rows carried the header before #39.
+    expect(sawRemoval).toBe(22);
+    expect(PATH_TABLE.length).toBe(29);
+  });
+
+  it("returns the same response whatever Accept-Language says, on every content type", async () => {
+    // The production observation reproduced as a test. Issue #39's verifier
+    // took one URL, sent it seven different Accept-Language strings, and got
+    // md5-identical bodies back every time -- while Cloudflare minted a
+    // separate 2,037,055-byte cache object for each of them, because the
+    // response said it varied. The bytes were never the problem; the header
+    // was.
+    //
+    // Three handler shapes, because the edge treats them differently and the
+    // middleware used to write the header on all three: an HTML page, a JSON
+    // API response, and a raw Response with its own vary (a resized photo).
+    const langs = [
+      undefined,
+      "en-GB,en-US;q=0.9,en;q=0.8", // the string that HIT with age=814
+      "en-US,en;q=0.9", //             ...and the one that MISSed seconds later
+      "cy-GB,cy;q=0.9,en;q=0.5", //    a language this Worker really has
+      "pl,de;q=0.8", //                two it dropped
+      "zz-ZZ", //                      not a language at all
+      "", //                           present but empty
+      "*", //                          the wildcard
+    ];
+
+    for (const path of ["/needs/at/sid-valley/", "/needs/geo.json", "/needs/at/sid-valley/photo.jpg"]) {
+      const app = new Hono<AppEnv>();
+      app.use("*", resolveLanguage);
+      app.get("/needs/at/sid-valley/", (c) => c.html("<p>Sid Valley</p>"));
+      app.get("/needs/geo.json", (c) => c.json({ type: "FeatureCollection", features: [] }));
+      app.get(
+        "/needs/at/sid-valley/photo.jpg",
+        () => new Response("JPEGBYTES", { headers: { "content-type": "image/jpeg", vary: "accept-encoding" } }),
+      );
+
+      const seen = new Set<string>();
+      for (const lang of langs) {
+        const init: RequestInit = lang === undefined ? {} : { headers: { "Accept-Language": lang } };
+        const res = await app.request(`https://www.givefood.org.uk${path}`, init, env);
+        expect(res.headers.get("Vary")).toBe(path.endsWith(".jpg") ? "accept-encoding" : null);
+        seen.add(JSON.stringify([res.status, [...res.headers].sort(), await res.text()]));
+      }
+      // One distinct response for eight different requests. Before #39 the
+      // responses were identical too -- and each of the seven distinct header
+      // values still bought its own edge object.
+      expect(seen.size, `${path} should have exactly one representation`).toBe(1);
+    }
+  });
+
+  it("writes exactly one header, Content-Language", async () => {
+    // The blunt version, and the one that catches a Vary reintroduced under
+    // any spelling, casing or condition: diff the response headers against
+    // the same app without the middleware. Content-Language is the whole of
+    // the difference. Any future header this middleware acquires has to be
+    // added here deliberately, which is the point.
+    for (const path of ["/", "/needs/", "/cy/needs/", "/en/", "/de/", "/zh-hans/"]) {
+      const bare = new Hono<AppEnv>();
+      bare.get("*", (c) => c.text("page"));
+      const wired = new Hono<AppEnv>();
+      wired.use("*", resolveLanguage);
+      wired.get("*", (c) => c.text("page"));
+
+      const url = `https://www.givefood.org.uk${path}`;
+      const bareHeaders = [...(await bare.request(url, {}, env)).headers].sort();
+      const wiredHeaders = [...(await wired.request(url, {}, env)).headers].sort();
+
+      const added = wiredHeaders.filter(([k]) => !bareHeaders.some(([bk]) => bk === k));
+      expect({ path, added }).toEqual({ path, added: [["content-language", path.startsWith("/cy") ? "cy" : "en"]] });
+    }
   });
 });

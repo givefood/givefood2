@@ -32,7 +32,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@givefood/db", () => ({
   getAllOpenDonationPoints: vi.fn(),
   getAllOpenFoodbanks: vi.fn(),
-  getAllOpenLocations: vi.fn(),
+  getAllOpenLocationsFlagged: vi.fn(),
   getConstituencyBySlug: vi.fn(),
   getDonationPointsByFoodbankId: vi.fn(),
   getFoodbankBySlug: vi.fn(),
@@ -49,7 +49,7 @@ vi.mock("@givefood/db", () => ({
 import {
   getAllOpenDonationPoints,
   getAllOpenFoodbanks,
-  getAllOpenLocations,
+  getAllOpenLocationsFlagged,
   getConstituencyBySlug,
   getDonationPointsByFoodbankId,
   getFoodbankBySlug,
@@ -63,6 +63,7 @@ import {
   getOpenLocationsByCountry,
   type DonationPointRow,
   type FoodbankLocationRow,
+  type FoodbankLocationRowFlagged,
   type FoodbankRow,
   type Session,
 } from "@givefood/db";
@@ -108,6 +109,17 @@ function makeLocation(overrides: Partial<FoodbankLocationRow> = {}): FoodbankLoc
   } as unknown as FoodbankLocationRow;
 }
 
+// The all-items feed's row shape: the same location MINUS boundary_geojson,
+// PLUS the 0/1 has_boundary flag -- what getAllOpenLocationsFlagged returns
+// (packages/db/src/locations.ts). Kept as a separate factory rather than an
+// override on makeLocation, because the whole point of the projection is
+// that the key is ABSENT, and a factory that could still carry it would let
+// the all-items tests below pass against a row production never produces.
+function makeLocationFlagged(overrides: Partial<FoodbankLocationRowFlagged> = {}): FoodbankLocationRowFlagged {
+  const { boundary_geojson: _dropped, ...rest } = makeLocation() as FoodbankLocationRow;
+  return { ...rest, has_boundary: 0, ...overrides } as unknown as FoodbankLocationRowFlagged;
+}
+
 function makeDonationPoint(overrides: Partial<DonationPointRow> = {}): DonationPointRow {
   return {
     id: 9,
@@ -145,7 +157,7 @@ const STORED_CONSTITUENCY_BOUNDARY =
 
 const LIST_QUERIES = [
   getAllOpenFoodbanks,
-  getAllOpenLocations,
+  getAllOpenLocationsFlagged,
   getAllOpenDonationPoints,
   getFoodbanksByCountry,
   getOpenLocationsByCountry,
@@ -192,7 +204,7 @@ describe("buildGeojsonResponse: the all-items feed (/needs/geo.json)", () => {
     await buildGeojsonResponse(session, "en", { kind: "all" });
 
     expect(getAllOpenFoodbanks).toHaveBeenCalledWith(session);
-    expect(getAllOpenLocations).toHaveBeenCalledWith(session);
+    expect(getAllOpenLocationsFlagged).toHaveBeenCalledWith(session);
     expect(getAllOpenDonationPoints).toHaveBeenCalledWith(session);
     expect(getFoodbanksByCountry).not.toHaveBeenCalled();
     expect(getFoodbanksByConstituencyId).not.toHaveBeenCalled();
@@ -220,7 +232,7 @@ describe("buildGeojsonResponse: the all-items feed (/needs/geo.json)", () => {
     vi.mocked(getAllOpenFoodbanks).mockResolvedValue([
       makeFoodbank({ delivery_address: "Depot Road", delivery_lat_lng: "53.1,-1.6" }),
     ]);
-    vi.mocked(getAllOpenLocations).mockResolvedValue([makeLocation()]);
+    vi.mocked(getAllOpenLocationsFlagged).mockResolvedValue([makeLocationFlagged()]);
     vi.mocked(getAllOpenDonationPoints).mockResolvedValue([makeDonationPoint()]);
 
     const body = (await buildGeojsonResponse(session, "en", { kind: "all" })) as string;
@@ -246,19 +258,24 @@ describe("buildGeojsonResponse: the all-items feed (/needs/geo.json)", () => {
     // draws in receive order. Asserted as the sequence of "type" codes so
     // the test names the rule rather than restating a body.
     vi.mocked(getAllOpenDonationPoints).mockResolvedValue([makeDonationPoint()]);
-    vi.mocked(getAllOpenLocations).mockResolvedValue([makeLocation()]);
+    vi.mocked(getAllOpenLocationsFlagged).mockResolvedValue([makeLocationFlagged()]);
     vi.mocked(getAllOpenFoodbanks).mockResolvedValue([makeFoodbank()]);
 
     const body = (await buildGeojsonResponse(session, "en", { kind: "all" })) as string;
     expect(body.match(/"type": "([fld]|lb|b)"/g)).toEqual(['"type": "f"', '"type": "l"', '"type": "d"']);
   });
 
-  it("keeps a location with a stored boundary as a plain point", async () => {
+  it("keeps a location flagged as having a boundary as a plain point", async () => {
     // `if location.boundary_geojson and not all_items` -- the all-items
     // feed deliberately never ships polygons (they are far larger than the
-    // points they replace). 257 of 1972 production locations have one, so
-    // dropping the `and not all_items` half would bloat this feed hard.
-    vi.mocked(getAllOpenLocations).mockResolvedValue([makeLocation({ boundary_geojson: STORED_LOCATION_BOUNDARY })]);
+    // points they replace). 40 of 1,962 open production locations have one,
+    // so dropping the `and not all_items` half would bloat this feed hard.
+    //
+    // has_boundary: 1 is the projected row's way of saying "this location
+    // has one" (getAllOpenLocationsFlagged) -- the flag exists precisely so
+    // the row can carry that fact without carrying the ~2.3 MB blob, and a
+    // build that started reading it as a boundary would emit `"lb"` here.
+    vi.mocked(getAllOpenLocationsFlagged).mockResolvedValue([makeLocationFlagged({ has_boundary: 1 })]);
 
     const body = (await buildGeojsonResponse(session, "en", { kind: "all" })) as string;
     expect(body).toContain('"type": "Point"');
@@ -268,7 +285,45 @@ describe("buildGeojsonResponse: the all-items feed (/needs/geo.json)", () => {
     expect(body).toContain('"coordinates": [-2.25, 52.5]');
     expect(body).not.toContain("lb");
     expect(body).not.toContain("Polygon");
+    expect(body).not.toContain("has_boundary");
+  });
+
+  it("still emits a plain point if a row somehow arrives WITH a boundary column", async () => {
+    // The `and not all_items` guard, tested independently of the projection.
+    // Two separate things now keep polygons off this feed: the query does
+    // not fetch the column, and `includeBoundary` is false for this scope.
+    // The test above can only fail the first; feeding the mock a row that
+    // does carry boundary_geojson -- the shape getAllOpenLocations returns,
+    // i.e. exactly what a revert of the projection would put here -- is the
+    // only way to keep failing the second. Without this, deleting
+    // `&& includeBoundary` from locationFeature is a live mutant.
+    vi.mocked(getAllOpenLocationsFlagged).mockResolvedValue([
+      makeLocation({ boundary_geojson: STORED_LOCATION_BOUNDARY }),
+    ] as never);
+
+    const body = (await buildGeojsonResponse(session, "en", { kind: "all" })) as string;
+    expect(body).toContain('"type": "l"');
+    expect(body).toContain('"coordinates": [-2.25, 52.5]');
+    expect(body).not.toContain("Polygon");
     expect(body).not.toContain("-4.20000");
+  });
+
+  it("builds a whole location feature from the PROJECTED row shape", async () => {
+    // The other all-items tests read one property at a time; this one pins the
+    // complete feature a projected row produces, because the risk the
+    // projection introduces is a MISSING COLUMN, and a missing column reaches
+    // the response as `null`/`undefined` rather than as an error. Every field
+    // locationFeature touches is visible here -- name, foodbank_name,
+    // foodbank_slug, slug and lat_lng -- so dropping any one of them from
+    // getAllOpenLocationsFlagged's 38-name list fails this with a readable
+    // diff instead of shipping `"name": null` to the public map.
+    vi.mocked(getAllOpenLocationsFlagged).mockResolvedValue([makeLocationFlagged()]);
+
+    expect(await buildGeojsonResponse(session, "en", { kind: "all" })).toBe(
+      '{"type": "FeatureCollection", "features": [{"type": "Feature", "geometry": {"type": "Point", ' +
+        '"coordinates": [-2.25, 52.5]}, "properties": {"type": "l", "name": "Church Hall", ' +
+        '"foodbank": "Testville", "url": "/needs/at/testville/church-hall/"}}]}',
+    );
   });
 
   it("rounds coordinates to 4 decimal places", async () => {

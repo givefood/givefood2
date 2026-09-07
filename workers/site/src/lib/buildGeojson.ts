@@ -27,7 +27,7 @@
 import {
   getAllOpenDonationPoints,
   getAllOpenFoodbanks,
-  getAllOpenLocations,
+  getAllOpenLocationsFlagged,
   getConstituencyBySlug,
   getDonationPointsByFoodbankId,
   getFoodbankBySlug,
@@ -131,8 +131,19 @@ function foodbankFeatures(foodbank: FoodbankRow, locale: string, includeAddress:
   return out;
 }
 
+// Either shape of location row this module handles: the full one (the
+// foodbank/location/constituency/country scopes, which may render the
+// polygon) or the projected one the all-items feed uses, where
+// boundary_geojson is absent from the row entirely -- see
+// getAllOpenLocationsFlagged in packages/db. Spelled as an OPTIONAL column
+// rather than a union so the single truthiness test below keeps working
+// unchanged on both: a column that was never selected reads as undefined,
+// which is falsy exactly as a NULL column is, and the all-items feed passes
+// includeBoundary=false in any case.
+type GeojsonLocationRow = Omit<FoodbankLocationRow, "boundary_geojson"> & { boundary_geojson?: string | null };
+
 function locationFeature(
-  location: FoodbankLocationRow,
+  location: GeojsonLocationRow,
   locale: string,
   includeAddress: boolean,
   includeBoundary: boolean,
@@ -194,14 +205,23 @@ export async function buildGeojsonResponse(session: Session, locale: string, sco
   const includeBoundary = !allItems && scope.kind !== "country";
 
   let foodbanks: FoodbankRow[] = [];
-  let locations: FoodbankLocationRow[] = [];
+  let locations: GeojsonLocationRow[] = [];
   let donationpoints: DonationPointRow[] = [];
   let boundaryFeature: string | null = null;
 
   if (scope.kind === "all") {
+    // getAllOpenLocationsFlagged, NOT getAllOpenLocations: `includeBoundary`
+    // is false on this scope (see its own comment above), so the ~2,000
+    // boundary_geojson blobs the wide query pulls are read by nothing here.
+    // Measured against production D1: 3,466,212 fewer bytes of result
+    // payload, and a median 161 ms -> 99 ms over 7 interleaved runs of each,
+    // on the second-slowest route on the site.
+    // rows_read is unchanged. The other four scopes stay on the wide query
+    // because they DO render the polygon (or, for country, because their
+    // rows are a small country-filtered subset either way).
     [foodbanks, locations, donationpoints] = await Promise.all([
       getAllOpenFoodbanks(session),
-      getAllOpenLocations(session),
+      getAllOpenLocationsFlagged(session),
       getAllOpenDonationPoints(session),
     ]);
   } else if (scope.kind === "country") {

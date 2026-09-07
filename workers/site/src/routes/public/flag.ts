@@ -5,8 +5,7 @@ import type { AppEnv } from "../../types";
 import { elapsedMs } from "../../middleware/serverTiming";
 import { EMAIL_RE, isSingleLine, isValidHttpUrl } from "@givefood/models";
 import { redactedKeyValueLines, sendEmail } from "../../lib/email";
-import { issueCsrfToken } from "../../lib/csrf";
-import { verifyHumanGate } from "./humanGate";
+import { validateTurnstile } from "../../lib/turnstile";
 
 // givefood `flag` (GET/POST /flag/, i18n-patterned -- givefood/urls.py:30).
 // Ported from givefood/views.py:1099-1131 (flag()), plus human()'s already-
@@ -14,15 +13,36 @@ import { verifyHumanGate } from "./humanGate";
 // attribute posts through first, same as register_foodbank and the wfbn
 // subscribe form.
 //
-// CSRF added during the port, not carried over: Django's real flag() has
-// @cache_page only -- no @anonymous_csrf, and flag.html renders no
-// {% csrf_token %} tag at all (verified directly against both files).
-// Combined with CsrfViewMiddleware being globally disabled
-// (givefood/settings.py:97), this view is genuinely CSRF-unprotected in
-// production today. Closed here rather than reproduced, consistent with
-// WP 4.6's own precedent (gfwrite's real Django view had no CSRF either,
-// and PLAN.md's own callout there was explicit that it's "a defect to fix,
-// not behaviour to preserve").
+// NO CSRF ON THIS ROUTE, AND THAT IS DELIBERATE (issue #40). The port
+// originally added one -- Django's real flag() has @cache_page only, no
+// @anonymous_csrf, flag.html renders no {% csrf_token %} tag at all, and
+// CsrfViewMiddleware is commented out at givefood/settings.py:97, so the
+// token was genuinely new here rather than carried over. It cost more than
+// it bought: a per-visitor hidden field makes every render unshareable, so
+// /flag/ -- 16.94% of the zone's 200s, the busiest single page on the site
+// -- had to be pinned uncacheable with middleware/noStore.ts, and every one
+// of those 13,117 requests/day executed the Worker and served 2,744 brotli
+// bytes from origin that the edge could have answered.
+//
+// What is given up is close to nothing. /flag/ is unauthenticated, holds no
+// per-user state, and its only effect is emailing mail@givefood.org.uk; a
+// forger gains nothing they could not get by submitting the form themselves,
+// beyond borrowing the victim's IP for the email body. Turnstile is what
+// actually stops automated abuse here, and it is untouched below.
+//
+// THE OPT-OUT IS LOCAL, ON PURPOSE. verifyHumanGate() (./humanGate.ts) is
+// shared with registerFoodbank.ts, so relaxing IT would silently drop CSRF
+// from /register-foodbank/ too. This route therefore calls
+// validateTurnstile() directly -- the identical second half of that gate,
+// with the same secret and the same field -- and humanGate.ts stays exactly
+// as it was for its other caller.
+//
+// BOTH HALVES OF THIS SHIP TOGETHER OR NEITHER DOES. If the token left the
+// HTML while the gate still required it, every legitimate submission would
+// fail verifyCsrf, redirect to ?turnstilefail=true and discard what the
+// visitor typed -- the exact failure middleware/pageCacheControl.ts records
+// reproducing on production on 2026-09-07. The companion edit is the removal
+// of the /flag/ noStore mounts in index.ts.
 function pageContext(c: Context<AppEnv>, path: string, locale: "en" | "cy" | "ga" | "gd") {
   return {
     ...buildPageContext({ path, pageTranslatable: true, locale, unprefixedPath: c.get("pathAfterPrefix"), isFlagPage: true }),
@@ -60,7 +80,11 @@ export async function publicFlag(c: Context<AppEnv>): Promise<Response> {
 
   if (c.req.method === "POST") {
     const body = await c.req.parseBody();
-    const gateOk = await verifyHumanGate(c, body);
+    // verifyHumanGate() minus its verifyCsrf() half -- see the header note.
+    // The template still emits a `csrf_token` hidden field (empty now, and
+    // relayed back through /human/ as empty); nothing reads it.
+    const turnstileToken = typeof body["cf-turnstile-response"] === "string" ? body["cf-turnstile-response"] : "";
+    const gateOk = await validateTurnstile(c.env.TURNSTILE_SECRET, turnstileToken);
 
     if (!gateOk) {
       return c.redirect(`${urlForLocale(locale, "flag")}?turnstilefail=true`, 302);
@@ -73,7 +97,6 @@ export async function publicFlag(c: Context<AppEnv>): Promise<Response> {
     };
 
     if (!validateFlag(values)) {
-      const csrfToken = await issueCsrfToken(c, c.env.CSRF_SECRET);
       const html = await render(
         "public/flag.njk",
         {
@@ -82,7 +105,7 @@ export async function publicFlag(c: Context<AppEnv>): Promise<Response> {
           form_error: true,
           send_failed: false,
           form_values: values,
-          csrf_token: csrfToken,
+          csrf_token: "",
         },
         locale,
       );
@@ -98,7 +121,6 @@ export async function publicFlag(c: Context<AppEnv>): Promise<Response> {
     });
 
     if (!sent) {
-      const csrfToken = await issueCsrfToken(c, c.env.CSRF_SECRET);
       const html = await render(
         "public/flag.njk",
         {
@@ -107,7 +129,7 @@ export async function publicFlag(c: Context<AppEnv>): Promise<Response> {
           form_error: false,
           send_failed: true,
           form_values: values,
-          csrf_token: csrfToken,
+          csrf_token: "",
         },
         locale,
       );
@@ -119,8 +141,15 @@ export async function publicFlag(c: Context<AppEnv>): Promise<Response> {
 
   const done = c.req.query("thanks") === "1";
   const turnstilefail = c.req.query("turnstilefail") === "true";
-  const csrfToken = await issueCsrfToken(c, c.env.CSRF_SECRET);
 
+  // NOTHING PER-VISITOR BELOW THIS LINE, which is the whole point: no
+  // issueCsrfToken() call means no `csrfIssued` flag and no Set-Cookie, so
+  // middleware/pageCacheControl.ts stamps the response
+  // `public, max-age=300, s-maxage=86400` -- Django's own
+  // @cache_page(SECONDS_IN_DAY) on flag() (givefood/views.py:1098), reached
+  // through that middleware's fallthrough with no rule of its own.
+  // /frag/ip-address/ is a client-side data-include, not server-rendered
+  // here, so the visitor's IP never enters this HTML.
   const html = await render(
     "public/flag.njk",
     {
@@ -130,7 +159,7 @@ export async function publicFlag(c: Context<AppEnv>): Promise<Response> {
       form_error: false,
       send_failed: false,
       form_values: emptyFormValues(),
-      csrf_token: csrfToken,
+      csrf_token: "",
     },
     locale,
   );

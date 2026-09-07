@@ -2,7 +2,10 @@ import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { MIGRATIONS_SQL as SCHEMA } from "./schema.testkit";
 import {
   getAllFoodbanks,
+  getAllOpenFoodbankSlugs,
+  getAllOpenFoodbankSlugsWithNames,
   getAllOpenFoodbanks,
+  getAllOpenFoodbanksForSitemap,
   getFoodbankBySlug,
   getFoodbankIdBySlug,
   getFoodbankIdByUuid,
@@ -163,6 +166,16 @@ interface FoodbankSeed {
   url?: string;
   isSchool?: 0 | 1 | null;
   placeHasPhoto?: 0 | 1 | null;
+  // The five extra columns sitemap.xml's <url> loop branches on. Only these
+  // and rssUrl decide which of a food bank's six possible entries the sitemap
+  // emits, so a projection that dropped one would change the BODY, not just
+  // the row shape -- see the getAllOpenFoodbanksForSitemap block below.
+  // Defaults match the pre-existing hardcoded values so no existing test moves.
+  newsUrl?: string | null;
+  charityName?: string | null;
+  noLocations?: number;
+  noDonationPoints?: number | null;
+  daysBetweenNeeds?: number;
 }
 
 // Fills every NOT NULL column the real table declares, so a seeded row is one
@@ -192,16 +205,21 @@ function seedFoodbank(seed: FoodbankSeed): void {
     url = `https://${slug}.foodbank.org.uk/`,
     isSchool = null,
     placeHasPhoto = null,
+    newsUrl = null,
+    charityName = null,
+    noLocations = 0,
+    noDonationPoints = null,
+    daysBetweenNeeds = 14,
   } = seed;
 
   db.prepare(
     `INSERT INTO foodbank (
        id, uuid, name, slug, address, postcode, country, lat_lng, latitude, longitude,
-       delivery_address, charity_just_foodbank, contact_email, url, shopping_list_url,
-       rss_url, place_has_photo, parliamentary_constituency_id,
-       address_is_administrative, is_closed, is_school, no_locations, days_between_needs,
-       latest_need_id, created, modified
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, 0, ?, ?, 0, 14, ?, ?, ?)`,
+       delivery_address, charity_just_foodbank, charity_name, contact_email, url, shopping_list_url,
+       rss_url, news_url, place_has_photo, parliamentary_constituency_id,
+       address_is_administrative, is_closed, is_school, no_locations, no_donation_points,
+       days_between_needs, latest_need_id, created, modified
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     id,
     uuid,
@@ -214,14 +232,19 @@ function seedFoodbank(seed: FoodbankSeed): void {
     latitude,
     longitude,
     deliveryAddress,
+    charityName,
     `info@${slug}.foodbank.org.uk`,
     url,
     `https://${slug}.foodbank.org.uk/shopping-list/`,
     rssUrl,
+    newsUrl,
     placeHasPhoto,
     constituencyId,
     isClosed,
     isSchool,
+    noLocations,
+    noDonationPoints,
+    daysBetweenNeeds,
     latestNeedId,
     // Django's own timestamp format, six fractional digits -- see
     // 0022_normalise_timestamps.sql. Not toISOString(): these columns are TEXT
@@ -545,6 +568,168 @@ describe("getAllOpenFoodbanks", () => {
     expect(row!.is_school).toBe(true);
     expect(row!.place_has_photo).toBe(false);
     expect(row!.is_closed).toBe(false);
+  });
+});
+
+// ===========================================================================
+// getAllOpenFoodbanksForSitemap / getAllOpenFoodbankSlugs /
+// ...SlugsWithNames -- the three column-projected variants behind
+// /sitemap.xml, /md/sitemap.xml and /md/sitemap.md
+// ===========================================================================
+//
+// These exist ONLY to stop `SELECT *` dragging 3.59 MB of D1 result payload
+// per render out of the 1,023 open food banks to read seven short columns
+// (measured on production: 3,590,727 -> 279,644 bytes, a median 94 -> 8 ms,
+// rows_read identical at 1,024). So the thing worth asserting is not that
+// they return rows -- it is that they return the SAME rows, in the SAME
+// order, with the SAME values as the `SELECT *` they replaced. A projection
+// that silently dropped `no_donation_points` would still return 1,023 rows
+// and still render a sitemap; it would just be missing 700-odd <url>
+// entries, which no status code and no log line would ever mention.
+//
+// Order matters as much as content: none of these queries has an ORDER BY
+// (neither did the wide one), the sitemap emits rows in arrival order, and a
+// projection narrow enough to be answered from an index instead of the table
+// would come back in a different order. Every case below compares against
+// getAllOpenFoodbanks over the same fixture rather than against a
+// hand-written expectation, so "the output did not move" is the assertion.
+
+describe("getAllOpenFoodbanksForSitemap", () => {
+  // The seven columns sitemap.xml's loop reads, and no eighth. Pinned by
+  // name because the failure of a MISSING one is invisible: the row is still
+  // there, the branch that reads it just goes quiet.
+  it("returns exactly the seven columns the sitemap loop branches on", async () => {
+    seedFoodbank({ id: 1, slug: "salisbury" });
+
+    const [row] = await getAllOpenFoodbanksForSitemap(session);
+
+    expect(Object.keys(row!).sort()).toEqual(
+      ["charity_name", "days_between_needs", "news_url", "no_donation_points", "no_locations", "rss_url", "slug"].sort(),
+    );
+    expect(Object.keys(row!)).not.toContain("boundary_geojson");
+    expect(Object.keys(row!)).not.toContain("charity_objectives");
+  });
+
+  // THE PARITY CHECK. Every value the sitemap can branch on, set to
+  // something that is neither the column default nor falsy, and compared
+  // against what `SELECT *` returned for the same rows. Three of these are
+  // the ones a careless projection loses first, and each has its own visible
+  // consequence in the emitted XML:
+  //   days_between_needs -> the <changefreq> of the food bank's own page
+  //   no_locations / no_donation_points -> whether those two <url>s exist
+  //   rss_url / news_url / charity_name -> whether the news and charity
+  //     <url>s exist
+  it("returns the same values, for the same rows, in the same order, as SELECT *", async () => {
+    seedFoodbank({
+      id: 1,
+      slug: "salisbury",
+      daysBetweenNeeds: 3,
+      noLocations: 4,
+      noDonationPoints: 75,
+      rssUrl: "https://salisbury.foodbank.org.uk/feed/",
+      newsUrl: "https://salisbury.foodbank.org.uk/news/",
+      charityName: "Salisbury Foodbank Trust",
+    });
+    // Seeded in an order that is NOT the slug order, and with the closed row
+    // between the two open ones, so the expected sequence below is neither
+    // alphabetical nor "the order the fixture inserted them".
+    seedFoodbank({ id: 3, slug: "bath", daysBetweenNeeds: 21, noLocations: 0, noDonationPoints: null });
+    seedFoodbank({ id: 2, slug: "closed-town", isClosed: 1, noLocations: 9 });
+
+    const wide = await getAllOpenFoodbanks(session);
+    const narrow = await getAllOpenFoodbanksForSitemap(session);
+
+    expect(narrow).toEqual(
+      wide.map((row) => ({
+        slug: row.slug,
+        days_between_needs: row.days_between_needs,
+        no_locations: row.no_locations,
+        no_donation_points: row.no_donation_points,
+        rss_url: row.rss_url,
+        news_url: row.news_url,
+        charity_name: row.charity_name,
+      })),
+    );
+    expect(slugs(narrow)).toEqual(["salisbury", "bath"]);
+  });
+
+  // no_donation_points is NULLABLE in production where no_locations is not,
+  // and sitemaps.ts branches on it with `Boolean(...)` precisely so NULL and
+  // 0 behave alike. NULL must therefore survive the projection AS null --
+  // coerced to 0 it would still be falsy today, but the column is read as a
+  // count elsewhere and "unknown" is not "none".
+  it("preserves a NULL no_donation_points rather than coercing it", async () => {
+    seedFoodbank({ id: 1, slug: "salisbury", noDonationPoints: null });
+
+    const [row] = await getAllOpenFoodbanksForSitemap(session);
+
+    expect(row!.no_donation_points).toBeNull();
+  });
+
+  it("excludes closed food banks", async () => {
+    seedFoodbank({ id: 1, slug: "salisbury" });
+    seedFoodbank({ id: 2, slug: "closed-town", isClosed: 1 });
+
+    expect(sortedSlugs(await getAllOpenFoodbanksForSitemap(session))).toEqual(["salisbury"]);
+  });
+
+  // The whole reason this function exists. Asserted on the SQL the module
+  // actually sent, not on a string retyped here: a "tidy-up" that put
+  // `SELECT *` back would leave every other test in this block green.
+  it("names its columns instead of issuing SELECT *", async () => {
+    await getAllOpenFoodbanksForSitemap(session);
+
+    expect(calls[0]!.sql).not.toContain("*");
+    expect(calls[0]!.sql).toContain("SELECT slug, days_between_needs");
+  });
+});
+
+describe("getAllOpenFoodbankSlugs / getAllOpenFoodbankSlugsWithNames", () => {
+  // md_sitemap()'s loop reads .slug and nothing else, so this returns bare
+  // strings, matching getAllConstituencySlugs in constituencies.ts. Order is
+  // the wide query's order for the same reason as above -- /md/sitemap.xml
+  // lists food banks in arrival order.
+  it("returns the slugs of the open food banks, in SELECT * order", async () => {
+    seedFoodbank({ id: 1, slug: "salisbury" });
+    seedFoodbank({ id: 3, slug: "bath" });
+    seedFoodbank({ id: 2, slug: "closed-town", isClosed: 1 });
+
+    const wide = await getAllOpenFoodbanks(session);
+
+    expect(await getAllOpenFoodbankSlugs(session)).toEqual(wide.map((row) => row.slug));
+    expect(await getAllOpenFoodbankSlugs(session)).toEqual(["salisbury", "bath"]);
+  });
+
+  // md_sitemap_md() renders `[{{ foodbank.name }}](...)`, so the name is the
+  // LINK TEXT -- drop it and every food bank on /md/sitemap.md becomes an
+  // empty-labelled link, a 200 with a page nobody can read. Django narrows
+  // this queryset identically (`.only('slug', 'name')`, views.py:793).
+  it("returns slug AND name, matching SELECT * row for row", async () => {
+    // Ids ascend while names descend, so rowid order and name order are two
+    // different sequences: an ORDER BY name quietly added here would reorder
+    // /md/sitemap.md's whole food-bank section, and without this arrangement
+    // the comparison below would agree with it.
+    seedFoodbank({ id: 1, slug: "salisbury", name: "Salisbury Foodbank" });
+    seedFoodbank({ id: 3, slug: "bath", name: "Bath Foodbank" });
+    seedFoodbank({ id: 2, slug: "closed-town", name: "Closed Town Foodbank", isClosed: 1 });
+
+    const wide = await getAllOpenFoodbanks(session);
+
+    expect(await getAllOpenFoodbankSlugsWithNames(session)).toEqual(
+      wide.map((row) => ({ slug: row.slug, name: row.name })),
+    );
+    expect(await getAllOpenFoodbankSlugsWithNames(session)).toEqual([
+      { slug: "salisbury", name: "Salisbury Foodbank" },
+      { slug: "bath", name: "Bath Foodbank" },
+    ]);
+  });
+
+  it("both name their columns instead of issuing SELECT *", async () => {
+    await getAllOpenFoodbankSlugs(session);
+    await getAllOpenFoodbankSlugsWithNames(session);
+
+    expect(calls[0]!.sql).toBe("SELECT slug FROM foodbank WHERE is_closed = 0");
+    expect(calls[1]!.sql).toBe("SELECT slug, name FROM foodbank WHERE is_closed = 0");
   });
 });
 

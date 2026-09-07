@@ -122,6 +122,55 @@ export async function getAllOpenFoodbanks(session: Session): Promise<FoodbankRow
   return result.results.map(mapFoodbankRow);
 }
 
+// sitemap.xml's food-bank loop, and only that -- the seven columns it
+// reads. Django narrows the same queryset the same way
+// (`Foodbank.objects.all().exclude(is_closed=True).only('slug',
+// 'days_between_needs', 'no_locations', 'no_donation_points', 'rss_url',
+// 'news_url', 'charity_name', 'facebook_page')`, givefood/views.py:660-669);
+// `facebook_page` is in Django's list but read by nothing in either the
+// Python template or ours, so it is not fetched here.
+//
+// Same narrow-column reasoning as locations.ts's getAllOpenLocationSlugs.
+// Measured against production D1: `SELECT *` over the 1,023 open food banks
+// serialises 3,590,727 bytes in a median 94 ms (80-112, n=5) where these
+// seven columns are 279,644 bytes in a median 8 ms (7-12). rows_read is
+// UNCHANGED at 1,024, so this is wire bytes and latency, not D1 billing.
+export interface FoodbankSitemapRow {
+  slug: string;
+  days_between_needs: number;
+  no_locations: number;
+  no_donation_points: number | null; // nullable in production, unlike no_locations -- see sitemaps.ts's own comment
+  rss_url: string | null;
+  news_url: string | null;
+  charity_name: string | null;
+}
+export async function getAllOpenFoodbanksForSitemap(session: Session): Promise<FoodbankSitemapRow[]> {
+  const result = await session
+    .prepare(
+      "SELECT slug, days_between_needs, no_locations, no_donation_points, rss_url, news_url, charity_name " +
+        "FROM foodbank WHERE is_closed = 0",
+    )
+    .all();
+  return result.results as unknown as FoodbankSitemapRow[];
+}
+
+// md_sitemap()'s food-bank loop reads only .slug, so this is narrower still
+// than Django's own `.only('slug', 'name')` (givefood/views.py:752) -- the
+// same choice locations.ts already makes between getAllOpenLocationSlugs
+// and ...WithNames for this exact pair of views. Returns bare strings,
+// matching getAllConstituencySlugs in constituencies.ts.
+export async function getAllOpenFoodbankSlugs(session: Session): Promise<string[]> {
+  const result = await session.prepare("SELECT slug FROM foodbank WHERE is_closed = 0").all();
+  return result.results.map((r) => (r as { slug: string }).slug);
+}
+
+// md_sitemap_md()'s variant -- `name` for the link text, matching Django's
+// `.only('slug', 'name')` (givefood/views.py:793) exactly.
+export async function getAllOpenFoodbankSlugsWithNames(session: Session): Promise<Array<{ slug: string; name: string }>> {
+  const result = await session.prepare("SELECT slug, name FROM foodbank WHERE is_closed = 0").all();
+  return result.results as unknown as Array<{ slug: string; name: string }>;
+}
+
 // WP 2.5 perf: the id+coordinate candidate set for ranking a nearest-N
 // food bank search (gfapi1 `api_foodbank_search`, gfapi2 `foodbank_search`,
 // `Foodbank.nearby()`) -- see queryCoordinates's own comment in types.ts.

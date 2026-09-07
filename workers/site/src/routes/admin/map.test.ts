@@ -445,15 +445,17 @@ describe("adminMap -- reaching the page", () => {
   // through `_()` in maplegend.njk -- must not start translating themselves for
   // an admin whose browser asks for Welsh.
   //
-  // `Vary: Accept-Language` is nonetheless appended, on a response that ignores
-  // Accept-Language entirely. That is not a defect: resolveLanguage adds it for
-  // any first path segment that is neither a registered prefix nor "en", which
-  // is what Django emits for the same URLs, and it costs nothing here because
-  // noStore has already made the response unstoreable. Pinned in the same
-  // assertion as `Vary: Cookie` so that the two -- one from noStore, one from
-  // resolveLanguage, appended to the same header by different middleware -- are
-  // known to coexist rather than overwrite one another.
-  it("is English whatever the browser asks for, and varies on a header it never reads", async () => {
+  // `Vary` carries `Cookie` and ONLY `Cookie`. It used to read
+  // "Cookie, Accept-Language": resolveLanguage appended the second half for any
+  // first path segment that was neither a registered prefix nor "en", matching
+  // what Django emits for the same URLs. Issue #39 removed that append outright
+  // -- the header cost an edge-cache object per Accept-Language string across
+  // the whole public site for byte-identical content -- so what survives here is
+  // noStore's half alone, which is the half that matters on an admin page.
+  // Still pinned as an exact string rather than a `toContain`, because the two
+  // middlewares write the same header and this is the assertion that would
+  // notice either of them clobbering the other.
+  it("is English whatever the browser asks for, and varies only on the cookie", async () => {
     const res = await app.fetch(
       new Request(`${ORIGIN}/admin/map/`, { headers: { Cookie: `__Host-gfsession=${SESSION_ID}`, "Accept-Language": "cy, en;q=0.5" } }),
       env(),
@@ -463,7 +465,7 @@ describe("adminMap -- reaching the page", () => {
 
     expect(res.status).toBe(200);
     expect(res.headers.get("Content-Language")).toBe("en");
-    expect(res.headers.get("Vary")).toBe("Cookie, Accept-Language");
+    expect(res.headers.get("Vary")).toBe("Cookie");
     // maplegend.njk's rows come from the catalogue, so an accidental switch to
     // content negotiation shows up here as Welsh rather than as a header.
     expect(body).toContain("Organisation");

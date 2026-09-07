@@ -143,10 +143,19 @@ app.use("/auth/*", noStore);
 app.use("/needs/at/*/updates/*", noStore);
 app.use("/write/to/*/email/done/*", noStore);
 
-// EVERY PUBLIC PAGE THAT RENDERS A CSRF TOKEN. These four templates embed
-// csrf_token in a form (public/flag.njk, public/register_foodbank.njk,
-// write/constituency.njk, write/email.njk), which makes the response
-// per-visitor and unshareable.
+// EVERY PUBLIC PAGE THAT RENDERS A CSRF TOKEN. These templates embed a
+// csrf_token in a form (public/register_foodbank.njk, write/constituency.njk,
+// write/email.njk), which makes the response per-visitor and unshareable.
+//
+// public/flag.njk USED TO BE ON THIS LIST and no longer is (issue #40).
+// routes/public/flag.ts stopped issuing a token at all -- Django's flag()
+// never had one, its form is unauthenticated, and Turnstile is what actually
+// guards it -- so the page is now identical for every visitor and goes back
+// to the edge. It was 16.94% of the zone's 200s (13,117/day) held at
+// cf-cache-status BYPASS by the mount that stood here. THE TWO EDITS ARE ONE
+// CHANGE: re-adding this mount without re-adding the token merely wastes the
+// cache, but removing the token while this mount stands, or vice versa, is
+// how the failure below gets reproduced.
 //
 // WHY noStore AND NOT JUST WITHHOLDING Cache-Control. Removing the header is
 // not sufficient, and believing it was is what left this live: the zone
@@ -168,12 +177,10 @@ app.use("/write/to/*/email/done/*", noStore);
 // directly, not assumed. Every route here is registered WITH the slash
 // (Django's APPEND_SLASH shape), so the mounts must carry it too; getting
 // this wrong fails open, silently, into exactly the bug above.
-app.use("/flag/", noStore);
 app.use("/register-foodbank/", noStore);
 app.use("/write/to/*", noStore);
 for (const locale of LOCALES) {
   if (locale === "en") continue;
-  app.use(`/${locale}/flag/`, noStore);
   app.use(`/${locale}/register-foodbank/`, noStore);
 }
 

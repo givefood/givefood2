@@ -52,14 +52,36 @@ export interface MostViewedRow {
 // trailing 7 days (today inclusive), summed and ranked. `day` is stored
 // TEXT 'YYYY-MM-DD' (0003_homepage_data.sql), which sorts/compares
 // correctly as plain text for ISO dates.
+//
+// AGGREGATE FIRST, JOIN SECOND (issue #43). The obvious spelling --
+// `FROM foodbankhit h JOIN foodbank f ... GROUP BY h.foodbank_id` -- makes
+// SQLite look `foodbank` up once per HIT ROW, before grouping, and then throw
+// almost all of those lookups away: measured on production D1 (2026-09-07,
+// window 2026-08-31..2026-09-07) that is 6,177 index rows counted twice (range
+// scan + GROUP BY b-tree) + 6,177 rowid lookups + 1,051 groups + 8 = 19,582
+// rows_read for eight names. Doing the SUM in a subquery and joining only the
+// `limit` survivors reads 13,413 and halves the SQL time (medians over five
+// interleaved runs: 18.1ms -> 8.3ms). The result set was byte-identical.
+//
+// ONE BEHAVIOURAL DIFFERENCE, and it is not cosmetic: the join that drops hit
+// rows whose food bank has been deleted now happens AFTER the LIMIT, so an
+// orphaned hit ranking inside the top `limit` consumes a slot and this can
+// return FEWER than `limit` rows where the pre-#43 query returned `limit`.
+// D1 has no foreign keys (PLAN.md §4.5) and `foodbankhit` is ETL-loaded, so
+// that is reachable in principle; on production all 1,051 grouped foodbank_ids
+// resolve today. homepage.test.ts pins it rather than leaving it to be
+// rediscovered. Do NOT "fix" it by moving the join back inside -- that is the
+// 6,000 rows this exists to avoid.
 export async function getMostViewed(session: Session, sinceDay: string, untilDay: string, limit: number): Promise<MostViewedRow[]> {
   const result = await session
     .prepare(
-      "SELECT f.name, f.slug FROM foodbankhit h " +
-        "JOIN foodbank f ON f.id = h.foodbank_id " +
-        "WHERE h.day >= ? AND h.day <= ? " +
-        "GROUP BY h.foodbank_id " +
-        "ORDER BY SUM(h.hits) DESC LIMIT ?",
+      "SELECT f.name, f.slug FROM (" +
+        "SELECT foodbank_id, SUM(hits) AS total_hits FROM foodbankhit " +
+        "WHERE day >= ? AND day <= ? " +
+        "GROUP BY foodbank_id " +
+        "ORDER BY total_hits DESC LIMIT ?" +
+        ") t JOIN foodbank f ON f.id = t.foodbank_id " +
+        "ORDER BY t.total_hits DESC",
     )
     .bind(sinceDay, untilDay, limit)
     .all();
@@ -162,6 +184,21 @@ export async function getRecentlyUpdatedByCountry(
 // twin of index()'s `most_viewed` above (same trailing-7-day hit window),
 // filtered by the denormalised `country` column the same way
 // getRecentlyUpdatedByCountry is.
+//
+// Same aggregate-then-join shape as getMostViewed (issue #43), but the inner
+// join STAYS INSIDE: `country` lives on `foodbank`, so the filter cannot be
+// applied without it and the pre-group lookups cannot be avoided. rows_read is
+// therefore unchanged bar the outer join's `limit` extra lookups (England
+// 18,047 -> 18,057, measured), and only the ranking gets cheaper -- SQLite
+// sorts and truncates two integer columns instead of dragging name/slug
+// through the temp b-tree. Medians over five interleaved production runs:
+// 12.5ms -> 10.6ms for England, with the new shape faster in 4 of 5 pairs and
+// a tie in the fifth. A smaller win than getMostViewed's, and it is kept for
+// the ranking cost and for the two statements staying legible as a pair.
+//
+// Unlike getMostViewed, this one has no orphaned-hit caveat: the inner join is
+// still inside the LIMIT, so a hit row with no food bank never reaches the
+// ranking and the row count cannot move.
 export async function getMostViewedByCountry(
   session: Session,
   sinceDay: string,
@@ -171,11 +208,14 @@ export async function getMostViewedByCountry(
 ): Promise<MostViewedRow[]> {
   const result = await session
     .prepare(
-      "SELECT f.name, f.slug FROM foodbankhit h " +
-        "JOIN foodbank f ON f.id = h.foodbank_id " +
-        "WHERE h.day >= ? AND h.day <= ? AND f.country = ? " +
+      "SELECT f.name, f.slug FROM (" +
+        "SELECT h.foodbank_id AS foodbank_id, SUM(h.hits) AS total_hits " +
+        "FROM foodbankhit h JOIN foodbank fb ON fb.id = h.foodbank_id " +
+        "WHERE h.day >= ? AND h.day <= ? AND fb.country = ? " +
         "GROUP BY h.foodbank_id " +
-        "ORDER BY SUM(h.hits) DESC LIMIT ?",
+        "ORDER BY total_hits DESC LIMIT ?" +
+        ") t JOIN foodbank f ON f.id = t.foodbank_id " +
+        "ORDER BY t.total_hits DESC",
     )
     .bind(sinceDay, untilDay, countryName, limit)
     .all();
