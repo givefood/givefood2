@@ -1,5 +1,14 @@
 import type { Context } from "hono";
-import { getDonationPointBySlugs, getFoodbankBySlug, getFoodbankLocationBySlugs, hasServiceArea } from "@givefood/db";
+// Both PAGE handlers below want has_service_area and so take the variant that
+// batches its count; the openinghours FRAGMENT renders no map and no
+// disclaimer, so it keeps the plain two-statement lookup rather than paying a
+// third statement to compute a flag its template never reads.
+import {
+  getDonationPointBySlugs,
+  getFoodbankBySlug,
+  getFoodbankBySlugWithServiceArea,
+  getFoodbankLocationBySlugs,
+} from "@givefood/db";
 import { buildPageContext, render } from "@givefood/templates";
 import { urlForLocale } from "@givefood/urls";
 import type { AppEnv } from "../../types";
@@ -24,8 +33,15 @@ export async function wfbnFoodbankLocation(c: Context<AppEnv>): Promise<Response
   const slug = c.req.param("slug")!;
   const locslug = c.req.param("locslug")!;
   const session = dbSession(c);
-  const foodbank = await getFoodbankBySlug(session, slug);
+  // Three statements, one round trip -- see ../foodbank.ts's twin of this line
+  // for why the count is keyed on the slug. The guard is inside the db
+  // function; this page no longer diverges from the sibling below by omitting
+  // it (github #52, and see the D1-traffic tests).
+  const { foodbank, hasServiceArea: hasServiceAreaValue } = await getFoodbankBySlugWithServiceArea(session, slug);
   if (!foodbank) return c.notFound();
+  // The count above is SPECULATIVE with respect to this 404: an unknown
+  // locslug has already paid for it. One extra rows_read plus this food bank's
+  // own location rows, against a round trip saved on every real page view.
   const location = await getFoodbankLocationBySlugs(session, foodbank.slug, locslug);
   if (!location) return c.notFound();
 
@@ -34,12 +50,9 @@ export async function wfbnFoodbankLocation(c: Context<AppEnv>): Promise<Response
   const locationFullName = `${location.name}, ${fullName}`;
 
   // "" (not "Nothing") null-latestNeed fallback -- see mdFoodbankLocation's
-  // own comment for why. resolveNeedDisplay() and hasServiceArea() are
-  // independent D1 round trips, run concurrently.
-  const [{ changeText, excessChangeText, getChangeText, excessTextList }, hasServiceAreaValue] = await Promise.all([
-    resolveNeedDisplay(session, foodbank, locale),
-    hasServiceArea(session, foodbank.id),
-  ]);
+  // own comment for why. No Promise.all left to run this inside: its former
+  // partner, the service-area count, is in the batch at the top of the handler.
+  const { changeText, excessChangeText, getChangeText, excessTextList } = await resolveNeedDisplay(session, foodbank, locale);
 
   // location.latitude/.longitude are nullable in production (unlike
   // lat_lng, NOT NULL) -- Django's own latt()/long() always derive from
@@ -107,7 +120,8 @@ export async function wfbnFoodbankDonationpoint(c: Context<AppEnv>): Promise<Res
   const slug = c.req.param("slug")!;
   const dpslug = c.req.param("dpslug")!;
   const session = dbSession(c);
-  const foodbank = await getFoodbankBySlug(session, slug);
+  // Three statements, one round trip -- see wfbnFoodbankLocation above.
+  const { foodbank, hasServiceArea: hasServiceAreaValue } = await getFoodbankBySlugWithServiceArea(session, slug);
   if (!foodbank) return c.notFound();
   const donationpoint = await getDonationPointBySlugs(session, slug, dpslug);
   if (!donationpoint) return c.notFound();
@@ -115,14 +129,13 @@ export async function wfbnFoodbankDonationpoint(c: Context<AppEnv>): Promise<Res
   const locale = c.get("lang") as "en" | "cy" | "ga" | "gd";
   const fullName = fullNameLocaleAware(foodbank.name, foodbank.alt_name, locale);
 
-  // resolveNeedDisplay() and hasServiceArea() are independent D1 round
-  // trips, run concurrently. Guarded like ../locations.ts's
-  // wfbnFoodbankDonationpoints sibling (this page is reachable even for a
-  // food bank with no_locations === 0).
-  const [{ changeText, excessChangeText, getChangeText, excessTextList }, hasServiceAreaValue] = await Promise.all([
-    resolveNeedDisplay(session, foodbank, locale),
-    foodbank.no_locations !== 0 ? hasServiceArea(session, foodbank.id) : Promise.resolve(false),
-  ]);
+  // The `no_locations === 0` short circuit this handler used to spell out
+  // inline still applies -- it is inside getFoodbankBySlugWithServiceArea now,
+  // shared with the two sibling pages instead of copied into each. This page is
+  // reachable for a food bank with no_locations === 0 (it is addressed by a
+  // donation point, not by the counter), so the guard is live here, not
+  // theoretical.
+  const { changeText, excessChangeText, getChangeText, excessTextList } = await resolveNeedDisplay(session, foodbank, locale);
   const hasNeed = changeText !== "Unknown" && changeText !== "Nothing" && changeText !== "Facebook";
 
   // donationpoint.latitude/.longitude are nullable in production (unlike

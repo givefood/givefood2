@@ -567,11 +567,11 @@ describe("resolveNeedDisplay and the sentinel translation quirk", () => {
 
 describe("resolveNeedDisplay round trips and failure", () => {
   it("issues at most one D1 query, for the whole result", async () => {
-    // Both display fields come off one row. The module's header tells
-    // callers to Promise.all this against hasServiceArea() precisely because
-    // it is ONE round trip they can overlap; a second query hidden in here
-    // would add uncached latency to all three pages and be invisible in a
-    // diff.
+    // Both display fields come off one row. Since github #52 moved the
+    // has_service_area count into the batched food bank lookup this is the
+    // ONLY query left on all three pages that call it, so a second query
+    // hidden in here would be a whole extra serial round trip -- uncached
+    // latency on the busiest page family on the site, and invisible in a diff.
     await resolveNeedDisplay(SESSION, foodbank(NEED), "cy");
     expect(db.getNeedTranslation).toHaveBeenCalledTimes(1);
   });

@@ -250,6 +250,111 @@ export async function getFoodbankBySlug(session: Session, slug: string): Promise
   return mapFoodbankBySlugResults(results[0]!.results, results[1]!.results);
 }
 
+// `Foodbank.has_service_area()`'s COUNT(*), KEYED BY SLUG so that it can ride
+// in the batch above instead of waiting for the id that batch is fetching
+// (github #52 item 3).
+//
+// locations.ts's hasServiceArea() takes a foodbank_id, which is exactly why
+// the three page handlers that use it could not stop paying a round trip for
+// it: /needs/at/<slug>/, /<locslug>/ and /donationpoint/<dpslug>/ fetch no
+// location rows of their own, so they cannot derive the flag the way
+// wfbn/locations.ts now does -- and they cannot batch an id-keyed count either,
+// because the id arrives in the result of the very batch it would have to
+// travel in. Re-keying it on the slug the caller already holds breaks that
+// circularity: the count becomes independent of the other two statements and
+// all three go out together.
+//
+// THE PLAN IS CLEAN, verified against production D1 (read-only) rather than
+// taken from the issue:
+//   SEARCH l USING INDEX loc_foodbank_slug_idx (foodbank_id=?)
+//   SCALAR SUBQUERY 1
+//     SEARCH foodbank USING COVERING INDEX foodbank_slug_uniq (slug=?)
+// 0.74 ms of SQL for /needs/at/salisbury/, against a ~16-22 ms round trip. The
+// re-probe of the slug costs exactly ONE extra rows_read over the id-keyed
+// spelling -- 10 rather than 9, measured on the same food bank -- because
+// `foodbank_slug_uniq` covers it and the table row is never touched. That is
+// the whole price of the change, and it buys a serialised network wait on the
+// busiest page family on the site.
+//
+// AND IT IS THE SAME COUNT. `foodbank.slug` is UNIQUE (foodbank_slug_uniq), so
+// the scalar subquery yields at most one id and `foodbank_id = (that id)` is
+// the same predicate as `foodbank_id = ?` bound to it. Checked against
+// production data rather than argued: running both spellings for all 1,070
+// food banks and comparing them pairwise returns 0 disagreements.
+const SERVICE_AREA_COUNT_BY_SLUG_SQL =
+  "SELECT COUNT(*) AS n FROM foodbanklocation l " +
+  "WHERE l.foodbank_id = (SELECT id FROM foodbank WHERE slug = ?) " +
+  "AND l.boundary_geojson IS NOT NULL AND l.boundary_geojson != ''";
+
+export interface FoodbankBySlugWithServiceArea {
+  foodbank: FoodbankWithLatestNeed | null;
+  hasServiceArea: boolean;
+}
+
+// getFoodbankBySlug plus `has_service_area`, in the SAME round trip.
+//
+// A SEPARATE FUNCTION, AND NOT A FIELD ON getFoodbankBySlug'S RESULT. That
+// function has ~50 call sites -- gfapi1, gfapi2, gfapi3, every /md/ twin, the
+// RSS feeds, the GeoJSON scope builder and most of /admin/ -- and exactly
+// three of them (wfbn/foodbank.ts and wfbn/locationDetail.ts's two handlers)
+// render this flag. Putting the count into foodbankBySlugStatements would make
+// every one of the other ~47 pay for it: no extra round trip, but a third
+// statement, ~1 + N rows_read and ~0.7 ms of SQL each, on paths that then
+// throw the answer away. D1 bills rows read. So the count is pushed onto a
+// COPY of the shared statement list, by the callers who want it -- the same
+// shape, for the same reason, as getFoodbankBySlugWithOpenCoordinates above.
+// foodbankBySlugStatements and mapFoodbankBySlugResults being factored out is
+// what makes that a three-line addition rather than a third copy of the pair.
+//
+// It also stays off the returned object because `has_service_area` is not a
+// property of the foodbank row: it is a live count over another table, and
+// FoodbankWithLatestNeed is the row shape ~50 sites spread into API response
+// bodies. A key that appeared there would leak into serialised output.
+//
+// THE GUARD, AND IT IS NOT NEGOTIABLE. Django's has_service_area()
+// (givefood/models/foodbank.py:296-302) is:
+//
+//     def has_service_area(self):
+//         if self.no_locations == 0:
+//             return False
+//         locations = FoodbankLocation.objects.filter(foodbank = self)...count()
+//         if locations == 0:
+//             return False
+//         return True
+//
+// The cached counter is checked FIRST and the query is not issued at all. The
+// count now always travels (it has to -- no_locations is a column of the very
+// row this batch is fetching, so nothing can be decided before it lands), but
+// the ANSWER still short-circuits on it, which is the half that is observable.
+// A food bank whose no_locations is a stale 0 while it owns a location with a
+// boundary must render WITHOUT a service area, exactly as Django's does.
+// Deleting `foodbank.no_locations !== 0` below would diverge from the Python
+// on that state, and would also split this port against itself: wfbn/
+// locations.ts:174 applies the same guard to the same flag on the sibling page.
+//
+// There is no such food bank in production today -- 0 of 1,070 rows have
+// no_locations = 0 while owning any location -- so this is parity insurance
+// against a state the admin can create, not a live rendering difference. That
+// is precisely why it needs a test rather than an eyeball.
+export async function getFoodbankBySlugWithServiceArea(
+  session: Session,
+  slug: string,
+): Promise<FoodbankBySlugWithServiceArea> {
+  const statements = foodbankBySlugStatements(session, slug);
+  statements.push(session.prepare(SERVICE_AREA_COUNT_BY_SLUG_SQL).bind(slug));
+  const results = await session.batch(statements);
+  const foodbank = mapFoodbankBySlugResults(results[0]!.results, results[1]!.results);
+  // COUNT(*) always returns exactly one row, even for an unknown slug (the
+  // subquery is NULL, `foodbank_id = NULL` matches nothing, the count is 0),
+  // so this cannot be undefined in practice -- `?? 0` is for the type checker
+  // and for a caller that 404s a moment later anyway.
+  const count = (results[2]!.results[0] as { n: number } | undefined)?.n ?? 0;
+  return {
+    foodbank,
+    hasServiceArea: foodbank !== null && foodbank.no_locations !== 0 && count > 0,
+  };
+}
+
 // gfapi2 `foodbank`'s FIRST WAVE (github #49): the detail endpoint needs this
 // food bank, its latest need, AND -- for `nearby_foodbanks` -- the whole open
 // candidate set to rank against. The third query depends on nothing at all,

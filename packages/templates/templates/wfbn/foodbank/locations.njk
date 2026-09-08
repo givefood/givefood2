@@ -75,7 +75,7 @@
 
             {% for location in locations %}
               <div style="clear:both">
-                {% if location.place_has_photo and not location.boundary_geojson %}
+                {% if location.place_has_photo and not location.has_boundary %}
                   <a href="{{ url('wfbn:foodbank_location', foodbank.slug, location.slug) }}">
                     <picture>
                       <source srcset="{{ url('wfbn-generic:foodbank_location_photo', foodbank.slug, location.slug) }}?s=150&amp;f=avif 150w, {{ url('wfbn-generic:foodbank_location_photo', foodbank.slug, location.slug) }}?s=300&amp;f=avif 300w" type="image/avif" sizes="150px">
@@ -84,7 +84,7 @@
                     </picture>
                   </a>
                 {% endif %}
-                {# Django's boundary_geojson branch (a map-thumbnail image) is omitted: wfbn:foodbank_location_map_size has no url() entry or handler in this port yet #}
+                {# Django's boundary_geojson branch (a map-thumbnail image) is omitted: wfbn:foodbank_location_map_size has no url() entry or handler in this port yet. The gate above reads `has_boundary`, not `boundary_geojson`: Django tests the blob itself, but it runs to 272 kB and nothing on this page prints it, so getLocationsByFoodbankIdFlagged computes the 0/1 flag in SQL and leaves the blob in D1 (github #52). Same truthiness, both spellings of "no boundary" -- NULL and '' -- give 0. #}
                 <a href="{{ url('wfbn:foodbank_location', foodbank.slug, location.slug) }}">{{ location.name }}</a>
                 {% if location.address or location.postcode %}
                   <address>

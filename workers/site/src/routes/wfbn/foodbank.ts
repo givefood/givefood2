@@ -1,5 +1,5 @@
 import type { Context } from "hono";
-import { getFoodbankBySlug, hasServiceArea } from "@givefood/db";
+import { getFoodbankBySlugWithServiceArea } from "@givefood/db";
 import { buildPageContext, render } from "@givefood/templates";
 import { urlForLocale } from "@givefood/urls";
 import type { AppEnv } from "../../types";
@@ -25,7 +25,14 @@ export async function wfbnFoodbank(c: Context<AppEnv>): Promise<Response> {
   // route pattern the way an inline `app.get("/x/:slug/", ...)` would be.
   const slug = c.req.param("slug")!;
   const session = dbSession(c);
-  const foodbank = await getFoodbankBySlug(session, slug);
+  // THREE STATEMENTS, ONE ROUND TRIP: the food bank row, its latest need, and
+  // has_service_area's COUNT(*). The count used to be a serial hop of its own
+  // after this line (github #52) -- it is keyed on the slug rather than the id
+  // precisely so it can travel with the lookup that would otherwise have had to
+  // tell it the id. `hasServiceAreaValue` ALREADY CARRIES Django's
+  // `no_locations == 0` short circuit; that guard lives inside the db function,
+  // where the count and the counter are both in hand. See its comment.
+  const { foodbank, hasServiceArea: hasServiceAreaValue } = await getFoodbankBySlugWithServiceArea(session, slug);
   if (!foodbank) return c.notFound();
 
   const locale = c.get("lang") as "en" | "cy" | "ga" | "gd";
@@ -38,13 +45,18 @@ export async function wfbnFoodbank(c: Context<AppEnv>): Promise<Response> {
   // `{% if foodbank.latest_need.change_text != ... %}` gate, deliberately
   // NOT locale-aware; latestNeedGetChangeText is the translated-or-English-
   // fallback DISPLAY text (Django's inner `{% with foodbank.latest_need.get_change_text as change_text %}`).
-  // resolveNeedDisplay() and hasServiceArea() are independent D1 round
-  // trips, run concurrently.
-  const [{ changeText: latestNeedChangeText, excessChangeText: latestNeedExcessText, getChangeText: latestNeedGetChangeText, excessTextList }, hasServiceAreaValue] =
-    await Promise.all([
-      resolveNeedDisplay(session, foodbank, locale),
-      foodbank.no_locations !== 0 ? hasServiceArea(session, foodbank.id) : Promise.resolve(false),
-    ]);
+  //
+  // NO Promise.all ANY MORE, and nothing lost by it: the service-area count
+  // this used to be raced against now rides in the batch above, and
+  // resolveNeedDisplay issues NO query at all on an English page (~89% of
+  // traffic), so on those the pair had degenerated to one awaited query
+  // wearing a concurrency wrapper.
+  const {
+    changeText: latestNeedChangeText,
+    excessChangeText: latestNeedExcessText,
+    getChangeText: latestNeedGetChangeText,
+    excessTextList,
+  } = await resolveNeedDisplay(session, foodbank, locale);
 
   const [latStr, lngStr] = foodbank.lat_lng.split(",");
 

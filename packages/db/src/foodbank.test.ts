@@ -8,6 +8,7 @@ import {
   getAllOpenFoodbanksForSitemap,
   getFoodbankBySlug,
   getFoodbankBySlugWithOpenCoordinates,
+  getFoodbankBySlugWithServiceArea,
   getFoodbankIdBySlug,
   getFoodbankIdByUuid,
   getFoodbankRssCrawlTargetById,
@@ -25,6 +26,11 @@ import {
 // dependent PK lookup getFoodbankBySlug used to await after its food bank row.
 // Still live code, still used by the notify/translate queue consumers.
 import { getNeedById } from "./needs";
+// And the oracle for github #52 item 3's: the id-keyed COUNT(*) the three page
+// routes used to issue as a round trip of their own. Imported here rather than
+// re-spelled, so the comparison is against the definition locations.test.ts
+// already pins against Django, not against a second copy of it.
+import { hasServiceArea } from "./locations";
 import type { Session } from "./types";
 
 // The `foodbank` table's read layer -- fifteen queries that between them feed
@@ -291,6 +297,41 @@ function seedFoodbank(seed: FoodbankSeed): void {
     // and SQLite compares TEXT byte-wise, so mixing the two formats in a
     // fixture would make any ordering assertion agree with a bug.
     "2020-03-11 09:00:00.000000",
+    "2026-08-01 09:15:22.412000",
+  );
+}
+
+// A location row, for getFoodbankBySlugWithServiceArea's COUNT(*) alone --
+// which reads exactly two of these columns, foodbank_id and boundary_geojson.
+// Every other NOT NULL column is filled with something the migrations would
+// have accepted, so a seeded row is one production could hold. Note the ABSENT
+// foodbank_name/_slug/_network/_email: 0019_drop_foodbank_cache.sql dropped
+// those five denormalised columns off this table, and because the schema here
+// is the real migration files applied in order, naming one is an insert-time
+// error rather than a silently different fixture.
+//
+// `isClosed` is parameterised because the count deliberately does NOT filter
+// on it (Django's queryset is a bare `.filter(foodbank = self)`), and a
+// behaviour that is asserted has to be seedable.
+function seedLocation(row: {
+  id: number;
+  foodbankId: number;
+  name: string;
+  boundaryGeojson?: string | null;
+  isClosed?: 0 | 1;
+}): void {
+  db.prepare(
+    `INSERT INTO foodbanklocation (id, uuid, foodbank_id, name, slug, country, lat_lng,
+       is_closed, boundary_geojson, modified)
+     VALUES (?, ?, ?, ?, ?, 'England', '51.0688,-1.7945', ?, ?, ?)`,
+  ).run(
+    row.id,
+    `${row.id}`.padStart(32, "b"),
+    row.foodbankId,
+    row.name,
+    row.name.toLowerCase().replace(/\s+/g, "-"),
+    row.isClosed ?? 0,
+    row.boundaryGeojson ?? null,
     "2026-08-01 09:15:22.412000",
   );
 }
@@ -1268,6 +1309,245 @@ describe("getFoodbankBySlugWithOpenCoordinates", () => {
     const closed = await getFoodbankBySlugWithOpenCoordinates(session, "closed-town", true);
     expect(closed.foodbank!.is_closed).toBe(true);
     expect(closed.openCoordinates.map((c) => c.id)).toEqual([1, 2]);
+  });
+});
+
+// ===========================================================================
+// getFoodbankBySlugWithServiceArea -- the WFBN pages' first wave
+// ===========================================================================
+// github #52 item 3. /needs/at/<slug>/, /<locslug>/ and
+// /donationpoint/<dpslug>/ render `has_service_area` and fetch no location
+// rows of their own, so unlike /locations/ and /donationpoints/ (which derive
+// it from rows they already hold, 9464049) they have to ask the database. They
+// used to ask it in a hop of ITS OWN, ~16-22 ms of serial round trip measured
+// against production, for an answer that is `false` for 1,016 of the 1,023
+// open food banks.
+//
+// TWO THINGS ARE UNDER TEST HERE AND THEY FAIL DIFFERENTLY.
+//
+// The first is the TRANSPORT: the count now rides in getFoodbankBySlug's
+// batch. That is only possible because it was re-keyed from the food bank's id
+// onto its SLUG -- the id is in the result of the very batch the statement has
+// to join, so an id-keyed count could never have travelled in it. Nothing
+// about the returned data can see this, so the round-trip log is asserted
+// directly.
+//
+// The second is THE GUARD, and it is the one that could silently change a
+// page. Django's has_service_area() (givefood/models/foodbank.py:296-302)
+// checks `if self.no_locations == 0: return False` BEFORE it queries. The
+// count cannot be skipped any more -- no_locations is a column of the row the
+// batch is fetching -- so the short circuit survives on the ANSWER instead,
+// and every case below that involves a stale counter exists to hold it there.
+// Both spellings of "no boundary" (NULL and '') and the absent is_closed
+// filter are re-asserted rather than assumed, because this is a SECOND
+// spelling of a predicate locations.ts already owns and second copies drift.
+//
+// THE ORACLE IS hasServiceArea() ITSELF, run against the same rows -- not a
+// second copy of the expected answer written out longhand here. If the two
+// ever disagree, /needs/at/<slug>/ and any future id-keyed caller start
+// telling different stories about the same food bank.
+//
+// MUTATION-TESTED in an rsync'd copy of the tree OUTSIDE the repo, together
+// with the two route suites that consume this function. 20 mutants, 20 killed,
+// each actually run rather than imagined -- the twelve aimed at this module,
+// with the number of tests each took down:
+//
+//   the `no_locations !== 0` guard deleted                          3
+//   `count > 0` widened to `count >= 0`                             4
+//   the flag hardcoded false                                        6
+//   the `foodbank !== null` guard dropped (throws on a 404)         1
+//   the count read out of results[1], the need statement            6
+//   the batch unrolled, count awaited separately                    3
+//   the count statement never pushed                               14
+//   the count bound to a constant slug                              3
+//   `l.foodbank_id = (...)` weakened to `(...) IS NOT NULL`         5
+//   `boundary_geojson != ''` dropped                                2
+//   `is_closed = 0` gained (Django's queryset has no such filter)   2
+//   `boundary_geojson IS NOT NULL` dropped                          1
+//
+// THE LAST ONE IS HONEST RATHER THAN IMPRESSIVE, and locations.test.ts says
+// the same of its own twin: dropping the NULL half changes NO answer, because
+// SQLite's `NULL != ''` is UNKNOWN and the row is excluded anyway. It dies
+// only on the statement-text assertion. It is left in the list so nobody
+// reads a coverage claim into it.
+
+describe("getFoodbankBySlugWithServiceArea", () => {
+  const BOUNDARY = '{"type":"Feature","geometry":{"type":"Polygon","coordinates":[[[-1.8,51.0],[-1.7,51.0],[-1.7,51.1],[-1.8,51.0]]]}}';
+
+  beforeEach(() => {
+    // salisbury: two locations, one of them with a real boundary, counter
+    // correct. The everyday true case.
+    seedFoodbank({ id: 1, slug: "salisbury", latestNeedId: 500, noLocations: 2 });
+    seedLocation({ id: 401, foodbankId: 1, name: "Amesbury", boundaryGeojson: BOUNDARY });
+    seedLocation({ id: 402, foodbankId: 1, name: "Wilton", boundaryGeojson: null });
+    // andover: locations, none with a boundary, no latest need.
+    seedFoodbank({ id: 2, slug: "andover", latestNeedId: null, noLocations: 1 });
+    seedLocation({ id: 403, foodbankId: 2, name: "Andover Centre", boundaryGeojson: null });
+    // stale-town: THE GUARD'S CASE. A boundary in the table and a counter that
+    // says the food bank has no locations at all.
+    seedFoodbank({ id: 3, slug: "stale-town", latestNeedId: null, noLocations: 0 });
+    seedLocation({ id: 404, foodbankId: 3, name: "Stale Centre", boundaryGeojson: BOUNDARY });
+    seedNeed({ id: 500, needId: "ab".repeat(16), foodbankId: 1, changeText: "Beans" });
+  });
+
+  // THE FOOD BANK HALF DID NOT MOVE. ~50 call sites take getFoodbankBySlug's
+  // object and three of them take this one; if the two ever return different
+  // shapes, the same food bank renders differently depending on which page you
+  // are on. Key order as well as values: `toEqual` ignores it and
+  // JSON.stringify does not.
+  it("returns exactly the food bank getFoodbankBySlug returns", async () => {
+    const combined = await getFoodbankBySlugWithServiceArea(session, "salisbury");
+    const plain = await getFoodbankBySlug(session, "salisbury");
+
+    expect(combined.foodbank).toEqual(plain);
+    expect(Object.keys(combined.foodbank!)).toEqual(Object.keys(plain!));
+    // Not vacuous: there is a real need row on the other end of that join.
+    expect(combined.foodbank!.latestNeed!.change_text).toBe("Beans");
+  });
+
+  // AND has_service_area IS NOT ON IT. It is a live count over another table,
+  // not a column of the row, and FoodbankWithLatestNeed is spread straight
+  // into API response bodies at ~50 call sites -- a key that appeared there
+  // would leak into serialised output on every one of them.
+  it("keeps the flag beside the food bank, never on it", async () => {
+    const combined = await getFoodbankBySlugWithServiceArea(session, "salisbury");
+
+    expect(combined.hasServiceArea).toBe(true);
+    expect(Object.keys(combined.foodbank!)).not.toContain("hasServiceArea");
+    expect(Object.keys(combined.foodbank!)).not.toContain("has_service_area");
+  });
+
+  // THE WHOLE POINT OF THE CHANGE, and invisible in every value it returns.
+  // Three statements, ONE wait. Unroll the count into its own await and every
+  // other assertion in this block still passes.
+  it("waits for D1 once, with all three statements in the one batch", async () => {
+    await getFoodbankBySlugWithServiceArea(session, "salisbury");
+
+    expect(roundTrips).toHaveLength(1);
+    expect(roundTrips[0]).toHaveLength(3);
+  });
+
+  // BOUND TO THE SLUG, NOT THE ID -- the enabling constraint, not a style
+  // choice. The id only exists in results[0] of this very batch, so a version
+  // that bound `foodbank.id` could not have been batched at all; it would have
+  // had to await the first statement, which is the round trip being removed.
+  // Pinned on the statement because a correct answer proves nothing about it.
+  it("asks for the count by slug, so that it can travel with the lookup that finds the id", async () => {
+    await getFoodbankBySlugWithServiceArea(session, "salisbury");
+
+    const count = calls.find((c) => c.sql.includes("COUNT(*)"))!;
+    expect(count.sql).toBe(
+      "SELECT COUNT(*) AS n FROM foodbanklocation l WHERE l.foodbank_id = (SELECT id FROM foodbank WHERE slug = ?) " +
+        "AND l.boundary_geojson IS NOT NULL AND l.boundary_geojson != ''",
+    );
+    expect(count.params).toEqual(["salisbury"]);
+  });
+
+  // THE ANSWER DID NOT MOVE EITHER, against the id-keyed function the three
+  // routes used to call, over every state the fixture holds -- INCLUDING the
+  // stale-counter one, where the two are deliberately allowed to differ and
+  // the guard is what makes them. Written as `no_locations !== 0 && oracle` so
+  // that the guard appears once on the expected side, explicitly, instead of
+  // being hidden inside a hardcoded true/false.
+  for (const slug of ["salisbury", "andover", "stale-town"]) {
+    it(`agrees with hasServiceArea(), through the guard, for /${slug}/`, async () => {
+      const combined = await getFoodbankBySlugWithServiceArea(session, slug);
+      const oracle = await hasServiceArea(session, combined.foodbank!.id);
+
+      expect(combined.hasServiceArea).toBe(combined.foodbank!.no_locations !== 0 && oracle);
+    });
+  }
+
+  // ...and those three cases are not all the same answer, which the loop above
+  // cannot tell you on its own. stale-town is the one that matters: the raw
+  // count says TRUE and the flag says false.
+  it("answers true, false and false -- the last of them against its own count", async () => {
+    expect((await getFoodbankBySlugWithServiceArea(session, "salisbury")).hasServiceArea).toBe(true);
+    expect((await getFoodbankBySlugWithServiceArea(session, "andover")).hasServiceArea).toBe(false);
+
+    expect(await hasServiceArea(session, 3)).toBe(true);
+    expect((await getFoodbankBySlugWithServiceArea(session, "stale-town")).hasServiceArea).toBe(false);
+  });
+
+  // THE GUARD, ONE ASSERTION, NO ROOM FOR DOUBT. Django:
+  //
+  //     def has_service_area(self):
+  //         if self.no_locations == 0:
+  //             return False
+  //
+  // Delete `foodbank.no_locations !== 0` from the implementation and only this
+  // and its two siblings above go red. The counter is a denormalised column
+  // the admin maintains, so a stale zero is a state the database can really be
+  // in -- none of the 1,070 production rows is in it today, which is precisely
+  // why it needs a test.
+  it("returns false when no_locations is 0, whatever the boundaries say", async () => {
+    const stale = await getFoodbankBySlugWithServiceArea(session, "stale-town");
+
+    expect(stale.foodbank!.no_locations).toBe(0);
+    expect(stale.hasServiceArea).toBe(false);
+
+    // The counter, and nothing else, is what is suppressing it: correct it and
+    // the same untouched row lights the flag.
+    db.prepare("UPDATE foodbank SET no_locations = 1 WHERE slug = 'stale-town'").run();
+    expect((await getFoodbankBySlugWithServiceArea(session, "stale-town")).hasServiceArea).toBe(true);
+  });
+
+  // THE COUNT STILL GOES OUT even when the guard has already decided the
+  // answer -- not a bug, an unavoidable consequence of batching: no_locations
+  // arrives in results[0] of the same trip. Pinned so the extra statement is a
+  // recorded decision rather than something discovered in a billing report.
+  // It costs ~1 + N rows_read on a food bank whose answer was never in doubt,
+  // and buys a whole round trip on the other 1,070.
+  it("issues the count even for a food bank the guard has already ruled out", async () => {
+    await getFoodbankBySlugWithServiceArea(session, "stale-town");
+
+    expect(roundTrips).toHaveLength(1);
+    expect(roundTrips[0]!.filter((s) => s.sql.includes("COUNT(*)"))).toHaveLength(1);
+  });
+
+  // BOTH SPELLINGS OF "NO BOUNDARY", re-asserted on this statement rather than
+  // inherited from locations.test.ts's coverage of the other one. D1 holds
+  // NULL and '' both, Django excludes both
+  // (`.exclude(boundary_geojson__isnull = True).exclude(boundary_geojson = '')`),
+  // and dropping the `!= ''` half here would give a food bank whose boundary
+  // was cleared in the admin a "Service area" legend over a map that draws
+  // nothing.
+  it("treats an empty-string boundary as no boundary", async () => {
+    db.prepare("UPDATE foodbanklocation SET boundary_geojson = '' WHERE foodbank_id = 1").run();
+
+    expect((await getFoodbankBySlugWithServiceArea(session, "salisbury")).hasServiceArea).toBe(false);
+  });
+
+  // SCOPED TO THE FOOD BANK. Without the foodbank_id predicate the first
+  // service area anywhere in the country would put a service-area map on all
+  // 1,070 pages -- every one of them a 200.
+  it("does not count another food bank's boundary", async () => {
+    expect((await getFoodbankBySlugWithServiceArea(session, "andover")).hasServiceArea).toBe(false);
+    // Salisbury's boundary exists and is one row away.
+    expect((await getFoodbankBySlugWithServiceArea(session, "salisbury")).hasServiceArea).toBe(true);
+  });
+
+  // NO is_closed FILTER, matching Django's bare `.filter(foodbank = self)`: a
+  // closed location's boundary still counts, because the flag means "there is
+  // a service-area map to draw" and the map still draws. Ported behaviour, not
+  // an oversight -- locations.test.ts pins the same thing on the id-keyed
+  // spelling, and the two must not diverge.
+  it("counts a closed location's boundary, matching the Django queryset", async () => {
+    db.prepare("UPDATE foodbanklocation SET is_closed = 1 WHERE foodbank_id = 1").run();
+
+    expect((await getFoodbankBySlugWithServiceArea(session, "salisbury")).hasServiceArea).toBe(true);
+  });
+
+  // AN UNKNOWN SLUG must not throw: COUNT(*) returns one row of 0 (the scalar
+  // subquery is NULL, `foodbank_id = NULL` matches nothing), the food bank is
+  // null, and the caller 404s exactly as it did before. The flag is false
+  // rather than undefined, because three templates read it as a `{% if %}`.
+  it("returns a null food bank and a false flag for an unknown slug", async () => {
+    const missing = await getFoodbankBySlugWithServiceArea(session, "no-such-foodbank");
+
+    expect(missing.foodbank).toBeNull();
+    expect(missing.hasServiceArea).toBe(false);
+    expect(roundTrips).toHaveLength(1);
   });
 });
 

@@ -141,17 +141,39 @@ export function mapLocationRowNarrow(raw: Record<string, unknown>): FoodbankLoca
 }
 
 // The full row with the blob replaced by a 0/1 flag. `has_boundary` is
-// deliberately NOT run through coerceBooleans: 0/1 is what the SQL yields,
-// it is falsy/truthy in both JS and Nunjucks exactly as the raw string was,
-// and the three sites that test the original column
-// (public/wfbn/locations.njk, location.njk, wfbn/locationDetail.ts) are a
-// Nunjucks `not`, a Nunjucks `and` and a JS ternary -- all correct on 0/1.
+// deliberately NOT run through coerceBooleans: 0/1 is what the SQL yields, and
+// both of the two sites that read it are correct on 0/1 --
+// wfbn/foodbank/locations.njk's `{% if location.place_has_photo and not
+// location.has_boundary %}`, where 0 is falsy exactly as a raw NULL or '' was,
+// and wfbn/locations.ts's `.some((l) => l.has_boundary === 1)`. Note that the
+// second is a strict test against the NUMBER, not a truthiness test, and that
+// is what makes the exclusion load-bearing rather than merely harmless: adding
+// has_boundary to BOOLEAN_COLUMNS would leave the Nunjucks gate right and turn
+// anyLocationHasBoundary permanently FALSE (`true === 1` is false), quietly
+// dropping the service area from the two pages that derive it from these rows
+// -- /needs/at/<slug>/locations/ and /needs/at/<slug>/donationpoints/.
+// (The two sites still reading the RAW column, location.njk and
+// wfbn/locationDetail.ts's `location.boundary_geojson ? 12 : 15`, are fed by
+// getFoodbankLocationBySlugs, which is unprojected and stays that way.)
 //
 // `(x IS NOT NULL AND x != '')` yields 0 or 1 and never NULL: `NULL IS NOT
 // NULL` is 0 and `0 AND ...` short-circuits. It matches JS/Nunjucks
 // truthiness of the raw string for every stored value, whitespace-only
 // included ('  ' is truthy in both, and '  ' != '' is 1).
 export type FoodbankLocationRowFlagged = Omit<FoodbankLocationRow, "boundary_geojson"> & { has_boundary: 0 | 1 };
+
+export function mapLocationRowFlagged(raw: Record<string, unknown>): FoodbankLocationRowFlagged {
+  return coerceBooleans<FoodbankLocationRowFlagged>(raw, BOOLEAN_COLUMNS);
+}
+
+// LOCATION_COLUMNS_NARROW plus the flag, as ONE fragment shared by every
+// flagged query rather than retyped per function. The predicate is the thing
+// that has to stay identical across all of them -- it is Django's
+// `.exclude(boundary_geojson__isnull = True).exclude(boundary_geojson = '')`
+// (models/foodbank.py:299), and a second copy that lost the `!= ''` half would
+// answer differently on exactly the rows an admin had cleared.
+export const LOCATION_COLUMNS_FLAGGED =
+  `${LOCATION_COLUMNS_NARROW}, (boundary_geojson IS NOT NULL AND boundary_geojson != '') AS has_boundary`;
 
 // getAllOpenLocations, minus the blob. /api/2/locations/ (the site's largest
 // payload) and the all-items /needs/geo.json feed both read this whole row
@@ -171,12 +193,45 @@ export type FoodbankLocationRowFlagged = Omit<FoodbankLocationRow, "boundary_geo
 // figures are hard, the millisecond ones are indicative.
 export async function getAllOpenLocationsFlagged(session: Session): Promise<FoodbankLocationRowFlagged[]> {
   const result = await session
-    .prepare(
-      `SELECT ${LOCATION_COLUMNS_NARROW}, (boundary_geojson IS NOT NULL AND boundary_geojson != '') AS has_boundary ` +
-        "FROM foodbanklocation_full WHERE is_closed = 0",
-    )
+    .prepare(`SELECT ${LOCATION_COLUMNS_FLAGGED} FROM foodbanklocation_full WHERE is_closed = 0`)
     .all();
-  return result.results.map((r) => coerceBooleans<FoodbankLocationRowFlagged>(r as Record<string, unknown>, BOOLEAN_COLUMNS));
+  return result.results.map((r) => mapLocationRowFlagged(r as Record<string, unknown>));
+}
+
+// getLocationsByFoodbankId, minus the blob -- for gfwfbn `foodbank_locations`
+// (/needs/at/<slug>/locations/), the one caller of that function whose page
+// never prints a boundary and only ever asks whether there IS one.
+//
+// WHY A SECOND FUNCTION RATHER THAN NARROWING THE FIRST. getLocationsByFoodbankId
+// still has a caller that genuinely READS the column: admin/foodbankDetail.ts
+// renders `{% if loc.boundary_geojson %}` (admin/foodbank_detail.njk:248).
+// Narrowing in place would change that page too; this leaves it exactly as it
+// was. The other three callers -- api1.ts, ./md/locations.ts and workers/jobs'
+// foodbankCheck.ts -- pull the blob and never emit it either; moving those is a
+// separate change.
+//
+// WHAT IT COSTS THE PAGE, measured read-only against production D1 on
+// canterbury (foodbank_id 5712046691713024, 21 locations, all 21 with a
+// boundary -- the largest of the 7 food banks that have one at all):
+// 2,319,826 -> 19,890 bytes of result payload, -99.1%, and a median
+// sql_duration of 17.8 ms (12.7-23.3) -> 5.4 ms (3.9-7.4) over 7 interleaved
+// runs of each. rows_read is UNCHANGED at 43, so this is wire bytes and
+// latency, not D1 billing. The other 1,016 open food banks hold no boundary
+// and so pay nothing either way -- their rows were already small.
+//
+// SAME EVERYTHING ELSE: same view, same `WHERE foodbank_id = ?` with no
+// is_closed filter (Django's `Foodbank.locations()` has none,
+// givefood/models/foodbank.py:546), same JS name sort. Only the projection
+// changes, and `has_boundary` is exactly what the blob was used for.
+export async function getLocationsByFoodbankIdFlagged(
+  session: Session,
+  foodbankId: number,
+): Promise<FoodbankLocationRowFlagged[]> {
+  const result = await session
+    .prepare(`SELECT ${LOCATION_COLUMNS_FLAGGED} FROM foodbanklocation_full WHERE foodbank_id = ?`)
+    .bind(foodbankId)
+    .all();
+  return sortByName(result.results.map((r) => mapLocationRowFlagged(r as Record<string, unknown>)));
 }
 
 // sitemap.xml only ever needs foodbank_slug/slug -- PLAN.md's hard rule
@@ -249,6 +304,21 @@ export async function getOpenLocationCoordinatesWithFoodbankId(session: Session)
 // Foodbank.has_service_area() -- a live count, not a cached field (the
 // Python source queries FoodbankLocation fresh on every call, no
 // annotation/cache column exists to read instead).
+//
+// NO PAGE CALLS THIS ANY MORE, and that is deliberate rather than rot. github
+// #52 took the site's five renderings of this flag off a round trip of their
+// own: wfbn/locations.ts's two handlers derive it from location rows they had
+// already fetched, and wfbn/foodbank.ts + wfbn/locationDetail.ts's two get it
+// from foodbank.ts's getFoodbankBySlugWithServiceArea, which asks the same
+// question keyed on SLUG so that it fits in a batch already in flight. This
+// remains the id-keyed spelling for any caller that holds an id and no batch
+// to join, and its tests below remain the oracle both other spellings are
+// checked against -- the predicate is defined here, in one place, in SQL.
+//
+// It carries NO no_locations short circuit; Django's does, ahead of the query
+// (models/foodbank.py:296-298). That guard lives with each caller's cached
+// counter, which this function is not given -- see the long note on
+// getFoodbankBySlugWithServiceArea.
 export async function hasServiceArea(session: Session, foodbankId: number): Promise<boolean> {
   const row = await session
     .prepare(

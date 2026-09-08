@@ -25,8 +25,12 @@ export interface NeedDisplay {
 // deliberately NOT worked around here -- it's flagged there as its own
 // follow-on fix, not something to paper over by skipping the lookup.
 //
-// Callers should run this concurrently (Promise.all) with any sibling
-// has_service_area query -- both are independent D1 round trips.
+// ONE ROUND TRIP AT MOST, AND NONE IN ENGLISH. Callers used to Promise.all
+// this against a sibling has_service_area query; github #52 moved that count
+// into the batched food bank lookup, so on all three pages this is now the
+// only query left after it and there is nothing to overlap it with. Any FUTURE
+// independent read on those pages should be raced against this one rather than
+// awaited after it.
 export async function resolveNeedDisplay(
   session: Session,
   foodbank: FoodbankWithLatestNeed,

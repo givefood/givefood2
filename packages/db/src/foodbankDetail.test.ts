@@ -4,7 +4,7 @@ import { MIGRATIONS_SQL as SCHEMA } from "./schema.testkit";
 // @ts-ignore -- ditto; the migration files are read off disk so the fixture cannot drift from production
 import { beforeEach, describe, expect, it } from "vitest";
 import { getLocationsAndDonationPointsByFoodbankId, getLocationsDonationPointsAndNearbyFoodbanks } from "./foodbankDetail";
-import { getLocationsByFoodbankId } from "./locations";
+import { getLocationsByFoodbankId, LOCATION_COLUMNS_FLAGGED } from "./locations";
 import { getDonationPointsByFoodbankId } from "./donationpoints";
 import { getFoodbanksByIds } from "./foodbank";
 import type { Session } from "./types";
@@ -142,6 +142,24 @@ import type { Session } from "./types";
 // statement narrowed to LOCATION_COLUMNS_NARROW, which is caught here by the
 // blob test AND, two packages away, by the route's own has_service_area
 // assertions flipping to true for every food bank.
+//
+// THE FIFTH ROUND was github #52's closing observation, which traded that blob
+// for a computed `has_boundary` flag on the same statement. Same method, run
+// against a scratchpad copy over this file, packages/db/src/locations.test.ts
+// and routes/wfbn/locations.test.ts. Thirteen mutants, ALL KILLED:
+//   * this function's location statement reverted to `SELECT *`, and separately
+//     narrowed to LOCATION_COLUMNS_NARROW -- and the same two on
+//     getLocationsByFoodbankIdFlagged, one package boundary away;
+//   * the `!= ''` half of the flag expression dropped (an empty-string boundary
+//     then counts) and the `IS NOT NULL` half dropped, which is NOT the
+//     equivalent mutant it looks like: `NULL != ''` is UNKNOWN, so has_boundary
+//     comes back NULL rather than 0, and the flag tests assert `toBe(0)`;
+//   * has_boundary added to LOCATION_BOOLEAN_COLUMNS, so 0/1 became
+//     false/true and the caller's `=== 1` silently stopped matching;
+//   * sortByName dropped; `AND is_closed = 0` added to the flagged query;
+//     `.some` swapped for `.every`; the route's `=== 1` loosened to `!==
+//     undefined`; the no_locations guard removed again; and the template's
+//     photo gate left reading the blob that no longer arrives.
 //
 // ONE EQUIVALENT MUTANT SURVIVED, and is recorded rather than papered over:
 // removing the `nearbyIds.length > 0` guard on the MAPPING side (leaving it on
@@ -1208,28 +1226,31 @@ describe("against the single-statement functions it batches", () => {
 });
 
 // ===========================================================================
-// THE UNPROJECTED PAIR -- getLocationsAndDonationPointsByFoodbankId
+// THE FLAGGED PAIR -- getLocationsAndDonationPointsByFoodbankId
 // ===========================================================================
 
-// The same two statements as the function above, without the neighbours and
-// WITHOUT the projection, for gfwfbn `foodbank_donationpoints`
-// (routes/wfbn/locations.ts, github #52). That page fetched these two lists as
-// two sequential awaits and then sent a third query -- `SELECT COUNT(*) ...
-// boundary_geojson IS NOT NULL AND boundary_geojson != ''` -- to work out
-// whether the food bank has a service area. All three are gone: the pair rides
-// one batch, and the flag is derived from `boundary_geojson` on the location
-// rows the batch returns.
+// The same two statements as the function above, without the neighbours, for
+// gfwfbn `foodbank_donationpoints` (routes/wfbn/locations.ts, github #52). That
+// page fetched these two lists as two sequential awaits and then sent a third
+// query -- `SELECT COUNT(*) ... boundary_geojson IS NOT NULL AND
+// boundary_geojson != ''` -- to work out whether the food bank has a service
+// area. All three are gone: the pair rides one batch, and the flag comes back
+// as a computed column on the location rows.
 //
-// WHICH IS WHY THE BLOB STAYS HERE. The sibling above projects it away
+// THE LOCATION PROJECTION IS A THIRD ONE, and the difference from the sibling
+// above is one column in each direction. That one drops boundary_geojson
 // (LOCATION_COLUMNS_NARROW) because neither branch of the detail endpoint reads
-// it; this one must not, because its caller reads exactly that column. The
-// difference is the single most reversible-looking thing in this file -- "make
-// them share the column list" is a tidy-up a reviewer would wave through -- and
-// it is not caught by any row-count or ordering assertion, so it has its own
-// test below. It is also caught by the compiler at the caller
-// (FoodbankLocationRowNarrow is an `Omit<..., "boundary_geojson">`), which is
-// belt to this file's braces.
-describe("the unprojected pair", () => {
+// it at all; this one drops the blob too but adds `(boundary_geojson IS NOT
+// NULL AND boundary_geojson != '') AS has_boundary`, because its caller needs
+// the ANSWER and never the evidence. Both are reversible-looking in ways no
+// row-count or ordering assertion would catch, so each has its own test below:
+//   * swap this for LOCATION_COLUMNS_NARROW and has_boundary is `undefined` at
+//     the caller -- caught by the compiler (FoodbankLocationRowNarrow has no
+//     such key) and by "returns has_boundary on the location rows";
+//   * revert it to `SELECT *` and the page silently goes back to pulling up to
+//     2.3 MB of geojson per render -- caught by the statement-text test, which
+//     is the only thing that can see it.
+describe("the flagged pair", () => {
   beforeEach(() => {
     seedFoodbank(SALISBURY, "Salisbury Foodbank", "salisbury");
     seedFoodbank(TROWBRIDGE, "Trowbridge Foodbank", "trowbridge");
@@ -1248,33 +1269,61 @@ describe("the unprojected pair", () => {
   // Both reads go through the VIEWS, and the id reaches BOTH. Bound to only
   // one, that statement becomes an unfiltered scan and every food bank's page
   // lists the whole country's donation points -- see the sibling block's note.
+  //
+  // AND THE LOCATIONS STATEMENT NAMES ITS COLUMNS. This is the only assertion
+  // in the file that can see a revert to `SELECT *`: the rows would be a
+  // superset, every other test here would still pass, and the page would go
+  // back to pulling up to 2.3 MB of geojson per render (canterbury, measured
+  // read-only against production D1: 2,319,826 -> 19,890 bytes for exactly
+  // this statement). Compared against the exported constant rather than a
+  // retyped copy, so the 38-name list has one definition.
   it("reads the two _full views with the food bank id bound to each", async () => {
     await getLocationsAndDonationPointsByFoodbankId(session, SALISBURY);
 
     expect(log.executed.map((e) => [e.sql, e.params])).toEqual([
-      ["SELECT * FROM foodbanklocation_full WHERE foodbank_id = ?", [SALISBURY]],
+      [`SELECT ${LOCATION_COLUMNS_FLAGGED} FROM foodbanklocation_full WHERE foodbank_id = ?`, [SALISBURY]],
       ["SELECT * FROM foodbankdonationpoint_full WHERE foodbank_id = ?", [SALISBURY]],
     ]);
+    // Named, not starred -- and the blob appears ONLY inside the has_boundary
+    // expression, never as a column of its own.
+    expect(log.executed[0]!.sql).not.toContain("SELECT *");
+    expect(log.executed[0]!.sql.match(/boundary_geojson/g)).toEqual(["boundary_geojson", "boundary_geojson"]);
+    expect(log.executed[0]!.sql).toContain("(boundary_geojson IS NOT NULL AND boundary_geojson != '') AS has_boundary");
   });
 
-  // THE COLUMN THE CALLER DERIVES has_service_area FROM. A location row here
-  // must carry boundary_geojson, with its value intact -- not merely the key.
-  // Narrow this statement to LOCATION_COLUMNS_NARROW and the rows still map,
-  // still sort, still scope, still count: the only visible effect is that
-  // `l.boundary_geojson` becomes `undefined` at the caller, `undefined !==
-  // null` is true, and every one of the 1,023 open food banks starts claiming
-  // a service area.
-  it("returns boundary_geojson on the location rows, which the sibling projects away", async () => {
+  // THE COLUMN THE CALLER DERIVES has_service_area FROM -- and it is now the
+  // FLAG, not the blob. Both halves matter and both are asserted:
+  //
+  //   has_boundary must be RIGHT. Swap this projection for
+  //   LOCATION_COLUMNS_NARROW and the rows still map, still sort, still scope:
+  //   the only visible effect is that `l.has_boundary` becomes `undefined` at
+  //   the caller and every one of the 1,023 open food banks stops claiming a
+  //   service area (the mirror of the pre-#52-projection footgun, which made
+  //   them all claim one). The compiler catches that swap too -- the narrow row
+  //   type has no such key -- which is belt to this brace.
+  //
+  //   boundary_geojson must be ABSENT. Not merely unread: absent from the row,
+  //   so it never crossed the wire. `in` rather than a value comparison,
+  //   because a NULL blob and a missing key both read as falsy.
+  it("returns has_boundary on the location rows, and never the blob itself", async () => {
     seedLocation({ id: 20, foodbankId: SALISBURY, name: "Bemerton Heath", boundaryGeojson: BOUNDARY });
     seedLocation({ id: 21, foodbankId: SALISBURY, name: "Amesbury Library" });
+    // The third spelling, seeded so the flag is tested against all three of the
+    // values production holds rather than just the two obvious ones.
+    seedLocation({ id: 22, foodbankId: SALISBURY, name: "Zeals Hall", boundaryGeojson: "" });
 
     const { locations } = await getLocationsAndDonationPointsByFoodbankId(session, SALISBURY);
 
-    expect(locations.map((l) => l.boundary_geojson)).toEqual([null, BOUNDARY]);
-    // ...and the sibling, on the same rows, does not -- so this is a real
-    // difference between the two functions and not an accident of the fixture.
+    expect(locations.map((l) => l.name)).toEqual(["Amesbury Library", "Bemerton Heath", "Zeals Hall"]);
+    expect(locations.map((l) => l.has_boundary)).toEqual([0, 1, 0]);
+    expect(locations.every((l) => !("boundary_geojson" in l))).toBe(true);
+    // 0/1, not coerced to boolean: has_boundary is deliberately NOT in
+    // LOCATION_BOOLEAN_COLUMNS, and the caller reads it as `=== 1`.
+    expect(locations.map((l) => typeof l.has_boundary)).toEqual(["number", "number", "number"]);
+    // ...and the neighbours-carrying sibling, on the same rows, has neither the
+    // blob nor the flag -- so the three projections really are three.
     const projected = await getLocationsDonationPointsAndNearbyFoodbanks(session, SALISBURY, []);
-    expect(projected.locations.every((l) => !("boundary_geojson" in l))).toBe(true);
+    expect(projected.locations.every((l) => !("boundary_geojson" in l) && !("has_boundary" in l))).toBe(true);
   });
 
   // Scoping, in both directions and on both tables at once: a WHERE that lost
@@ -1313,11 +1362,19 @@ describe("the unprojected pair", () => {
   });
 
   // THE CLAIM THE CALLER RESTS ON: same rows as the two functions it replaced,
-  // one round trip instead of two -- and here, unlike the projected sibling,
-  // with NO permitted difference at all. Every column, both orderings, the
-  // absent is_closed filter and the boolean coercion must be equal value for
-  // value, boundary_geojson included.
-  it("returns exactly what the unbatched pair returns, blob and all", async () => {
+  // one round trip instead of two. Every column, both orderings, the absent
+  // is_closed filter and the boolean coercion must be equal value for value.
+  //
+  // THE ONE PERMITTED DIFFERENCE IS boundary_geojson -> has_boundary, and it is
+  // subtracted and re-derived EXPLICITLY rather than by loosening the
+  // comparison: the expectation is built from the unbatched rows by dropping
+  // that key and recomputing the flag in JS from the value it held. So a
+  // projection that lost five more columns, or a has_boundary that disagreed
+  // with the blob on any row, fails here -- where `toMatchObject` or a
+  // key-by-key loop would pass. The JS recomputation is the second opinion on
+  // the SQL predicate: `Boolean(s)` in JS against `IS NOT NULL AND != ''` in
+  // SQLite, over all three stored spellings.
+  it("returns exactly what the unbatched pair returns, with the blob traded for the flag", async () => {
     LOCATION_SEEDS.forEach((seed, i) =>
       seedLocation({
         id: 20 + i,
@@ -1338,14 +1395,19 @@ describe("the unprojected pair", () => {
 
     const batched = await getLocationsAndDonationPointsByFoodbankId(session, SALISBURY);
 
-    expect(batched.locations).toEqual(await getLocationsByFoodbankId(session, SALISBURY));
+    const unbatched = await getLocationsByFoodbankId(session, SALISBURY);
+    expect(batched.locations).toEqual(
+      unbatched.map(({ boundary_geojson, ...rest }) => ({ ...rest, has_boundary: boundary_geojson ? 1 : 0 })),
+    );
     expect(batched.donationPoints).toEqual(await getDonationPointsByFoodbankId(session, SALISBURY));
     // toEqual on two empty arrays would pass while proving nothing, and the
     // three boundary states have to be present for the comparison to be worth
-    // making -- this is the column the caller reads.
+    // making -- this is the column the flag stands in for. Both flag values
+    // must appear too, or the derivation could be a constant.
     expect(batched.locations).toHaveLength(LOCATION_NAMES.length);
     expect(batched.donationPoints).toHaveLength(DONATION_POINT_NAMES.length);
-    expect(new Set(batched.locations.map((l) => l.boundary_geojson))).toEqual(new Set([BOUNDARY, null, ""]));
+    expect(new Set(unbatched.map((l) => l.boundary_geojson))).toEqual(new Set([BOUNDARY, null, ""]));
+    expect(new Set(batched.locations.map((l) => l.has_boundary))).toEqual(new Set([0, 1]));
     // Closed rows on both sides survive, because neither Django queryset
     // filters them (givefood/models/foodbank.py:546 and :552).
     expect(batched.locations.filter((l) => l.is_closed)).toHaveLength(1);

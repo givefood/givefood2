@@ -1,9 +1,10 @@
 import { sortByName, type Session } from "./types";
 import {
+  LOCATION_COLUMNS_FLAGGED,
   LOCATION_COLUMNS_NARROW,
-  mapLocationRow,
+  mapLocationRowFlagged,
   mapLocationRowNarrow,
-  type FoodbankLocationRow,
+  type FoodbankLocationRowFlagged,
   type FoodbankLocationRowNarrow,
 } from "./locations";
 import { mapDonationPointRow, type DonationPointRow } from "./donationpoints";
@@ -77,54 +78,60 @@ export async function getLocationsDonationPointsAndNearbyFoodbanks(
   };
 }
 
-// THE SAME PAIR, WITHOUT THE NEIGHBOURS AND WITHOUT THE PROJECTION -- for
-// gfwfbn `foodbank_donationpoints` (routes/wfbn/locations.ts, github #52),
-// which fetched these two lists as two sequential awaits and is the only
-// caller that needs neither the ranked neighbours nor a narrowed location row.
+// THE SAME PAIR, WITHOUT THE NEIGHBOURS -- for gfwfbn `foodbank_donationpoints`
+// (routes/wfbn/locations.ts, github #52), which fetched these two lists as two
+// sequential awaits and is the only caller that needs neither the ranked
+// neighbours nor the full location row.
 //
-// WHY NOT REUSE THE FUNCTION ABOVE. Two of its three pieces are wrong for this
-// caller and both would cost rather than save. `nearbyIds` is the detail
-// endpoint's ranked candidate set, computed by a query this page never makes;
-// passing [] would suppress the statement but the signature would still be
-// lying about what the page knows. And the LOCATION PROJECTION is the load-
-// bearing difference: `has_service_area` on this page is derived from
-// `boundary_geojson` on these very rows (see the caller), which
-// LOCATION_COLUMNS_NARROW deliberately leaves in D1. Narrowing here and
-// deriving from the result would not fail -- `undefined !== null` is true --
-// it would silently report a service area for all 1,023 food banks. The row
-// TYPE is what stops that: FoodbankLocationRowNarrow is an
-// `Omit<..., "boundary_geojson">`, so swapping this function's projection for
-// the other one is a compile error at the caller, not a live wrong answer.
+// WHY NOT REUSE THE FUNCTION ABOVE. `nearbyIds` is the detail endpoint's ranked
+// candidate set, computed by a query this page never makes; passing [] would
+// suppress the statement but the signature would still be lying about what the
+// page knows.
 //
-// So the two statements are, byte for byte, the ones getLocationsByFoodbankId
-// and getDonationPointsByFoodbankId send -- same views, same `WHERE
-// foodbank_id = ?` with no is_closed filter, same mappers, same JS name sort
+// THE LOCATIONS CARRY A FLAG, NOT THE BLOB, and that is the difference from
+// this function's first version. `has_service_area` on this page is derived
+// from whether a location has a boundary -- never from the boundary itself,
+// which nothing on the page prints (donationpoints.njk reads name, slug,
+// address, postcode and place_has_photo off these rows and nothing else; the
+// map fetches its geometry separately from /needs/at/<slug>/geo.json). So the
+// blob travelled out of D1 to answer one boolean. On canterbury, the largest
+// of the seven production food banks that have a boundary at all, that was
+// 2,299,936 of the 2,319,826 bytes this statement returned. Now it is a 0/1
+// column computed in SQLite: 19,890 bytes, -99.1%, measured read-only against
+// production (see getLocationsByFoodbankIdFlagged for the full figures).
+//
+// THE FOOTGUN THIS REPLACES, kept here because it is what the row type is FOR.
+// The previous version could not use LOCATION_COLUMNS_NARROW: the caller read
+// `l.boundary_geojson`, the narrow projection omits it, and `undefined !==
+// null` is true -- so that swap would have reported a service area for all
+// 1,023 open food banks without failing anything. LOCATION_COLUMNS_FLAGGED is
+// the projection that makes the swap SAFE, because it carries the answer
+// instead of the evidence; and FoodbankLocationRowFlagged is still an
+// `Omit<..., "boundary_geojson">`, so a caller that goes back to reading the
+// blob off these rows is a compile error rather than a live wrong answer.
+//
+// Otherwise the two statements are the ones getLocationsByFoodbankId and
+// getDonationPointsByFoodbankId send -- same views, same `WHERE foodbank_id =
+// ?` with no is_closed filter, same boolean coercion, same JS name sort
 // (Django's `.order_by("name")` on both model methods,
-// givefood/models/foodbank.py:546 and :552). ONLY THE TRANSPORT CHANGES:
-// `session.batch()` puts them on one round trip instead of two, the same fix
-// and for the same measured reason as the function above. Its equivalence to
-// the unbatched pair is asserted row-for-row in the test file rather than
-// argued here.
+// givefood/models/foodbank.py:546 and :552). `session.batch()` puts them on one
+// round trip instead of two, the same fix and for the same measured reason as
+// the function above. Equivalence with the unbatched pair, blob subtracted, is
+// asserted row-for-row in the test file rather than argued here.
 //
-// The blob those location rows still carry is the price of deriving the flag
-// without a third round trip, and it is a real one for the seven production
-// food banks that have a boundary at all (up to a few hundred kB). Trading it
-// for a `(boundary_geojson IS NOT NULL AND boundary_geojson != '') AS
-// has_boundary` flag column -- as getAllOpenLocationsFlagged already does --
-// is the right next move for BOTH of that route's handlers, but it changes the
-// row shape the templates see and github #52 parks it as its own change.
+// foodbankdonationpoint has no boundary column, so its `SELECT *` stays.
 export async function getLocationsAndDonationPointsByFoodbankId(
   session: Session,
   foodbankId: number,
-): Promise<{ locations: FoodbankLocationRow[]; donationPoints: DonationPointRow[] }> {
+): Promise<{ locations: FoodbankLocationRowFlagged[]; donationPoints: DonationPointRow[] }> {
   const results = await session.batch([
-    session.prepare("SELECT * FROM foodbanklocation_full WHERE foodbank_id = ?").bind(foodbankId),
+    session.prepare(`SELECT ${LOCATION_COLUMNS_FLAGGED} FROM foodbanklocation_full WHERE foodbank_id = ?`).bind(foodbankId),
     session.prepare("SELECT * FROM foodbankdonationpoint_full WHERE foodbank_id = ?").bind(foodbankId),
   ]);
   // batch() always returns one result per input statement, in the same order
   // -- see the sibling function's note on why these `!`s are safe.
   return {
-    locations: sortByName(results[0]!.results.map((r) => mapLocationRow(r as Record<string, unknown>))),
+    locations: sortByName(results[0]!.results.map((r) => mapLocationRowFlagged(r as Record<string, unknown>))),
     donationPoints: sortByName(results[1]!.results.map((r) => mapDonationPointRow(r as Record<string, unknown>))),
   };
 }

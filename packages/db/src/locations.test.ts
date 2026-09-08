@@ -8,6 +8,7 @@ import {
   getFoodbankLocationBySlugs,
   getLocationLatLngsByFoodbankId,
   getLocationsByFoodbankId,
+  getLocationsByFoodbankIdFlagged,
   getLocationsByFoodbankIdUnsorted,
   getLocationsByIds,
   getOpenDonationPointLocationCoordinates,
@@ -505,6 +506,7 @@ const DECLARED_COLUMNS: (keyof FoodbankLocationRow)[] = [
   "phone_number", "email", "modified", "edited",
 ];
 
+
 describe("foodbanklocation_full", () => {
   it("supplies exactly the columns FoodbankLocationRow declares, no more and no fewer", async () => {
     seedFoodbank({ id: SALISBURY, slug: "salisbury" });
@@ -601,6 +603,7 @@ describe("foodbanklocation_full", () => {
 // it names foodbank_slug, which no longer exists there.
 const READS_THE_VIEW: Array<[string, (s: Session) => Promise<unknown>]> = [
   ["getLocationsByFoodbankId", (s) => getLocationsByFoodbankId(s, SALISBURY)],
+  ["getLocationsByFoodbankIdFlagged", (s) => getLocationsByFoodbankIdFlagged(s, SALISBURY)],
   ["getLocationsByFoodbankIdUnsorted", (s) => getLocationsByFoodbankIdUnsorted(s, SALISBURY)],
   ["getAllOpenLocations", (s) => getAllOpenLocations(s)],
   ["getAllOpenLocationSlugs", (s) => getAllOpenLocationSlugs(s)],
@@ -688,16 +691,34 @@ describe("getLocationsByFoodbankId", () => {
   // which Intl.Collator("en-US") reproduces. Both orderings were executed to
   // write this expectation -- the byte order is the second array, and it is
   // exactly what a "simplification" back to SQL ORDER BY would produce.
+  //
+  // AND THE SLUGS ARE EXPLICIT, which is what makes the claim testable at all.
+  // The statement is answered from `loc_foodbank_slug_idx (foodbank_id, slug)`,
+  // so rows arrive in SLUG order -- and seedLocation derives a slug from the
+  // name, so for any set of names anyone would naturally pick, the engine hands
+  // the sort a list that is ALREADY in the expected order and doing nothing
+  // passes. Mutation-tested: with derived slugs, deleting sortByName from this
+  // function left this assertion green. These five slugs are chosen to disagree
+  // with the names.
   it("sorts by name under a linguistic collation, not SQLite's byte order", async () => {
     seedFoodbank({ id: SALISBURY, slug: "salisbury" });
-    seedLocation({ id: 401, foodbankId: SALISBURY, name: "Wilton" });
-    seedLocation({ id: 402, foodbankId: SALISBURY, name: "amesbury Hub" });
-    seedLocation({ id: 403, foodbankId: SALISBURY, name: "Éire Centre" });
-    seedLocation({ id: 404, foodbankId: SALISBURY, name: "Bemerton Heath" });
-    seedLocation({ id: 405, foodbankId: SALISBURY, name: "Zeals Outreach" });
+    seedLocation({ id: 401, foodbankId: SALISBURY, name: "Wilton", slug: "aaa" });
+    seedLocation({ id: 402, foodbankId: SALISBURY, name: "amesbury Hub", slug: "bbb" });
+    seedLocation({ id: 403, foodbankId: SALISBURY, name: "Éire Centre", slug: "ccc" });
+    seedLocation({ id: 404, foodbankId: SALISBURY, name: "Bemerton Heath", slug: "ddd" });
+    seedLocation({ id: 405, foodbankId: SALISBURY, name: "Zeals Outreach", slug: "eee" });
 
     const rows = await getLocationsByFoodbankId(session, SALISBURY);
 
+    // The premise: the rows really do arrive out of name order, so the two
+    // expectations below cannot be satisfied by a function that never sorts.
+    expect(names(await getLocationsByFoodbankIdUnsorted(session, SALISBURY))).toEqual([
+      "Wilton",
+      "amesbury Hub",
+      "Éire Centre",
+      "Bemerton Heath",
+      "Zeals Outreach",
+    ]);
     expect(names(rows)).toEqual(["amesbury Hub", "Bemerton Heath", "Éire Centre", "Wilton", "Zeals Outreach"]);
     expect(names(rows)).not.toEqual(["Bemerton Heath", "Wilton", "Zeals Outreach", "amesbury Hub", "Éire Centre"]);
   });
@@ -743,6 +764,191 @@ describe("getLocationsByFoodbankId", () => {
     expect(column.notnull).toBe(1);
     expect(await getLocationsByFoodbankId(session, null as unknown as number)).toEqual([]);
     expect(await getLocationsByFoodbankIdUnsorted(session, null as unknown as number)).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getLocationsByFoodbankIdFlagged -- getLocationsByFoodbankId with the blob
+// replaced by a 0/1 flag, for /needs/at/<slug>/locations/
+// ---------------------------------------------------------------------------
+//
+// That page reads boundary_geojson TWICE and prints it NEITHER time: once to
+// derive has_service_area (routes/wfbn/locations.ts) and once to suppress a
+// place photo (wfbn/foodbank/locations.njk's `{% if location.place_has_photo
+// and not location.has_boundary %}`). The map on the page fetches its geometry
+// separately from /needs/at/<slug>/geo.json, which has its own query. So the
+// blob was crossing the wire to answer two booleans -- 2,299,936 of the
+// 2,319,826 bytes this statement returned for canterbury, the largest of the
+// seven production food banks that own a boundary at all. Measured read-only
+// against production D1, 7 interleaved runs of each: 2,319,826 -> 19,890 bytes
+// (-99.1%), median sql_duration 17.8 ms (12.7-23.3) -> 5.4 ms (3.9-7.4),
+// rows_read unchanged at 43.
+//
+// EVERY FAILURE MODE HERE IS SILENT, which is why this block repeats the shape
+// of getAllOpenLocationsFlagged's rather than trusting it: the two functions
+// share LOCATION_COLUMNS_FLAGGED but not the WHERE, the sort or the caller. A
+// column missing from the projection blanks a field on ~1,000 pages; a
+// has_boundary that gets the empty string wrong flips the service-area map on
+// or off; a lost sortByName reorders every location list on the site.
+//
+// MUTATION-TESTED alongside foodbankDetail.test.ts and
+// routes/wfbn/locations.test.ts -- thirteen mutants, all killed. The list, and
+// the one that looks equivalent and is not (`IS NOT NULL` dropped, which makes
+// has_boundary NULL rather than 0), is in foodbankDetail.test.ts's header.
+
+describe("getLocationsByFoodbankIdFlagged", () => {
+  // THE DRIFT DETECTOR, same one the sibling carries and for the same reason:
+  // LOCATION_COLUMNS_NARROW is a hand-maintained 38-name string and the view is
+  // defined in a migration. Read from the engine's pragma, so the next ALTER
+  // TABLE updates the constant or turns this red.
+  it("returns every column of foodbanklocation_full except boundary_geojson, plus has_boundary", async () => {
+    seedFoodbank({ id: SALISBURY, slug: "salisbury" });
+    seedLocation({ id: 401, foodbankId: SALISBURY, name: "Amesbury", boundaryGeojson: '{"type":"Polygon"}' });
+
+    const [row] = await getLocationsByFoodbankIdFlagged(session, SALISBURY);
+
+    const expected = columnsOf("foodbanklocation_full")
+      .filter((column) => column !== "boundary_geojson")
+      .concat("has_boundary");
+    expect(Object.keys(row!).sort()).toEqual(expected.sort());
+    expect(Object.keys(row!)).not.toContain("boundary_geojson");
+  });
+
+  // THE PARITY CHECK against the unprojected function this one stands in for,
+  // built by subtracting the blob and recomputing the flag from it in JS. Not a
+  // loosened comparison: a projection that dropped five more columns, or a
+  // has_boundary that disagreed with the value the blob held on any row, fails
+  // here. Ids, slugs and names are all in different orders, so "same rows in
+  // the same order" cannot be satisfied by luck.
+  it("returns the same rows, in the same order, as getLocationsByFoodbankId with the blob traded for the flag", async () => {
+    seedFoodbank({ id: SALISBURY, slug: "salisbury" });
+    seedFoodbank({ id: WESTBURY, slug: "westbury" });
+    seedLocation({ id: 401, foodbankId: SALISBURY, name: "Zeals Outreach", slug: "aaa", boundaryGeojson: '{"type":"Polygon"}' });
+    seedLocation({ id: 402, foodbankId: SALISBURY, name: "Amesbury", slug: "zzz", isDonationPoint: null });
+    seedLocation({ id: 403, foodbankId: SALISBURY, name: "Milford", slug: "mmm", isClosed: 1, boundaryGeojson: "" });
+    seedLocation({ id: 404, foodbankId: WESTBURY, name: "Warminster" });
+
+    const wide = await getLocationsByFoodbankId(session, SALISBURY);
+    const flagged = await getLocationsByFoodbankIdFlagged(session, SALISBURY);
+
+    expect(flagged).toEqual(wide.map(({ boundary_geojson, ...rest }) => ({ ...rest, has_boundary: boundary_geojson ? 1 : 0 })));
+    expect(names(flagged)).toEqual(["Amesbury", "Milford", "Zeals Outreach"]);
+    expect(flagged.map((r) => r.has_boundary)).toEqual([0, 0, 1]);
+  });
+
+  // The three stored spellings, each seeded on its own so the flag is not
+  // graded on a fixture where only one of them appears. The empty string is the
+  // one a naive `IS NOT NULL` gets wrong, and it is the one an admin edit
+  // actually produces: clear the field in the admin and the column holds '',
+  // not NULL.
+  it.each([
+    ["a stored polygon", '{"type":"Polygon","coordinates":[[[0,0]]]}', 1],
+    ["NULL", null, 0],
+    ["the empty string", "", 0],
+    ["whitespace only", "  ", 1],
+  ])("flags %s as %o -> has_boundary %i", async (_label, stored, expected) => {
+    seedFoodbank({ id: SALISBURY, slug: "salisbury" });
+    seedLocation({ id: 401, foodbankId: SALISBURY, name: "Amesbury", boundaryGeojson: stored });
+
+    const [row] = await getLocationsByFoodbankIdFlagged(session, SALISBURY);
+
+    expect(row!.has_boundary).toBe(expected);
+    expect(row!.has_boundary).not.toBeNull();
+    // 0/1, never a boolean: has_boundary is deliberately outside
+    // LOCATION_BOOLEAN_COLUMNS and routes/wfbn/locations.ts reads it as `=== 1`.
+    expect(typeof row!.has_boundary).toBe("number");
+  });
+
+  // SCOPED, and CLOSED ROWS KEPT. Both are inherited from the function this
+  // replaces and neither is visible in a fixture of one open location: without
+  // the foodbank_id predicate the first service area in the country would give
+  // every food bank a service-area map, and an `AND is_closed = 0` bolted on
+  // here would silently delete shut branches from ~1,000 location lists AND
+  // change has_service_area for any food bank whose only boundary sits on one.
+  // Django's `Foodbank.locations()` has no is_closed filter
+  // (givefood/models/foodbank.py:546), and neither did hasServiceArea's count.
+  it("returns only this food bank's locations, closed ones included", async () => {
+    seedFoodbank({ id: SALISBURY, slug: "salisbury" });
+    seedFoodbank({ id: WESTBURY, slug: "westbury" });
+    seedLocation({ id: 401, foodbankId: SALISBURY, name: "Amesbury", isClosed: 0 });
+    seedLocation({ id: 402, foodbankId: SALISBURY, name: "Wilton", isClosed: 1, boundaryGeojson: '{"type":"Polygon"}' });
+    seedLocation({ id: 403, foodbankId: WESTBURY, name: "Warminster", boundaryGeojson: '{"type":"Polygon"}' });
+
+    const rows = await getLocationsByFoodbankIdFlagged(session, SALISBURY);
+
+    expect(ids(rows)).toEqual([401, 402]);
+    expect(rows.map((r) => r.is_closed)).toEqual([false, true]);
+    // The closed row's boundary still counts -- this is the case that kills a
+    // `.filter((l) => !l.is_closed)` in the caller's derivation.
+    expect(rows.some((r) => r.has_boundary === 1)).toBe(true);
+  });
+
+  // SORTED IN JS UNDER en-US, not SQLite's byte order -- the same claim
+  // getLocationsByFoodbankId's own block makes, restated because this function
+  // has its own `.map()` and could lose the sort on its own. The second array
+  // is exactly what an SQL `ORDER BY name` would have produced.
+  it("sorts by name under a linguistic collation, not SQLite's byte order", async () => {
+    seedFoodbank({ id: SALISBURY, slug: "salisbury" });
+    seedLocation({ id: 401, foodbankId: SALISBURY, name: "Wilton" });
+    seedLocation({ id: 402, foodbankId: SALISBURY, name: "amesbury Hub" });
+    seedLocation({ id: 403, foodbankId: SALISBURY, name: "Éire Centre" });
+    seedLocation({ id: 404, foodbankId: SALISBURY, name: "Bemerton Heath" });
+
+    expect(names(await getLocationsByFoodbankIdFlagged(session, SALISBURY))).toEqual([
+      "amesbury Hub",
+      "Bemerton Heath",
+      "Éire Centre",
+      "Wilton",
+    ]);
+  });
+
+  it("coerces the four flag columns on every row, and leaves has_boundary alone", async () => {
+    seedFoodbank({ id: SALISBURY, slug: "salisbury" });
+    seedLocation({ id: 401, foodbankId: SALISBURY, name: "Amesbury", isDonationPoint: null, placeHasPhoto: 0, isMobile: 1 });
+    seedLocation({ id: 402, foodbankId: SALISBURY, name: "Bemerton Heath", isMobile: null, boundaryGeojson: '{"type":"Polygon"}' });
+
+    const rows = await getLocationsByFoodbankIdFlagged(session, SALISBURY);
+
+    // Name order, so Amesbury (no boundary) is first and Bemerton Heath is
+    // second -- the ids are seeded the other way round on purpose.
+    expect(names(rows)).toEqual(["Amesbury", "Bemerton Heath"]);
+    expect(rows.map((r) => r.is_mobile)).toEqual([true, null]);
+    expect(rows[0]!.is_donation_point).toBeNull();
+    expect(rows[0]!.place_has_photo).toBe(false);
+    expect(rows.map((r) => r.has_boundary)).toEqual([0, 1]);
+  });
+
+  // THE WHOLE REASON THE FUNCTION EXISTS, asserted on the SQL the MODULE
+  // prepared rather than on a copy retyped here -- see planFor's comment for
+  // why that distinction matters. A "tidy-up" back to getLocationsByFoodbankId's
+  // `SELECT *` returns a superset of these columns and leaves every other test
+  // in this block green while putting 2.3 MB back on the wire.
+  it("names its columns instead of issuing SELECT *, and never selects the blob", async () => {
+    await getLocationsByFoodbankIdFlagged(session, SALISBURY);
+    await getLocationsByFoodbankId(session, SALISBURY);
+    const [flaggedSql, wideSql] = prepared;
+
+    expect(flaggedSql!).not.toContain("SELECT *");
+    expect(flaggedSql!).toContain("FROM foodbanklocation_full WHERE foodbank_id = ?");
+    expect(flaggedSql!.match(/boundary_geojson/g)).toEqual(["boundary_geojson", "boundary_geojson"]);
+    expect(flaggedSql!).toContain("(boundary_geojson IS NOT NULL AND boundary_geojson != '') AS has_boundary");
+    // THE PLAN IS UNCHANGED, asserted against the plan of the statement this
+    // replaces rather than against a hardcoded string -- the same index search
+    // and the same LEFT-JOIN probe of the parent, so this is bytes on the wire
+    // and nothing else. (Production agrees: `SEARCH l USING INDEX
+    // loc_foodbank_slug_idx (foodbank_id=?)`, read-only against D1.)
+    expect(planFor(flaggedSql!.replace("?", String(SALISBURY)))).toEqual(planFor(wideSql!.replace("?", String(SALISBURY))));
+    expect(planFor(flaggedSql!.replace("?", String(SALISBURY)))).toEqual([
+      "SEARCH l USING INDEX loc_foodbank_slug_idx (foodbank_id=?)",
+      "SEARCH f USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN",
+    ]);
+  });
+
+  it("matches nothing at all when the bound food bank id is NULL", async () => {
+    seedFoodbank({ id: SALISBURY, slug: "salisbury" });
+    seedLocation({ id: 401, foodbankId: SALISBURY, name: "Amesbury" });
+
+    expect(await getLocationsByFoodbankIdFlagged(session, null as unknown as number)).toEqual([]);
   });
 });
 
@@ -1562,11 +1768,14 @@ describe("hasServiceArea", () => {
 
   // Django's has_service_area() opens with `if self.no_locations == 0: return
   // False` (models/foodbank.py:296-298), a short-circuit this function does NOT
-  // carry -- it lives in the caller instead (wfbn/foodbank.ts:46 only awaits
-  // this when `foodbank.no_locations !== 0`). Pinned here so the split is
-  // deliberate and visible: called directly on a food bank whose cached
-  // no_locations is a stale 0, this function answers from the rows and says
-  // true, where Django would have said false.
+  // carry -- it needs the parent's cached counter and this one is given only an
+  // id. It lives with whoever holds that counter: since github #52 item 3 that
+  // is foodbank.ts's getFoodbankBySlugWithServiceArea, whose slug-keyed twin of
+  // the statement below is the spelling all three WFBN page routes now use.
+  // Pinned here so the split stays deliberate and visible: called directly on a
+  // food bank whose cached no_locations is a stale 0, this function answers
+  // from the rows and says true, where Django -- and that other spelling --
+  // would have said false.
   it("answers from the rows, not from the parent's cached no_locations count", async () => {
     seedFoodbank({ id: SALISBURY, slug: "salisbury" });
     seedLocation({ id: 401, foodbankId: SALISBURY, name: "Amesbury", boundaryGeojson: BOUNDARY });

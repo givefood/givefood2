@@ -1,5 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { schemaFor } from "@givefood/db/src/schema.testkit";
+import { LOCATION_COLUMNS_FLAGGED } from "@givefood/db";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import app from "../../index";
 import type { AppEnv } from "../../types";
@@ -85,6 +86,21 @@ import type { AppEnv } from "../../types";
 // location and nowhere else" case was added for that, and it is now the only
 // thing that kills the first mutant.
 //
+// A THIRD #52 ROUND covered its closing observation -- the location rows now
+// arrive with a computed `has_boundary` flag instead of the boundary blob
+// itself, which for the seven production food banks that own one was up to
+// 2.3 MB of geojson per render used as a truthiness test. Thirteen mutants over
+// this file plus packages/db's locations/foodbankDetail suites, all killed;
+// the four that only this file could see were the route's `=== 1` loosened to
+// `!== undefined` (which makes every food bank claim a service area), `.some`
+// swapped for `.every`, the no_locations guard removed again, and -- the one
+// that is invisible in packages/db entirely -- wfbn/foodbank/locations.njk's
+// photo gate left reading `location.boundary_geojson`, a column that is no
+// longer on the row, so `not undefined` is true and every boundary-bearing
+// location grows a place photo it should not have. The full list, including the
+// two `SELECT *` reverts that ONLY the statement-text assertions can see, is in
+// foodbankDetail.test.ts's header.
+//
 // ONE EQUIVALENT MUTANT SURVIVED and is recorded rather than papered over:
 // ADDING a `foodbank.no_locations !== 0 &&` guard to the LOCATIONS page's
 // derivation changes nothing, because the 404 gate at the top of that handler
@@ -92,6 +108,15 @@ import type { AppEnv } from "../../types";
 // genuinely unobservable, which is exactly why the handler does not carry it.
 
 const ORIGIN = "https://www.givefood.org.uk";
+
+// The location SELECT both handlers now send: every column of
+// foodbanklocation_full EXCEPT the boundary blob, plus the 0/1 flag computed in
+// SQL from it. Built from packages/db's own exported fragment rather than
+// retyped, so this file pins the SHAPE of the statement (named columns, flag,
+// view, WHERE) while the 38-name list keeps its single definition -- see
+// packages/db/src/locations.test.ts for the drift detector that holds that list
+// to the view's real columns.
+const LOCATIONS_SQL = `SELECT ${LOCATION_COLUMNS_FLAGGED} FROM foodbanklocation_full WHERE foodbank_id = ?`;
 
 type Bindable = null | number | bigint | string | Uint8Array;
 
@@ -527,6 +552,14 @@ describe("wfbnFoodbankLocations -- the response envelope", () => {
   // banks and which was counting a predicate over rows the third statement had
   // just returned in full. has_service_area is derived from those rows
   // instead; the equivalence is proved case by case further down this file.
+  //
+  // AND THE THIRD STATEMENT NAMES ITS COLUMNS. #52's closing observation: the
+  // page reads boundary_geojson twice and prints it neither time, so it asks
+  // for `... AS has_boundary` and leaves the blob in D1. That is invisible from
+  // the rendered page -- `SELECT *` returns a superset and every other
+  // assertion in this file still passes -- so the statement text is the only
+  // thing that can see a revert. Worth 2,299,936 bytes per render on the
+  // largest of the seven production food banks that own a boundary.
   it("reads the locations page from one session: the batched foodbank+need pair, then the locations, and nothing else", async () => {
     await get("/needs/at/salisbury/locations/");
 
@@ -534,8 +567,9 @@ describe("wfbnFoodbankLocations -- the response envelope", () => {
     expect(prepared.map((p) => [p.sql, p.params])).toEqual([
       ["SELECT * FROM foodbank WHERE slug = ?", ["salisbury"]],
       ["SELECT * FROM foodbankchange_full WHERE id = (SELECT latest_need_id FROM foodbank WHERE slug = ?)", ["salisbury"]],
-      ["SELECT * FROM foodbanklocation_full WHERE foodbank_id = ?", [1]],
+      [LOCATIONS_SQL, [1]],
     ]);
+    expect(LOCATIONS_SQL).not.toContain("SELECT *");
     // Three statements, two waits -- and the statement log above cannot tell
     // those apart. Four sequential round trips is what this page cost before
     // #52; the pair below is what it costs now.
@@ -544,7 +578,7 @@ describe("wfbnFoodbankLocations -- the response envelope", () => {
         "SELECT * FROM foodbank WHERE slug = ?",
         "SELECT * FROM foodbankchange_full WHERE id = (SELECT latest_need_id FROM foodbank WHERE slug = ?)",
       ],
-      ["SELECT * FROM foodbanklocation_full WHERE foodbank_id = ?"],
+      [LOCATIONS_SQL],
     ]);
   });
 
@@ -702,13 +736,21 @@ describe("wfbnFoodbankLocations -- the list a donor actually reads", () => {
     expect(column).toContain('<a href="/needs/at/salisbury/closed-centre/">Alderholt Rooms</a>');
   });
 
-  // THE PHOTO GATE IS `place_has_photo AND NOT boundary_geojson`. Both of
-  // these locations have a photo; only the one WITHOUT a service-area boundary
-  // shows it, because Django prints a map thumbnail instead for the other --
-  // and that thumbnail branch is deliberately NOT ported (the .njk says so:
+  // THE PHOTO GATE IS `place_has_photo AND NOT has_boundary`. Both of these
+  // locations have a photo; only the one WITHOUT a service-area boundary shows
+  // it, because Django prints a map thumbnail instead for the other -- and that
+  // thumbnail branch is deliberately NOT ported (the .njk says so:
   // wfbn:foodbank_location_map_size has no url() entry or handler here). So a
   // boundary-bearing location renders with no image at all, where Django
   // renders a map. Pinned as the current, knowingly-divergent behaviour.
+  //
+  // THE SECOND HALF OF THE GATE IS THE FLAG, NOT THE BLOB, and this is the one
+  // assertion in the repo that can see the difference. Django tests
+  // `location.boundary_geojson`; since #52's projection change the column is
+  // not on the row at all, so the template reads `location.has_boundary`
+  // instead. Leave the template on the old name and Nunjucks evaluates `not
+  // undefined` -- true for every location -- and Zeals grows a photo it must
+  // not have, on a page that still renders a clean 200.
   it("shows a photo only for a location that has one and has no boundary", async () => {
     const column = listColumn(await body("/needs/at/salisbury/locations/"), "locations");
 
@@ -878,6 +920,9 @@ describe("wfbnFoodbankDonationpoints -- the gate, which is not the same gate", (
   //
   // The statement list is asserted first because it is what proves the batched
   // pair did not quietly change the SQL: same views, same bound id, same order.
+  // The one thing it DID change afterwards is the location projection -- #52's
+  // closing observation -- which is why the expected SQL is built from
+  // packages/db's LOCATION_COLUMNS_FLAGGED rather than being `SELECT *`.
   it("reads the donation-points page from one session, in four statements and only two round trips", async () => {
     await get("/needs/at/salisbury/donationpoints/");
 
@@ -885,7 +930,7 @@ describe("wfbnFoodbankDonationpoints -- the gate, which is not the same gate", (
     expect(prepared.map((p) => [p.sql, p.params])).toEqual([
       ["SELECT * FROM foodbank WHERE slug = ?", ["salisbury"]],
       ["SELECT * FROM foodbankchange_full WHERE id = (SELECT latest_need_id FROM foodbank WHERE slug = ?)", ["salisbury"]],
-      ["SELECT * FROM foodbanklocation_full WHERE foodbank_id = ?", [1]],
+      [LOCATIONS_SQL, [1]],
       ["SELECT * FROM foodbankdonationpoint_full WHERE foodbank_id = ?", [1]],
     ]);
     expect(roundTrips).toEqual([
@@ -893,8 +938,13 @@ describe("wfbnFoodbankDonationpoints -- the gate, which is not the same gate", (
         "SELECT * FROM foodbank WHERE slug = ?",
         "SELECT * FROM foodbankchange_full WHERE id = (SELECT latest_need_id FROM foodbank WHERE slug = ?)",
       ],
-      ["SELECT * FROM foodbanklocation_full WHERE foodbank_id = ?", "SELECT * FROM foodbankdonationpoint_full WHERE foodbank_id = ?"],
+      [LOCATIONS_SQL, "SELECT * FROM foodbankdonationpoint_full WHERE foodbank_id = ?"],
     ]);
+    // The locations half of the batch is projected; the donation-point half is
+    // not, and does not need to be -- foodbankdonationpoint has no boundary
+    // column. Asserted so "make the two statements match" is a deliberate
+    // change rather than a tidy-up.
+    expect(LOCATIONS_SQL).not.toContain("SELECT *");
   });
 });
 
@@ -1097,13 +1147,18 @@ describe("has_service_area -- passed twice, and short-circuited on one page only
   // hiding a real service area would therefore be a CONVERGENCE. The Python
   // above says otherwise -- the counter is checked FIRST -- so dropping it
   // would have been a divergence, and this page would have started claiming a
-  // service area that /needs/at/bath/ (routes/wfbn/foodbank.ts:46) and
-  // /needs/at/bath/donationpoint/<dpslug>/ (locationDetail.ts:124) -- which
-  // fetch no location rows, so they keep the guard as a ternary -- still deny.
-  // NOT /needs/at/bath/<locslug>/, whose handler (locationDetail.ts:41) issues
-  // the count unguarded and so already answers true: that is a pre-existing
-  // divergence, pinned in locationDetail.test.ts, and not #52's to fix. The
-  // guard stays; #52 is a round-trip change and moves no pixel.
+  // service area that /needs/at/bath/, /needs/at/bath/<locslug>/ and
+  // /needs/at/bath/donationpoint/<dpslug>/ all still deny. Those three fetch no
+  // location rows of their own, so since #52 item 3 they take the flag -- guard
+  // included -- from packages/db's getFoodbankBySlugWithServiceArea.
+  //
+  // /needs/at/bath/<locslug>/ only joined that list in item 3: its handler used
+  // to issue the count UNGUARDED and answer true. That is the one input in the
+  // whole of #52 on which a rendered page moves, it is a convergence with the
+  // Python above rather than a regression, and it is pinned by
+  // locationDetail.test.ts's "hides the service area when the parent's
+  // no_locations is 0, even though a location has a boundary". Everywhere else
+  // the guard stays put and #52 is a round-trip change that moves no pixel.
   //
   // The same page LISTS that location in its donation-point loop, because that
   // loop reads the table rather than the counter. So one stale integer makes a
@@ -1120,11 +1175,22 @@ describe("has_service_area -- passed twice, and short-circuited on one page only
     expect(listedNames(html, "donationpoints")).toEqual(["Main", "Twerton Centre", "Bath Co-op"]);
   });
 
-  // NEITHER PAGE ASKS FOR THE COUNT ANY MORE, on any of the branches the
-  // fixture reaches -- including bath, where it was already skipped, and truro,
-  // where it always ran. A revert to hasServiceArea() would render identically
-  // and pass every assertion in this block except this one.
-  it("issues no service-area count on either page, for any food bank", async () => {
+  // NEITHER PAGE ASKS FOR THE COUNT ANY MORE, AND NEITHER PULLS THE BLOB, on
+  // any of the branches the fixture reaches -- including bath, where the count
+  // was already skipped, and truro, where it always ran. A revert to
+  // hasServiceArea(), or to `SELECT *` for the location rows, would render
+  // identically and pass every assertion in this block except this one.
+  //
+  // THE SECOND LOOP IS NOT "boundary_geojson IS ABSENT" -- it cannot be, since
+  // the flag is computed FROM that column and so must name it. What must never
+  // happen is the column being SELECTED, i.e. crossing the wire. So the
+  // assertion is that wherever the name appears it appears exactly twice, both
+  // times inside the has_boundary expression, and nowhere in a `SELECT *` over
+  // a table that carries it. Dropping either half of that pair is what a
+  // careless edit does, and either half changes the answer for a real stored
+  // value ('' on one side, and nothing on the other -- SQLite's `NULL != ''` is
+  // UNKNOWN, so that mutant is equivalent and is recorded in the header note).
+  it("issues no service-area count on either page, and never lifts the boundary blob out of D1", async () => {
     for (const path of [
       "/needs/at/salisbury/locations/",
       "/needs/at/salisbury/donationpoints/",
@@ -1137,8 +1203,20 @@ describe("has_service_area -- passed twice, and short-circuited on one page only
     }
 
     expect(prepared).not.toHaveLength(0);
-    for (const { sql } of prepared) expect(sql).not.toContain("COUNT(*)");
-    for (const { sql } of prepared) expect(sql).not.toContain("boundary_geojson");
+    for (const { sql } of prepared) {
+      expect(sql).not.toContain("COUNT(*)");
+      expect(sql).not.toContain("SELECT * FROM foodbanklocation");
+      if (sql.includes("boundary_geojson")) {
+        expect(sql.match(/boundary_geojson/g)).toEqual(["boundary_geojson", "boundary_geojson"]);
+        expect(sql).toContain("(boundary_geojson IS NOT NULL AND boundary_geojson != '') AS has_boundary");
+      }
+    }
+    // ...and the projection really did reach every one of those pages, rather
+    // than the loop above passing vacuously because no location statement was
+    // sent at all. All six fetch locations -- the donation-points page needs
+    // them for its location_donation_points list, bath included, where the
+    // no_locations guard short-circuits only the FLAG and not the query.
+    expect(prepared.filter((p) => p.sql === LOCATIONS_SQL)).toHaveLength(6);
   });
 });
 
@@ -1156,10 +1234,12 @@ describe("has_service_area -- passed twice, and short-circuited on one page only
 //   `foodbanklocation_full`, which migration 0019_drop_foodbank_cache.sql:68
 //   defines as `SELECT l.*, ... FROM foodbanklocation l LEFT JOIN foodbank f
 //   ON f.id = l.foodbank_id` -- LEFT, onto a primary key, so one output row
-//   per input row, and `l.*` carries boundary_geojson through untouched.
-//   Neither side filters is_closed.
-//   SAME PREDICATE. `IS NOT NULL AND != ''` over TEXT is "a non-empty string",
-//   which is what `!== null && !== ""` tests.
+//   per input row, and boundary_geojson reaches the view untouched (the page's
+//   own projection then reduces it to a flag). Neither side filters is_closed.
+//   SAME PREDICATE, and since #52's closing observation the same SQL text on
+//   both sides rather than a JS translation of it: `has_boundary` IS
+//   `(boundary_geojson IS NOT NULL AND boundary_geojson != '')`, evaluated in
+//   SQLite, which is what the count counts.
 //   SAME REDUCTION. `COUNT(*) > 0` is `.some()`.
 //
 // That is an argument. This block is the check -- run the count against the

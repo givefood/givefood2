@@ -1,9 +1,9 @@
 import type { Context } from "hono";
 import {
   getFoodbankBySlug,
-  getLocationsByFoodbankId,
+  getLocationsByFoodbankIdFlagged,
   getLocationsAndDonationPointsByFoodbankId,
-  type FoodbankLocationRow,
+  type FoodbankLocationRowFlagged,
 } from "@givefood/db";
 import { buildPageContext, render } from "@givefood/templates";
 import { urlForLocale } from "@givefood/urls";
@@ -21,36 +21,52 @@ import { CHARITY_DETAIL_COUNTRIES, fullNameLocaleAware } from "@givefood/models"
 // near-enough one. Three legs, each checkable rather than assumed:
 //
 //   THE ROW SET. hasServiceArea counts `FROM foodbanklocation WHERE
-//   foodbank_id = ?`; getLocationsByFoodbankId (and the batched pair the
-//   donation-points handler uses) selects `FROM foodbanklocation_full WHERE
-//   foodbank_id = ?`. `foodbanklocation_full` is `SELECT l.*, ... FROM
+//   foodbank_id = ?`; getLocationsByFoodbankIdFlagged (and the batched pair
+//   the donation-points handler uses) selects `FROM foodbanklocation_full
+//   WHERE foodbank_id = ?`. `foodbanklocation_full` is `SELECT l.*, ... FROM
 //   foodbanklocation l LEFT JOIN foodbank f ON f.id = l.foodbank_id`
 //   (migration 0019_drop_foodbank_cache.sql:68) -- a LEFT join to a PRIMARY
 //   KEY, so exactly one output row per input row, none dropped and none
 //   duplicated. Neither side filters is_closed. Same rows.
 //
-//   THE PREDICATE. SQL's `boundary_geojson IS NOT NULL AND boundary_geojson
-//   != ''` over a TEXT column is true for exactly the non-empty strings, which
-//   is what `!== null && !== ""` tests here. The two spellings of "no
-//   boundary" that D1 actually holds -- NULL and '' -- are both excluded by
-//   both, and mapLocationRow touches only the four boolean columns, so the
-//   value compared here is the one the engine returned.
+//   THE PREDICATE. It is now the SAME SQL TEXT on both sides, not a JS
+//   translation of it: `has_boundary` is `(boundary_geojson IS NOT NULL AND
+//   boundary_geojson != '')` evaluated in SQLite, which is character for
+//   character the predicate hasServiceArea counts on. Both spellings of "no
+//   boundary" that D1 actually holds, NULL and '', yield 0.
 //
 //   THE REDUCTION. `COUNT(*) > 0` and `.some()` are the same question.
 //
-// The row TYPE is what keeps that true: FoodbankLocationRow carries
-// boundary_geojson, and the projected FoodbankLocationRowNarrow omits it, so a
-// future narrowing of either query is a compile error here rather than a
-// silent `undefined !== null` that reports a service area for every food bank.
-function anyLocationHasBoundary(locations: readonly FoodbankLocationRow[]): boolean {
-  return locations.some((l) => l.boundary_geojson !== null && l.boundary_geojson !== "");
+// THE BLOB NEVER LEAVES D1 (github #52's closing observation). Nothing on
+// either page prints a boundary -- locations.njk uses it only to suppress a
+// place photo, donationpoints.njk never mentions it, and the map fetches its
+// geometry separately from /needs/at/<slug>/geo.json -- so both queries ask
+// for the flag instead of the column. Measured on canterbury, the largest of
+// the seven production food banks that have a boundary at all: 2,319,826 ->
+// 19,890 bytes for that statement, -99.1%.
+//
+// The row TYPE is what keeps the derivation honest, in both directions.
+// FoodbankLocationRowFlagged is `Omit<FoodbankLocationRow, "boundary_geojson">
+// & { has_boundary: 0 | 1 }`, so reverting either query to the unprojected row
+// -- the tidy-up that would put 2.3 MB back on the wire for canterbury -- is a
+// compile error on this line, and so is the reverse: reading
+// `l.boundary_geojson` off a flagged row, which would be a silent `undefined
+// !== null` reporting a service area for every food bank on the site. What the
+// type CANNOT see is the SQL text alone changing back to `SELECT *` under an
+// unchanged return type; that one is caught by the statement assertions in
+// locations.test.ts here and in packages/db, which exist for exactly that.
+function anyLocationHasBoundary(locations: readonly FoodbankLocationRowFlagged[]): boolean {
+  return locations.some((l) => l.has_boundary === 1);
 }
 
 // gfwfbn `foodbank_locations` (GET /needs/at/<slug>/locations/,
 // i18n-patterned). Ported from gfwfbn/views.py:558-586. Same
-// getLocationsByFoodbankId query/no_locations===0 guard as
-// ./md/locations.ts's mdFoodbankLocations -- see that file's comment on
-// why a strict === 0 check is safe (no_locations is non-nullable).
+// per-foodbank location query/no_locations===0 guard as ./md/locations.ts's
+// mdFoodbankLocations -- see that file's comment on why a strict === 0 check
+// is safe (no_locations is non-nullable). That sibling now calls
+// getLocationsByFoodbankIdNarrow -- the PLAIN narrow row, not the flagged one:
+// its markdown template has no place photos and no service-area map, so it
+// needs neither the blob nor the flag derived from it.
 export async function wfbnFoodbankLocations(c: Context<AppEnv>): Promise<Response> {
   const slug = c.req.param("slug")!;
   const session = dbSession(c);
@@ -60,7 +76,7 @@ export async function wfbnFoodbankLocations(c: Context<AppEnv>): Promise<Respons
 
   const locale = c.get("lang") as "en" | "cy" | "ga" | "gd";
   const fullName = fullNameLocaleAware(foodbank.name, foodbank.alt_name, locale);
-  const locations = await getLocationsByFoodbankId(session, foodbank.id);
+  const locations = await getLocationsByFoodbankIdFlagged(session, foodbank.id);
   // NO no_locations GUARD NEEDED HERE, and this is not the same omission the
   // old hasServiceArea() call made. Django's has_service_area() short-circuits
   // on `no_locations == 0` (givefood/models/foodbank.py:296) -- but the 404
@@ -131,8 +147,9 @@ export async function wfbnFoodbankDonationpoints(c: Context<AppEnv>): Promise<Re
   // awaits -- the locations, the donation points, then a COUNT(*) for
   // has_service_area -- and none of the three depended on another's result.
   // The first two now go out together (see
-  // getLocationsAndDonationPointsByFoodbankId, same statements, same sort,
-  // same shapes) and the third is read off the location rows those bring back.
+  // getLocationsAndDonationPointsByFoodbankId, same views, same sort, same
+  // shapes bar the projection) and the third is read off the location rows
+  // those bring back -- as a has_boundary flag, not the boundary itself.
   const { locations: allLocations, donationPoints } = await getLocationsAndDonationPointsByFoodbankId(session, foodbank.id);
   // Foodbank.location_donation_points() -- locations that are ALSO
   // donation points, filtered client-side (no dedicated foodbank-scoped
@@ -152,25 +169,31 @@ export async function wfbnFoodbankDonationpoints(c: Context<AppEnv>): Promise<Re
   // -- the counter is checked first and the query is not issued. So the guard
   // is the parity, and removing it would DIVERGE from that on the single input
   // that tells the two spellings apart: a stale zero over a real boundary. It
-  // would also split this page from the two sibling handlers that cannot
-  // derive the flag from rows they never fetch and so still carry the guard as
-  // a ternary -- /needs/at/<slug>/ (routes/wfbn/foodbank.ts:46) and the
-  // DONATION-POINT detail page /needs/at/<slug>/donationpoint/<dpslug>/
-  // (locationDetail.ts:124) -- both of which would go on denying it.
+  // would also split this page from the three sibling handlers that cannot
+  // derive the flag from rows they never fetch, and so take it -- guard
+  // included -- from packages/db's getFoodbankBySlugWithServiceArea:
+  // /needs/at/<slug>/, the LOCATION detail page /needs/at/<slug>/<locslug>/ and
+  // the DONATION-POINT detail page /needs/at/<slug>/donationpoint/<dpslug>/.
+  // All three would go on denying it.
   //
-  // Two siblings, not three, and the third is a pre-existing divergence #52
-  // neither causes nor fixes: the LOCATION detail page
-  // /needs/at/<slug>/<locslug>/ (locationDetail.ts:41) issues the count
-  // UNGUARDED, so it already answers true where those two answer false. That
-  // one is pinned as a known divergence by locationDetail.test.ts's "counts
-  // service areas even for a food bank whose no_locations is 0".
+  // THREE SIBLINGS, AND IT USED TO BE TWO. Before #52 item 3 the LOCATION
+  // detail page issued this count UNGUARDED and so answered true where the
+  // other two answered false -- a divergence from the Python above that the
+  // port had carried from the start. Folding the count into that shared db
+  // function put the guard on it too, and that is the ONE input in the whole
+  // of #52 on which a rendered page moves: a food bank whose no_locations is a
+  // stale 0 while owning a boundary-bearing location now renders
+  // /needs/at/<slug>/<locslug>/ WITHOUT a service area, where it used to render
+  // one. A convergence, not a regression, and pinned by locationDetail.test.ts's
+  // "hides the service area when the parent's no_locations is 0, even though a
+  // location has a boundary".
   //
-  // So the guard is kept, and #52 is a round-trip change that moves no pixel.
-  // No production row is in that state today either: of the 1,023 open food
-  // banks, 7 have a boundary at all and 0 have `no_locations = 0` while owning
-  // one (read-only count against production D1, 2026-09-08). So the guard
-  // costs nothing to keep and is the only spelling that stays right if a
-  // counter ever goes stale again.
+  // On every other input, and on all five routes that render this flag, #52
+  // moves no pixel. No production row is in that state today either: of the
+  // 1,023 open food banks, 7 have a boundary at all and 0 have
+  // `no_locations = 0` while owning one (read-only count against production D1,
+  // 2026-09-08). So the guard costs nothing to keep and is the only spelling
+  // that stays right if a counter ever goes stale again.
   const hasServiceAreaValue = foodbank.no_locations !== 0 && anyLocationHasBoundary(allLocations);
 
   const [latStr, lngStr] = foodbank.lat_lng.split(",");
