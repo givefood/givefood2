@@ -83,11 +83,20 @@ export async function getNeedByUuid(session: Session, needId: string): Promise<F
   return row ? mapNeedRow(row as Record<string, unknown>) : null;
 }
 
-// Internal: used by foodbank.ts to resolve a single foodbank's
-// `latest_need_id` -- two small PK/indexed lookups instead of a
-// ~95-column JOIN alias list. D1 meters rows scanned, not returned
-// (PLAN.md §4.3); a PK lookup scans exactly one row either way, so this
-// costs nothing extra over a JOIN.
+// Single-row `latest_need` resolution by primary key, for the notify and
+// translate queue consumers (workers/jobs: needEmail, needWebPush,
+// needFirebase, needWhatsApp, translateNeed), each of which is handed a
+// needId by its message and has no food bank slug to work from.
+//
+// NO LONGER USED BY getFoodbankBySlug, and do not put it back. That
+// function used to await this one after its food bank row, and the cost
+// was never the rows -- it was the second sequential D1 ROUND TRIP, ~19-22
+// ms measured against production. It now sends both statements in one
+// `session.batch()`, reaching the need through a scalar subquery on the
+// slug. Splitting the two SELECTs rather than JOINing them is still right
+// (`foodbank` and `foodbankchange_full` collide on id, name, created and
+// modified, so a JOIN needs a ~95-column alias list) -- what was wrong was
+// awaiting them one after the other.
 export async function getNeedById(session: Session, id: number): Promise<FoodbankChangeRow | null> {
   const row = await session.prepare("SELECT * FROM foodbankchange_full WHERE id = ?").bind(id).first();
   return row ? mapNeedRow(row as Record<string, unknown>) : null;

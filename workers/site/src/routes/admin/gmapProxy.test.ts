@@ -294,7 +294,9 @@ describe("adminGmapProxy -- reaching the handler", () => {
     const res = await get("/admin/proxy/gmaps/textsearch/?query=Tesco", { cookie: "" });
 
     expect(res.status).toBe(302);
-    expect(res.headers.get("Location")).toBe("/auth/?next=%2Fadmin%2Fproxy%2Fgmaps%2Ftextsearch%2F");
+    // ?query= rides along in `next`: requireAdminAuth captures c.req.path plus
+    // the query string, as Django's request.get_full_path() did.
+    expect(res.headers.get("Location")).toBe("/auth/?next=%2Fadmin%2Fproxy%2Fgmaps%2Ftextsearch%2F%3Fquery%3DTesco");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -304,7 +306,7 @@ describe("adminGmapProxy -- reaching the handler", () => {
   it("answers a signed-out request the same way whatever the type", async () => {
     const bad = await get("/admin/proxy/gmaps/nearbysearch/?query=Tesco", { cookie: "" });
     expect(bad.status).toBe(302);
-    expect(bad.headers.get("Location")).toBe("/auth/?next=%2Fadmin%2Fproxy%2Fgmaps%2Fnearbysearch%2F");
+    expect(bad.headers.get("Location")).toBe("/auth/?next=%2Fadmin%2Fproxy%2Fgmaps%2Fnearbysearch%2F%3Fquery%3DTesco");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -317,7 +319,7 @@ describe("adminGmapProxy -- reaching the handler", () => {
     const res = await get("/admin/proxy/gmaps/textsearch/?query=Tesco");
 
     expect(res.status).toBe(302);
-    expect(res.headers.get("Location")).toBe("/auth/?next=%2Fadmin%2Fproxy%2Fgmaps%2Ftextsearch%2F");
+    expect(res.headers.get("Location")).toBe("/auth/?next=%2Fadmin%2Fproxy%2Fgmaps%2Ftextsearch%2F%3Fquery%3DTesco");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

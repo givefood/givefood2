@@ -1,6 +1,6 @@
-import { coerceBooleans, queryCoordinates, type CoordinateRow, type Session } from "./types";
+import { coerceBooleans, mapCoordinateRows, queryCoordinates, type CoordinateRow, type Session } from "./types";
 import { normalizeUuid } from "./uuid";
-import { getNeedById, getNeedsByIds, type FoodbankChangeRow } from "./needs";
+import { getNeedsByIds, mapNeedRow, type FoodbankChangeRow } from "./needs";
 
 const BOOLEAN_COLUMNS = [
   "charity_just_foodbank",
@@ -100,11 +100,6 @@ export function mapFoodbankRow(raw: Record<string, unknown>): FoodbankRow {
   return coerceBooleans<FoodbankRow>(raw, BOOLEAN_COLUMNS);
 }
 
-async function attachLatestNeed(session: Session, foodbank: FoodbankRow): Promise<FoodbankWithLatestNeed> {
-  const latestNeed = foodbank.latest_need_id === null ? null : await getNeedById(session, foodbank.latest_need_id);
-  return { ...foodbank, latestNeed };
-}
-
 // gfapi1 `api_foodbanks` -- every row, open or closed (frozen bug B8,
 // PLAN.md §7.3: v1 includes closed food banks, v2 does not -- do not
 // "harmonise" the two).
@@ -175,17 +170,117 @@ export async function getAllOpenFoodbankSlugsWithNames(session: Session): Promis
 // food bank search (gfapi1 `api_foodbank_search`, gfapi2 `foodbank_search`,
 // `Foodbank.nearby()`) -- see queryCoordinates's own comment in types.ts.
 // Covered entirely by `foodbank_open_latlng_idx`.
+//
+// The SQL is a named constant because getFoodbankBySlugWithOpenCoordinates
+// below sends this same statement inside a batch. One string, so the two
+// cannot drift into ranking against different candidate sets.
+const OPEN_FOODBANK_COORDINATES_SQL = "SELECT id, latitude, longitude FROM foodbank WHERE is_closed = 0";
+
 export async function getOpenFoodbankCoordinates(session: Session): Promise<CoordinateRow[]> {
-  return queryCoordinates(session, "SELECT id, latitude, longitude FROM foodbank WHERE is_closed = 0");
+  return queryCoordinates(session, OPEN_FOODBANK_COORDINATES_SQL);
 }
 
 // gfapi1 `api_foodbank` / gfapi2 `foodbank` detail endpoints -- both use
 // `select_related("latest_need")` and neither filters `is_closed` (a
-// closed food bank is still servable by slug).
-export async function getFoodbankBySlug(session: Session, slug: string): Promise<FoodbankWithLatestNeed | null> {
-  const row = await session.prepare("SELECT * FROM foodbank WHERE slug = ?").bind(slug).first();
+// closed food bank is still servable by slug). Also every WFBN food bank
+// page, its /md/ twin, the RSS feeds, the GeoJSON scope builder and most
+// of /admin/: 53 call sites across 36 files, 25 of them (in 16 files) on
+// the public site.
+//
+// ONE ROUND TRIP, NOT TWO. The need row is a function of the slug alone,
+// so the two statements are independent and `session.batch()` sends them
+// together -- the same fix, for the same reason, as
+// foodbankDetail.ts's getLocationsDonationPointsAndNearbyFoodbanks. Measured
+// against production with cache-busted, interleaved requests reading
+// Server-Timing `render;dur` (which on these pages IS the D1 wait, because
+// Workers' performance.now() only advances at I/O boundaries -- see
+// middleware/serverTiming.ts): a D1 round trip costs ~19-22 ms, and
+// /md/needs/at/<slug>/ -- which calls this function and does nothing else
+// -- ran a median 37 ms across 8 samples. `latest_need_id` is non-NULL on
+// all 1,070 production rows, so there was no branch where the second trip
+// was skipped in practice. It matters because these pages mostly miss the
+// edge cache (11.9% HTML hit rate, 1.3% md -- ~1,070 food banks x 4
+// locales x 36 colos never warms), so ~88% of food bank page views paid
+// it.
+//
+// STILL TWO STATEMENTS, NOT A JOIN. `foodbank` and `foodbankchange_full`
+// collide on id, name, created and modified, so folding them into one
+// SELECT needs a ~95-column alias list. batch() buys the round trip
+// without that. See needs.ts's comment above getNeedById.
+//
+// The scalar subquery re-probes `foodbank_slug_uniq` (EXPLAIN QUERY PLAN
+// on production: `SCALAR SUBQUERY 1` -> `SEARCH foodbank USING INDEX
+// foodbank_slug_uniq (slug=?)`, then `SEARCH c USING INTEGER PRIMARY KEY`),
+// costing one extra rows_read per call and no scan. A NULL
+// `latest_need_id` makes `id = NULL` NULL and returns zero rows, which is
+// the same `latestNeed: null` the old `latest_need_id === null` guard gave;
+// an unknown slug leaves both statements empty and is still caught by the
+// `if (!row)` below. Batching also closes a small read race: the two rows
+// now come from one snapshot rather than two instants, so a need published
+// between them can no longer serve a mismatched pair.
+//
+// The two statements and their mapping are factored out (rather than written
+// inline here) so that getFoodbankBySlugWithOpenCoordinates below sends the
+// SAME pair, mapped by the SAME code. A second copy of either would be a
+// second thing to keep in step with `foodbankchange_full`.
+function foodbankBySlugStatements(session: Session, slug: string): D1PreparedStatement[] {
+  return [
+    session.prepare("SELECT * FROM foodbank WHERE slug = ?").bind(slug),
+    session
+      .prepare("SELECT * FROM foodbankchange_full WHERE id = (SELECT latest_need_id FROM foodbank WHERE slug = ?)")
+      .bind(slug),
+  ];
+}
+
+function mapFoodbankBySlugResults(foodbankRows: readonly unknown[], needRows: readonly unknown[]): FoodbankWithLatestNeed | null {
+  const row = foodbankRows[0];
   if (!row) return null;
-  return attachLatestNeed(session, mapFoodbankRow(row as Record<string, unknown>));
+  const needRow = needRows[0];
+  return {
+    ...mapFoodbankRow(row as Record<string, unknown>),
+    latestNeed: needRow ? mapNeedRow(needRow as Record<string, unknown>) : null,
+  };
+}
+
+export async function getFoodbankBySlug(session: Session, slug: string): Promise<FoodbankWithLatestNeed | null> {
+  const results = await session.batch(foodbankBySlugStatements(session, slug));
+  // batch() always returns one result per input statement, in the same
+  // order -- exactly 2 here, so these indexes are never actually out of
+  // range despite noUncheckedIndexedAccess flagging them as possibly so.
+  return mapFoodbankBySlugResults(results[0]!.results, results[1]!.results);
+}
+
+// gfapi2 `foodbank`'s FIRST WAVE (github #49): the detail endpoint needs this
+// food bank, its latest need, AND -- for `nearby_foodbanks` -- the whole open
+// candidate set to rank against. The third query depends on nothing at all,
+// so awaiting it after the first two bought a wholly avoidable round trip.
+// One batch, three statements, one wait.
+//
+// `wantOpenCoordinates` IS NOT AN OPTIMISATION FLAG, IT IS THE POINT. The
+// ?format=geojson branch of that endpoint has no nearby_foodbanks and never
+// reads this list, so hoisting the scan unconditionally would ADD a 1,024-row
+// scan to every geojson request in order to save nothing. The format is known
+// before the first query is issued, so the caller passes it in.
+//
+// The 404 path now speculates: an unknown slug pays one wasted candidate scan.
+// Measured against production, running the three statements a bad slug now
+// sends: the slug lookup reads 0 rows (a miss on foodbank_slug_uniq reads
+// none), the need subquery 0, and the scan 1,024 in 5.3 ms of D1 SQL -- so
+// rows_read on a 404 goes from 0 to 1,024. That is a real if tiny D1 billing
+// regression on bad slugs, accepted deliberately -- it buys a round trip on
+// every good one.
+export async function getFoodbankBySlugWithOpenCoordinates(
+  session: Session,
+  slug: string,
+  wantOpenCoordinates: boolean,
+): Promise<{ foodbank: FoodbankWithLatestNeed | null; openCoordinates: CoordinateRow[] }> {
+  const statements = foodbankBySlugStatements(session, slug);
+  if (wantOpenCoordinates) statements.push(session.prepare(OPEN_FOODBANK_COORDINATES_SQL));
+  const results = await session.batch(statements);
+  return {
+    foodbank: mapFoodbankBySlugResults(results[0]!.results, results[1]!.results),
+    openCoordinates: wantOpenCoordinates ? mapCoordinateRows(results[2]!.results) : [],
+  };
 }
 
 // For enriching a small, already-ranked set of ids with `latest_need` --
@@ -202,15 +297,31 @@ export async function getFoodbankBySlug(session: Session, slug: string): Promise
 // found via real timing comparisons against production (a follow-up to WP
 // 2.5): every list/search endpoint calling this with N results was making
 // N+1 D1 round trips, and was the slowest thing in the whole API for it.
-export async function getFoodbanksByIds(session: Session, ids: readonly number[]): Promise<FoodbankWithLatestNeed[]> {
-  if (ids.length === 0) return [];
+//
+// SPLIT IN TWO, statement and mapping, for github #49: gfapi2 `foodbank`'s
+// second wave already has a batch in flight (its locations and its donation
+// points), so the SELECT below rides along in it instead of paying a round
+// trip of its own -- see foodbankDetail.ts's
+// getLocationsDonationPointsAndNearbyFoodbanks. The halves are exported
+// rather than duplicated there BECAUSE of the id-order re-sort: a caller that
+// re-implemented "rows by id" would silently serve nearby_foodbanks in D1's
+// rowid order instead of by distance, which no response-shape test would see.
+export function foodbanksByIdsStatement(session: Session, ids: readonly number[]): D1PreparedStatement {
   const placeholders = ids.map(() => "?").join(", ");
-  const result = await session
-    .prepare(`SELECT * FROM foodbank WHERE id IN (${placeholders})`)
-    .bind(...ids)
-    .all();
-  const rows = result.results.map((r) => mapFoodbankRow(r as Record<string, unknown>));
-  const byId = new Map(rows.map((row) => [row.id, row]));
+  return session.prepare(`SELECT * FROM foodbank WHERE id IN (${placeholders})`).bind(...ids);
+}
+
+// The rest of getFoodbanksByIds, applied to rows the caller has already got
+// back: re-sort into `ids` order, then resolve every distinct latest_need_id
+// in ONE further query. That query is genuinely dependent -- the need ids are
+// columns of these rows -- so it cannot be batched with them.
+export async function mapFoodbanksByIds(
+  session: Session,
+  rows: readonly unknown[],
+  ids: readonly number[],
+): Promise<FoodbankWithLatestNeed[]> {
+  const mapped = rows.map((r) => mapFoodbankRow(r as Record<string, unknown>));
+  const byId = new Map(mapped.map((row) => [row.id, row]));
   const ordered = ids.map((id) => byId.get(id)).filter((row): row is FoodbankRow => row !== undefined);
 
   const needIds = Array.from(
@@ -221,6 +332,12 @@ export async function getFoodbanksByIds(session: Session, ids: readonly number[]
     ...row,
     latestNeed: row.latest_need_id === null ? null : (needsById.get(row.latest_need_id) ?? null),
   }));
+}
+
+export async function getFoodbanksByIds(session: Session, ids: readonly number[]): Promise<FoodbankWithLatestNeed[]> {
+  if (ids.length === 0) return [];
+  const result = await foodbanksByIdsStatement(session, ids).all();
+  return mapFoodbanksByIds(session, result.results, ids);
 }
 
 // gfapi3 `slugfromid` -- projected to just `slug`, matching Django's

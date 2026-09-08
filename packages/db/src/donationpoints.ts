@@ -114,13 +114,79 @@ export async function getDonationPointBySlugs(
   return row ? mapDonationPointRow(row as Record<string, unknown>) : null;
 }
 
-// gfapi2 `donationpoints` geojson, and the full-detail source for
-// `donationpoint_search`'s surviving donation-point winners (see
-// getOpenDonationPointCoordinates for the cheap candidate-set version
-// ranking actually runs against).
-export async function getAllOpenDonationPoints(session: Session): Promise<DonationPointRow[]> {
-  const result = await session.prepare("SELECT * FROM foodbankdonationpoint_full WHERE is_closed = 0").all();
-  return result.results.map(mapDonationPointRow);
+// gfapi2 `donationpoints` geojson (/api/2/donationpoints/) and the all-items
+// /needs/geo.json feed -- its only two callers, and between them they read
+// eleven columns of a ~41-column view.
+//
+// NOT `donationpoint_search`. This function's comment used to claim it was
+// also "the full-detail source for donationpoint_search's surviving
+// winners"; it never was. That path runs getOpenDonationPointCoordinates and
+// then getDonationPointsByIds (api2/donationpoints.ts:212-241), both of which
+// are unaffected by anything here -- the stale claim made the blast radius of
+// a change to this query look several routes wider than it is.
+//
+// PROJECTED, NOT `SELECT *`. api2/donationpoints.ts:99-124 builds an explicit
+// properties object out of name, slug, address, postcode, lat_lng,
+// phone_number, url, parliamentary_constituency_name, foodbank_name,
+// foodbank_slug and foodbank_network; buildGeojson.ts's donationPointFeature
+// reads a subset of that same eleven (and its address/postcode only when
+// `includeAddress`, which the all-items scope sets false). `id` is the
+// twelfth column here: an integer that costs almost nothing and is the only
+// stable handle a caller or a test has on a row. Nothing reads
+// opening_hours, notes, plus_code_*, place_id, county, district, ward, lsoa,
+// msoa, company, company_slug, store_id, mp*, uuid, country, latitude,
+// longitude, modified, edited, or any of the four flag columns.
+//
+// Measured against production D1 over the 5,727 open rows: 10,643,021 bytes
+// of `wrangler --remote --json` output -> 3,316,250, the same measurement
+// getAllOpenDonationPointSlugs' note below uses for this same `SELECT *`
+// (7.89 MB -> 2.55 MB if the results array alone is re-serialised compactly
+// -- quote one convention or the other, not a third), and a server-reported
+// duration of ~300 ms -> ~79 ms (n=4 each: 598/305/258/291 against
+// 82/79/69/119; `SELECT COUNT(*)` over the same view and filter is 13-15 ms,
+// so that is the scan floor and effectively all of the difference was column
+// materialisation, not extra scanning). rows_read is UNCHANGED at 11,454 --
+// D1 bills rows read, so this is wire bytes, encode time and Worker CPU, not
+// money. Same reasoning, and the same measured shape, as
+// getAllOpenLocationsFlagged in locations.ts. Timed through the D1 REST API
+// (`wrangler --remote`, D1's own server-side meta.duration) rather than from
+// inside the Worker, same caveat that function carries: the byte figures are
+// hard, the millisecond ones indicative, and the split between D1-side encode
+// and service-to-Worker transport is not visible from there.
+//
+// NO `.map(mapDonationPointRow)`, deliberately: none of the four
+// BOOLEAN_COLUMNS survive the projection, so the coercion has nothing to
+// coerce and would only invent four null keys neither caller reads (see
+// mapDonationPointRow's "invents the four flag keys as null" test).
+//
+// The narrow type is derived with Pick, never cast into existence: a future
+// caller reaching for a column that is no longer fetched gets a type error
+// rather than `undefined` at runtime.
+export type DonationPointRowNarrow = Pick<
+  DonationPointRow,
+  | "id"
+  | "name"
+  | "slug"
+  | "address"
+  | "postcode"
+  | "lat_lng"
+  | "phone_number"
+  | "url"
+  | "parliamentary_constituency_name"
+  | "foodbank_name"
+  | "foodbank_slug"
+  | "foodbank_network"
+>;
+
+const DONATION_POINT_COLUMNS_NARROW =
+  "id, name, slug, address, postcode, lat_lng, phone_number, url, " +
+  "parliamentary_constituency_name, foodbank_name, foodbank_slug, foodbank_network";
+
+export async function getAllOpenDonationPoints(session: Session): Promise<DonationPointRowNarrow[]> {
+  const result = await session
+    .prepare(`SELECT ${DONATION_POINT_COLUMNS_NARROW} FROM foodbankdonationpoint_full WHERE is_closed = 0`)
+    .all();
+  return result.results as unknown as DonationPointRowNarrow[];
 }
 
 // sitemap.xml/md_sitemap's donation-point loops only ever need

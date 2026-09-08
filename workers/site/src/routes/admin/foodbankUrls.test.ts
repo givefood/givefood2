@@ -1,4 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
+import { schemaFor } from "@givefood/db/src/schema.testkit";
 import { Hono } from "hono";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { adminFoodbankUrlsEdit } from "./foodbankUrls";
@@ -135,6 +136,17 @@ CREATE TABLE foodbank (
 );
 CREATE UNIQUE INDEX foodbank_name_uniq ON foodbank(name);
 CREATE UNIQUE INDEX foodbank_slug_uniq ON foodbank(slug);
+-- github #51: getFoodbankBySlug reads the food bank row and its latest need in
+-- ONE batch(), so the need side is sent even when latest_need_id is NULL: the
+-- scalar subquery yields NULL and the comparison matches nothing. Every route
+-- below reaches that function, so this narrow fixture now needs the table and
+-- the view.
+--
+-- TAKEN FROM THE MIGRATIONS, NOT TRANSCRIBED. 0019 drops a column off
+-- foodbankchange long after 0001 creates it and recreates the view around it,
+-- so a hand-copied CREATE TABLE here would have been wrong on the day it was
+-- pasted -- which is the drift schema.testkit.ts exists to stop.
+${schemaFor("foodbankchange", "foodbankchange_full")}
 `;
 
 type Bindable = null | number | bigint | string | Uint8Array;
@@ -154,7 +166,22 @@ function d1Session(db: DatabaseSync): D1DatabaseSession {
       return { success: true, meta: {} };
     },
   });
-  return { prepare: (sql: string) => statement(sql, []), getBookmark: () => null } as unknown as D1DatabaseSession;
+  return {
+    prepare: (sql: string) => statement(sql, []),
+    // getFoodbankBySlug sends its food bank row and its latest-need row as ONE
+    // batch() rather than two sequential awaits (packages/db/src/foodbank.ts).
+    // The same adapter as packages/db/src/foodbankDetail.test.ts: statements
+    // run in order and there is one result per input statement, in that order,
+    // because the caller indexes straight into the array -- a batch that
+    // reordered or coalesced results would hand back the wrong row without
+    // erroring anywhere.
+    batch: async (statements: Array<{ all: () => Promise<unknown> }>) => {
+      const out: unknown[] = [];
+      for (const each of statements) out.push(await each.all());
+      return out;
+    },
+    getBookmark: () => null,
+  } as unknown as D1DatabaseSession;
 }
 
 const ORIGIN = "https://www.givefood.org.uk";
@@ -303,9 +330,11 @@ function seed(overrides: Record<string, string | number | null> = {}): void {
     no_locations: 3,
     days_between_needs: 14,
     parliamentary_constituency_slug: "salisbury",
-    // latest_need_id stays NULL on purpose: getFoodbankBySlug's
-    // attachLatestNeed() would otherwise query foodbankchange, a table this
-    // fixture has no reason to stand up.
+    // latest_need_id stays NULL: this route never reads the need, and NULL is
+    // the shape production has for a food bank with none on file. It no longer
+    // spares the fixture a foodbankchange table -- since github #51
+    // getFoodbankBySlug batches that lookup and sends it either way -- so the
+    // table and its view are in SCHEMA above.
     latest_need_id: null,
     created: "2020-01-01 00:00:00.000000",
     modified: "2020-01-01 00:00:00.000000",

@@ -401,7 +401,9 @@ describe("adminCrawlSetsList -- GET /admin/crawl-sets/", () => {
     const { res, sql } = await get("/admin/crawl-sets/?type=bogus", { signedIn: false });
 
     expect(res.status).toBe(302);
-    expect(res.headers.get("Location")).toBe("/auth/?next=%2Fadmin%2Fcrawl-sets%2F");
+    // Query included: requireAdminAuth captures c.req.path + the query string,
+    // matching what Django's middleware.py stored (request.get_full_path()).
+    expect(res.headers.get("Location")).toBe("/auth/?next=%2Fadmin%2Fcrawl-sets%2F%3Ftype%3Dbogus");
     expect(sql).toEqual([]);
   });
 

@@ -1,4 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
+import { schemaFor } from "@givefood/db/src/schema.testkit";
 import { Hono } from "hono";
 import type { ExecutionContext } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -141,20 +142,23 @@ CREATE TABLE orderline (
   delivery_date TEXT, category TEXT, group_name TEXT
 );
 CREATE INDEX orderline_order_idx ON orderline(order_id);
-CREATE TABLE foodbankchange (
-  id INTEGER PRIMARY KEY,
-  need_id TEXT NOT NULL, foodbank_id INTEGER,
-  uri TEXT, change_text TEXT NOT NULL,
-  published INTEGER NOT NULL DEFAULT 0,
-  input_method TEXT NOT NULL,
-  created TEXT NOT NULL, modified TEXT NOT NULL
-);
 CREATE TABLE ordergroup (
   id INTEGER PRIMARY KEY,
   name TEXT NOT NULL, slug TEXT NOT NULL,
   public INTEGER NOT NULL DEFAULT 0, key TEXT,
   created TEXT NOT NULL, modified TEXT NOT NULL
 );
+-- github #51: getFoodbankBySlug reads the food bank row and its latest need in
+-- ONE batch(), so the need side is sent even when latest_need_id is NULL: the
+-- scalar subquery yields NULL and the comparison matches nothing. Every route
+-- below reaches that function, so this narrow fixture now needs the table and
+-- the view.
+--
+-- TAKEN FROM THE MIGRATIONS, NOT TRANSCRIBED. 0019 drops a column off
+-- foodbankchange long after 0001 creates it and recreates the view around it,
+-- so a hand-copied CREATE TABLE here would have been wrong on the day it was
+-- pasted -- which is the drift schema.testkit.ts exists to stop.
+${schemaFor("foodbankchange", "foodbankchange_full")}
 `;
 
 // ---------------------------------------------------------------------------
@@ -207,8 +211,14 @@ function d1Session(db: DatabaseSync, log: { ran: Recorded[] }): D1DatabaseSessio
       db.exec("BEGIN");
       try {
         const results = statements.map((s) => {
-          db.prepare(s.sql).run(...s.params);
-          return { success: true, results: [], meta: {} };
+          // all(), not run(): getFoodbankBySlug now batches its food bank row
+          // and its latest-need row into one round trip
+          // (packages/db/src/foodbank.ts), and run() would execute both SELECTs
+          // and throw the rows away. node:sqlite runs deleteOrder's DELETEs
+          // through all() just as happily -- no rows, same write, same
+          // BEGIN/COMMIT.
+          const rows = db.prepare(s.sql).all(...s.params);
+          return { success: true, results: rows, meta: {} };
         });
         db.exec("COMMIT");
         return results;
@@ -378,6 +388,16 @@ const SESSION_KV_KEY = `admin-session:${SESSION_ID}`; // lib/adminAuth.ts:250 se
 
 let db: DatabaseSync;
 let sqlLog: { ran: Recorded[] };
+
+// The statements that WRITE. Since github #51 getFoodbankBySlug is a batch()
+// too -- its food bank row and its latest-need row in one round trip -- and
+// batched statements land in this log alongside deleteOrder's DELETEs, which is
+// what the log is for. Filtering here rather than in the harness: D1 gives a
+// batch no way to say which of its statements write, and an adapter that
+// decided for itself which statements "count" could hide the write these
+// assertions exist to catch. Same spirit as the `/UPDATE\s+foodbank/i` filter
+// further down, which already reads the SQL text in an assertion.
+const writes = (): Recorded[] => sqlLog.ran.filter((s) => !/^\s*SELECT\b/i.test(s.sql));
 let fetchMock: ReturnType<typeof vi.fn>;
 let postmarkStatus: number;
 let env: AppEnv["Bindings"];
@@ -663,7 +683,7 @@ describe("the routes routes/admin/index.ts really registers", () => {
     expect(res.status).toBe(404);
     expect(orderRow(db)).toBeDefined();
     expect(orderLines(db)).toHaveLength(3);
-    expect(sqlLog.ran).toEqual([]);
+    expect(writes()).toEqual([]);
   });
 });
 
@@ -781,7 +801,7 @@ describe("adminOrderSendNotification", () => {
       expect(res.status).toBe(404);
       expect(fetchMock).not.toHaveBeenCalled();
       expect(orderRow(db)!.notification_email_sent).toBeNull();
-      expect(sqlLog.ran).toEqual([]);
+      expect(writes()).toEqual([]);
     });
   });
 
@@ -1186,7 +1206,7 @@ describe("adminOrderEmailPreview", () => {
     const beforeLines = orderLines(db);
     await get(PATH);
 
-    expect(sqlLog.ran).toEqual([]);
+    expect(writes()).toEqual([]);
     expect(orderRow(db)).toEqual(before);
     expect(orderLines(db)).toEqual(beforeLines);
     expect(foodbankRow(db)!.modified).toBe(MODIFIED);
@@ -1586,7 +1606,7 @@ describe("adminOrderDelete", () => {
       expect(orderRow(db)).toBeDefined();
       expect(orderLines(db)).toHaveLength(3);
       // Not even the food bank's derived last_order was recomputed.
-      expect(sqlLog.ran).toEqual([]);
+      expect(writes()).toEqual([]);
     });
 
     it("refuses a CSRF field that does not match the cookie", async () => {
@@ -1595,7 +1615,7 @@ describe("adminOrderDelete", () => {
 
       expect(res.status).toBe(403);
       expect(orderRow(db)).toBeDefined();
-      expect(sqlLog.ran).toEqual([]);
+      expect(writes()).toEqual([]);
     });
 
     it("refuses a cross-origin POST even with a valid token pair", async () => {
@@ -1622,7 +1642,7 @@ describe("adminOrderDelete", () => {
 
       expect(res.status).toBe(403);
       expect(await res.text()).toBe("Forbidden");
-      expect(sqlLog.ran).toEqual([]);
+      expect(writes()).toEqual([]);
       expect(db.prepare("SELECT COUNT(*) AS n FROM orders").get()).toEqual({ n: 2 });
     });
   });
@@ -1634,7 +1654,7 @@ describe("adminOrderDelete", () => {
     expect(res.status).toBe(404);
     expect(res.headers.get("Location")).toBeNull();
     expect(db.prepare("SELECT COUNT(*) AS n FROM orders").get()).toEqual({ n: 2 });
-    expect(sqlLog.ran).toEqual([]);
+    expect(writes()).toEqual([]);
   });
 
   describe("the delete itself", () => {

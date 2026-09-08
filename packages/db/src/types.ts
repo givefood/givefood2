@@ -58,7 +58,16 @@ function mapCoordinateRow(raw: Record<string, unknown>): CoordinateRow {
   return raw as unknown as CoordinateRow;
 }
 
+// Exported so a caller that puts the coordinate SELECT inside a
+// `session.batch()` (foodbank.ts's getFoodbankBySlugWithOpenCoordinates)
+// maps the rows through EXACTLY this function rather than a second cast of
+// its own. The two paths have to be indistinguishable in their output or the
+// batched one is not the optimisation it claims to be.
+export function mapCoordinateRows(rows: readonly unknown[]): CoordinateRow[] {
+  return rows.map((r) => mapCoordinateRow(r as Record<string, unknown>));
+}
+
 export async function queryCoordinates(session: Session, sql: string): Promise<CoordinateRow[]> {
   const result = await session.prepare(sql).all();
-  return result.results.map((r) => mapCoordinateRow(r as Record<string, unknown>));
+  return mapCoordinateRows(result.results);
 }

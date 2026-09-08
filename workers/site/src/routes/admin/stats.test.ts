@@ -578,7 +578,12 @@ beforeEach(() => {
 // the read and still leak the shape of the data through timing.
 describe("the admin auth gate", () => {
   const PATHS = [
-    ["/admin/stats/quarter/?start=2026-07-01&end=2026-09-30", "%2Fadmin%2Fstats%2Fquarter%2F"],
+    // Second column is the whole `next` value, query string included:
+    // requireAdminAuth captures c.req.path + the query, matching what Django's
+    // LoginRequiredAccess stashed (request.get_full_path()), so a lapsed
+    // session returns the maintainer to this exact date range rather than to a
+    // reset one.
+    ["/admin/stats/quarter/?start=2026-07-01&end=2026-09-30", "%2Fadmin%2Fstats%2Fquarter%2F%3Fstart%3D2026-07-01%26end%3D2026-09-30"],
     ["/admin/stats/orders/", "%2Fadmin%2Fstats%2Forders%2F"],
     ["/admin/stats/editing/", "%2Fadmin%2Fstats%2Fediting%2F"],
     ["/admin/stats/subscribers/", "%2Fadmin%2Fstats%2Fsubscribers%2F"],

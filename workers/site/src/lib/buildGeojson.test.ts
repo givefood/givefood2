@@ -62,6 +62,7 @@ import {
   getOpenLocationsByConstituencyId,
   getOpenLocationsByCountry,
   type DonationPointRow,
+  type DonationPointRowNarrow,
   type FoodbankLocationRow,
   type FoodbankLocationRowFlagged,
   type FoodbankRow,
@@ -133,6 +134,31 @@ function makeDonationPoint(overrides: Partial<DonationPointRow> = {}): DonationP
     lat_lng: "51.75,0.25",
     ...overrides,
   } as unknown as DonationPointRow;
+}
+
+// The all-items feed's donation-point row shape: the twelve columns
+// getAllOpenDonationPoints projects, and nothing else (packages/db/src/
+// donationpoints.ts). Kept as its own factory rather than an override on
+// makeDonationPoint for the same reason makeLocationFlagged is separate --
+// the whole point of the projection is which keys are ABSENT, and a factory
+// that could still carry foodbank_id or opening_hours would let the
+// all-items test below pass against a row production never produces.
+function makeDonationPointNarrow(overrides: Partial<DonationPointRowNarrow> = {}): DonationPointRowNarrow {
+  return {
+    id: 9,
+    name: "Big Supermarket",
+    slug: "big-supermarket",
+    address: "3 Retail Park",
+    postcode: "AB5 6GH",
+    lat_lng: "51.75,0.25",
+    phone_number: null,
+    url: null,
+    parliamentary_constituency_name: "Testville North",
+    foodbank_name: "Testville",
+    foodbank_slug: "testville",
+    foodbank_network: "Trussell Trust",
+    ...overrides,
+  };
 }
 
 // The `"name": "..."` values a response carries, in emission order. Used
@@ -323,6 +349,23 @@ describe("buildGeojsonResponse: the all-items feed (/needs/geo.json)", () => {
       '{"type": "FeatureCollection", "features": [{"type": "Feature", "geometry": {"type": "Point", ' +
         '"coordinates": [-2.25, 52.5]}, "properties": {"type": "l", "name": "Church Hall", ' +
         '"foodbank": "Testville", "url": "/needs/at/testville/church-hall/"}}]}',
+    );
+  });
+
+  it("builds a whole donation point feature from the PROJECTED row shape", async () => {
+    // The donation-point mirror of the case above, and it exists for exactly
+    // the same reason: getAllOpenDonationPoints is projected to twelve
+    // columns, and a name dropped from that list arrives here as `undefined`
+    // and serialises as `"name": null` on the public map rather than
+    // throwing. Every field donationPointFeature touches is visible in this
+    // one string -- name, foodbank_name, foodbank_slug, slug and lat_lng --
+    // fed by a row that carries ONLY the projected keys.
+    vi.mocked(getAllOpenDonationPoints).mockResolvedValue([makeDonationPointNarrow()]);
+
+    expect(await buildGeojsonResponse(session, "en", { kind: "all" })).toBe(
+      '{"type": "FeatureCollection", "features": [{"type": "Feature", "geometry": {"type": "Point", ' +
+        '"coordinates": [0.25, 51.75]}, "properties": {"type": "d", "name": "Big Supermarket", ' +
+        '"foodbank": "Testville", "url": "/needs/at/testville/donationpoint/big-supermarket/"}}]}',
     );
   });
 

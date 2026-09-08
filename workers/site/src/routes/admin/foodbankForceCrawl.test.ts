@@ -1,4 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
+import { schemaFor } from "@givefood/db/src/schema.testkit";
 import { Hono } from "hono";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { adminFoodbankForceCheck, adminFoodbankForceArticleCrawl, adminFoodbankForceCharityCrawl } from "./foodbankForceCrawl";
@@ -71,8 +72,10 @@ import type { AppEnv } from "../../types";
 // rather than all 80: an unused column here would be noise, and the ones that
 // matter -- rss_url, charity_number, country, is_closed -- are the guards
 // every silent no-op below turns on. latest_need_id is present but always
-// NULL, because getFoodbankBySlug only reaches foodbankchange_full when it is
-// set, and standing that view up would add a join none of this exercises.
+// NULL: nothing here reads the need. That no longer spares the fixture the
+// foodbankchange table -- since github #51 getFoodbankBySlug batches that
+// lookup and sends it either way -- so the table and its view are appended to
+// SCHEMA below.
 const SCHEMA = `
 CREATE TABLE foodbank (
   id INTEGER PRIMARY KEY,
@@ -97,6 +100,17 @@ CREATE TABLE crawlset (
   remaining INTEGER
 );
 CREATE UNIQUE INDEX crawlset_runid_uniq ON crawlset(run_id) WHERE run_id IS NOT NULL;
+-- github #51: getFoodbankBySlug reads the food bank row and its latest need in
+-- ONE batch(), so the need side is sent even when latest_need_id is NULL: the
+-- scalar subquery yields NULL and the comparison matches nothing. Every route
+-- below reaches that function, so this narrow fixture now needs the table and
+-- the view.
+--
+-- TAKEN FROM THE MIGRATIONS, NOT TRANSCRIBED. 0019 drops a column off
+-- foodbankchange long after 0001 creates it and recreates the view around it,
+-- so a hand-copied CREATE TABLE here would have been wrong on the day it was
+-- pasted -- which is the drift schema.testkit.ts exists to stop.
+${schemaFor("foodbankchange", "foodbankchange_full")}
 `;
 
 type Bindable = null | number | bigint | string | Uint8Array;
@@ -119,7 +133,22 @@ function d1Session(db: DatabaseSync): D1DatabaseSession {
       return { success: true, meta: { last_row_id: Number(result.lastInsertRowid), changes: Number(result.changes) } };
     },
   });
-  return { prepare: (sql: string) => statement(sql, []), getBookmark: () => null } as unknown as D1DatabaseSession;
+  return {
+    prepare: (sql: string) => statement(sql, []),
+    // getFoodbankBySlug sends its food bank row and its latest-need row as ONE
+    // batch() rather than two sequential awaits (packages/db/src/foodbank.ts).
+    // The same adapter as packages/db/src/foodbankDetail.test.ts: statements
+    // run in order and there is one result per input statement, in that order,
+    // because the caller indexes straight into the array -- a batch that
+    // reordered or coalesced results would hand back the wrong row without
+    // erroring anywhere.
+    batch: async (statements: Array<{ all: () => Promise<unknown> }>) => {
+      const out: unknown[] = [];
+      for (const each of statements) out.push(await each.all());
+      return out;
+    },
+    getBookmark: () => null,
+  } as unknown as D1DatabaseSession;
 }
 
 const ORIGIN = "https://www.givefood.org.uk";

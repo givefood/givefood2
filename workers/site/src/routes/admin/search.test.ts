@@ -673,15 +673,14 @@ describe("auth", () => {
     const res = await app.request(`${SEARCH_PATH}?q=salisbury`, {}, env, execCtx);
 
     expect(res.status).toBe(302);
-    // PINNED AS-IS, AND SUSPECT. middleware/adminAuth.ts:21 builds ?next= from
-    // c.req.path, which drops the query string: Django's LoginRequiredAccess
-    // (givefood/middleware.py:65,69) stashes request.get_full_path(), which
-    // keeps it. So a session that expires mid-search sends the maintainer back
-    // to an empty search box here and back to their results in Django. Not
-    // fixed here (this file adds no behaviour), and not this handler's code --
-    // but /admin/search/ is the route where the divergence actually costs
-    // something, since the query string IS the page.
-    expect(res.headers.get("location")).toBe("/auth/?next=%2Fadmin%2Fsearch%2F");
+    // The ?q= comes back with it. middleware/adminAuth.ts builds ?next= from
+    // c.req.path PLUS the query string, matching what Django's
+    // LoginRequiredAccess stashed (givefood/middleware.py:65,69 store
+    // request.get_full_path()). It used to capture the path alone, and
+    // /admin/search/ is the route where that cost the most: the query string
+    // IS the page, so a lapsed session returned the maintainer to an empty
+    // search box instead of to their results.
+    expect(res.headers.get("location")).toBe("/auth/?next=%2Fadmin%2Fsearch%2F%3Fq%3Dsalisbury");
     expect(mocks.renderCalls).toEqual([]);
     expect(statements).toEqual([]);
     expect(sessionModes).toEqual([]);

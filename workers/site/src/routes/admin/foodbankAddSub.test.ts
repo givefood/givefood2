@@ -1,4 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
+import { schemaFor } from "@givefood/db/src/schema.testkit";
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { adminFoodbankAddSub } from "./foodbankAddSub";
@@ -60,10 +61,11 @@ vi.mock("./pageContext", () => ({ adminPageContext: mocks.adminPageContext }));
 //
 // The `foodbank` table is trimmed to the columns this path reads, following
 // donationPoint.test.ts's precedent for workers/site fixtures. `latest_need_id`
-// is NOT optional dressing: getFoodbankBySlug -> attachLatestNeed
-// (packages/db/src/foodbank.ts:104) skips its second query only when that
-// value is exactly `null`, and a missing column reads as `undefined`, which
-// would send it looking for a foodbankchange table that is not here.
+// is NOT optional dressing: getFoodbankBySlug's second statement resolves it
+// through a scalar subquery, and a column missing from the fixture is a SQL
+// error rather than a NULL. Since github #51 that statement is sent whether or
+// not the column holds a value, which is why the foodbankchange table and the
+// foodbankchange_full view are appended below.
 const SCHEMA = `
 CREATE TABLE foodbank (
   id INTEGER PRIMARY KEY,
@@ -83,6 +85,17 @@ CREATE UNIQUE INDEX sub_email_fb_uniq ON foodbanksubscriber(email, foodbank_id);
 CREATE INDEX sub_fb_confirmed_idx ON foodbanksubscriber(foodbank_id, confirmed);
 CREATE UNIQUE INDEX sub_key_idx ON foodbanksubscriber(sub_key);
 CREATE UNIQUE INDEX unsub_key_idx ON foodbanksubscriber(unsub_key);
+-- github #51: getFoodbankBySlug reads the food bank row and its latest need in
+-- ONE batch(), so the need side is sent even when latest_need_id is NULL: the
+-- scalar subquery yields NULL and the comparison matches nothing. Every route
+-- below reaches that function, so this narrow fixture now needs the table and
+-- the view.
+--
+-- TAKEN FROM THE MIGRATIONS, NOT TRANSCRIBED. 0019 drops a column off
+-- foodbankchange long after 0001 creates it and recreates the view around it,
+-- so a hand-copied CREATE TABLE here would have been wrong on the day it was
+-- pasted -- which is the drift schema.testkit.ts exists to stop.
+${schemaFor("foodbankchange", "foodbankchange_full")}
 `;
 
 const SALISBURY = { id: 1, name: "Salisbury", slug: "salisbury" };
@@ -136,8 +149,24 @@ function d1Session(db: DatabaseSync, log: { batches: Sent[][] }) {
       db.exec("BEGIN");
       try {
         const results = statements.map((s) => {
-          const { changes, lastInsertRowid } = db.prepare(s.sql).run(...s.params);
-          return { success: true, results: [], meta: { changes: Number(changes), last_row_id: Number(lastInsertRowid) } };
+          // all(), not run(): getFoodbankBySlug now batches its food bank row
+          // and its latest-need row into one round trip
+          // (packages/db/src/foodbank.ts), and run() would execute both SELECTs
+          // and throw the rows away -- the food bank would come back undefined
+          // and every page here would 404. node:sqlite runs an INSERT through
+          // all() just as happily (no rows, same write), so the subscriber path
+          // is unchanged; its counts now come from changes()/last_insert_rowid()
+          // rather than from run()'s return value.
+          const rows = db.prepare(s.sql).all(...s.params);
+          const meta = db.prepare("SELECT changes() AS changes, last_insert_rowid() AS last_row_id").get() as {
+            changes: number | bigint;
+            last_row_id: number | bigint;
+          };
+          return {
+            success: true,
+            results: rows,
+            meta: { changes: Number(meta.changes), last_row_id: Number(meta.last_row_id) },
+          };
         });
         db.exec("COMMIT");
         return results;
@@ -166,6 +195,15 @@ const execCtx = { waitUntil: (p: Promise<unknown>) => void p, passThroughOnExcep
 
 let db: DatabaseSync;
 let log: { batches: Sent[][] };
+
+// The INSERT batches only. Since github #51 getFoodbankBySlug is a batch() too
+// -- its food bank row and its latest-need row in one round trip -- and it runs
+// on every request that reaches this handler at all, including the ones the
+// CSRF check goes on to refuse. The claims below are about what was WRITTEN, so
+// the read pair is filtered out here rather than the log being made selective:
+// a harness that decided for itself which statements "count" is a harness that
+// can hide the write it was built to catch.
+const writeBatches = (): Sent[][] => log.batches.filter((batch) => batch.some((s) => !/^\s*SELECT\b/i.test(s.sql)));
 let env: AppEnv["Bindings"];
 let app: Hono<AppEnv>;
 let kvPuts: number;
@@ -390,7 +428,7 @@ describe("GET", () => {
     expect(subscribers()).toEqual([]);
     // Not merely "no rows": no batch was even sent, so this cannot pass by
     // way of a write that happened and rolled back.
-    expect(log.batches).toEqual([]);
+    expect(writeBatches()).toEqual([]);
   });
 
   // KILLS THE MUTANT `return c.html("")` -- the rendered page thrown away and
@@ -470,7 +508,7 @@ describe("CSRF", () => {
       expect(res.status).toBe(403);
       expect(await res.text()).toBe("Forbidden");
       expect(subscribers()).toEqual([]);
-      expect(log.batches).toEqual([]);
+      expect(writeBatches()).toEqual([]);
       // Not the form re-rendered with an error banner -- a plain text 403.
       // Pinned because it is a genuine divergence from how this admin handles
       // every other rejected save, and because the paste is lost with it.
@@ -608,8 +646,8 @@ describe("what reaches the table", () => {
   it("sends one batch holding one statement per address", async () => {
     await post(ADDSUB, { emails: "ada@example.org\ngrace@example.org\nhedy@example.org" });
 
-    expect(log.batches).toHaveLength(1);
-    expect(log.batches[0]).toHaveLength(3);
+    expect(writeBatches()).toHaveLength(1);
+    expect(writeBatches()[0]).toHaveLength(3);
   });
 
   // PLAN.md's risk register N1: the salt only affects newly minted keys'
@@ -816,7 +854,7 @@ describe("splitting and normalising the paste", () => {
     const res = await post(ADDSUB, { emails: "\n   \n\n" });
 
     expect(res.status).toBe(200);
-    expect(log.batches).toEqual([]);
+    expect(writeBatches()).toEqual([]);
     expect(results()).toMatchObject({ added: 0, already: 0, duplicates: 0, invalid_total: 0 });
   });
 
@@ -847,7 +885,7 @@ describe("splitting and normalising the paste", () => {
     expect(res.status).toBe(200);
     expect(results()).toMatchObject({ added: 0, already: 0, duplicates: 0, invalid_total: 0 });
     expect(subscribers()).toEqual([]);
-    expect(log.batches).toEqual([]);
+    expect(writeBatches()).toEqual([]);
   });
 });
 

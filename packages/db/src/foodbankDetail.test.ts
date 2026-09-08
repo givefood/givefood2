@@ -3,26 +3,35 @@ import { DatabaseSync } from "node:sqlite";
 import { MIGRATIONS_SQL as SCHEMA } from "./schema.testkit";
 // @ts-ignore -- ditto; the migration files are read off disk so the fixture cannot drift from production
 import { beforeEach, describe, expect, it } from "vitest";
-import { getLocationsAndDonationPointsByFoodbankId } from "./foodbankDetail";
+import { getLocationsDonationPointsAndNearbyFoodbanks } from "./foodbankDetail";
 import { getLocationsByFoodbankId } from "./locations";
 import { getDonationPointsByFoodbankId } from "./donationpoints";
+import { getFoodbanksByIds } from "./foodbank";
 import type { Session } from "./types";
 
-// The pair of reads behind `/api/2/foodbank/<slug>/` (routes/api2/foodbanks.ts
-// :136) -- a food bank's locations AND its donation points, fetched in one D1
-// round trip instead of two. Django's originals are
-// `Foodbank.locations()` and `Foodbank.donation_points()`
-// (givefood/models/foodbank.py:546 and :552), both
-// `.filter(foodbank = self).order_by("name")`, both called unconditionally by
-// `gfapi2.views.foodbank` (:157 and :190) before the json/geojson branch.
-// Verified against the Django source rather than taken from the port's own
-// comments: neither queryset filters `is_closed`, and both sort by name.
+// The second wave of reads behind `/api/2/foodbank/<slug>/`
+// (routes/api2/foodbanks.ts) -- a food bank's locations, its donation points
+// and, since github #49, full rows for the ten already-ranked neighbours that
+// feed `nearby_foodbanks`, all fetched in ONE D1 round trip instead of three.
+// Django's originals are `Foodbank.locations()` and
+// `Foodbank.donation_points()` (givefood/models/foodbank.py:546 and :552),
+// both `.filter(foodbank = self).order_by("name")`, both called
+// unconditionally by `gfapi2.views.foodbank` (:157 and :190) before the
+// json/geojson branch, and `Foodbank.nearby()` (:305). Verified against the
+// Django source rather than taken from the port's own comments: neither
+// queryset filters `is_closed`, and both sort by name.
 //
-// WHY A REAL DATABASE, AND NOT A MOCK. This module is thirteen lines and every
-// one of the ways it can be wrong is SILENT -- no throw, no log, a 200 with
-// wrong data:
+// THE LOCATIONS ARE NOW PROJECTED (also #49): every column of
+// foodbanklocation_full except boundary_geojson, a TEXT blob worth 2.30 MB on
+// one production food bank's locations and read by neither branch of the
+// calling handler. The drift detector below is what keeps that hand-written
+// list in step with the view.
 //
-//   * the two batch results read back in the wrong order, so the "locations"
+// WHY A REAL DATABASE, AND NOT A MOCK. This module is a couple of dozen lines
+// and every one of the ways it can be wrong is SILENT -- no throw, no log, a
+// 200 with wrong data:
+//
+//   * the batch results read back in the wrong order, so the "locations"
 //     array is the donation points and vice versa. Both row shapes have `id`,
 //     `name` and `slug`, both go through a mapper that is a bare spread, and
 //     the response serialises either way. Nothing errors.
@@ -34,29 +43,38 @@ import type { Session } from "./types";
 //     supposed to publish.
 //   * the view swapped back to its base table, or its LEFT JOIN tightened to
 //     an INNER JOIN.
+//   * a column dropped from, or misspelled in, the locations projection --
+//     which publishes `null` for it rather than throwing.
+//   * the neighbours handed back in D1's rowid order instead of the caller's
+//     ranked id order, so nearby_foodbanks stops being sorted by distance.
 //
-// A session handing back canned rows agrees with all five, because the bug is
-// in the SQL and a mock does not run SQL. This package already carries that
+// A session handing back canned rows agrees with all of them, because the bug
+// is in the SQL and a mock does not run SQL. This package already carries that
 // scar: migration 0019 dropped five columns off six tables, four queries went
 // on naming them, and /dashboard/beautybanks/ was a live 500 nobody noticed
 // until it was measured.
 //
 // THE FIXTURE IS THE MIGRATION FILES THEMSELVES, applied in order, for exactly
 // that reason -- a CREATE TABLE transcribed into this file is a second copy of
-// the truth and drifts the same way 0019's dropped columns did. Both statements
-// here read a VIEW (`foodbanklocation_full`, `foodbankdonationpoint_full`), and
-// the view's LEFT JOIN is one of the things under test, so a hand-built
-// stand-in row would have made those assertions circular.
+// the truth and drifts the same way 0019's dropped columns did. Two of the
+// three statements here read a VIEW (`foodbanklocation_full`,
+// `foodbankdonationpoint_full`), and the view's LEFT JOIN is one of the things
+// under test, so a hand-built stand-in row would have made those assertions
+// circular. It is also what the projection is checked against: the drift
+// detector asks the engine for the view's real columns rather than trusting a
+// list typed out here.
 //
-// THE D1 100-BOUND-PARAMETER LIMIT has nothing to bite on here and there is
-// deliberately no boundary case for it: both statements bind exactly one value
-// and neither builds a variable-length IN list. If one ever does, that is the
-// moment to add the at-and-over-100 cases (see getLocationsByIds, which does).
+// THE D1 100-BOUND-PARAMETER LIMIT bites only on the third statement, whose id
+// list is caller-supplied; the two food-bank-id statements bind exactly one
+// value each. The nearby list is capped at ten by `nearest(..., 10, ...)` in
+// the handler, and getFoodbanksByIds's own suite already covers the at-and-
+// over-100 cases for the statement builder they share (foodbank.test.ts).
 //
-// MUTATION-TESTED TWICE (TESTING.md's convention -- the evidence that a test is
-// load-bearing rather than decoration). The module, its two mappers, types.ts
-// and migration 0019 were copied to a scratchpad, broken one way at a time, and
-// this file re-run against each break. Fifty-one mutants; the ones worth naming,
+// MUTATION-TESTED THREE TIMES (TESTING.md's convention -- the evidence that a
+// test is load-bearing rather than decoration). The module, its mappers,
+// types.ts and migration 0019 were copied to a scratchpad, broken one way at a
+// time, and this file re-run against each break. Fifty-one mutants; the ones
+// worth naming,
 // all caught: the two batch result indexes swapped, and the two statements
 // swapped inside batch() with the indexes left alone; sortByName deleted from
 // the locations line and from the donation points line, one at a time; sortByName
@@ -64,8 +82,8 @@ import type { Session } from "./types";
 // instead of `name`; `AND is_closed = 0` added to each statement in turn, and the
 // same filter applied in JS after the fetch; a `LIMIT 5` sneaked onto the
 // locations statement; each read reverted from its _full view to its base table,
-// and each narrowed from `SELECT *` to a column list; the batch unrolled into two
-// sequential round trips; the donation-point statement's bound id hardcoded, its
+// and the donation-point read narrowed from `SELECT *` to a column list; the
+// batch unrolled into sequential round trips; the donation-point statement's bound id hardcoded, its
 // WHERE dropped entirely, and the locations statement's `foodbank_id = ?` changed
 // to `id = ?`; the id string-interpolated into the SQL instead of bound; the
 // second statement made a copy-paste of the first, and both lists built from the
@@ -99,6 +117,26 @@ import type { Session } from "./types";
 // The first version did NOT kill the two dropped-sortByName mutants either. See
 // the note above LOCATION_SEEDS for why, and for the case that now stops the
 // fixture from quietly regressing to that state.
+//
+// THE THIRD ROUND was github #49's, run the same way against the same
+// scratchpad copy, over this file and its two new neighbours
+// (foodbank.test.ts's getFoodbankBySlugWithOpenCoordinates block and
+// routes/api2/foodbanks.test.ts). All caught: the batch unrolled into
+// sequential awaits; the locations statement reverted to `SELECT *`; one
+// column (`foodbank_email`) dropped from LOCATION_COLUMNS_NARROW; the
+// neighbours' statement moved to the FRONT of the batch with the result
+// indexes left alone; the ranked-id re-sort deleted from the neighbours, and
+// separately from mapFoodbanksByIds itself; sortByName dropped from the
+// locations line; and the donation-point read narrowed to the LOCATIONS column
+// list (which prepares cleanly and returns a plausible row).
+//
+// ONE EQUIVALENT MUTANT SURVIVED, and is recorded rather than papered over:
+// removing the `nearbyIds.length > 0` guard on the MAPPING side (leaving it on
+// the statement side) is genuinely unobservable -- mapFoodbanksByIds over an
+// empty id list returns [] and getNeedsByIds early-returns without preparing a
+// statement, so neither the rows nor the round-trip count move. The guard that
+// does matter is the one on the STATEMENT, because `id IN ()` is a SQLite
+// syntax error; that one has its own test above.
 
 
 // ===========================================================================
@@ -420,15 +458,44 @@ describe("the batch", () => {
 
   // THE WHOLE REASON THIS MODULE EXISTS, and the one claim no row-level
   // assertion in this file can make. The module's header says the detail
-  // endpoint was measured at ~2x Django's and that this sequential pair was the
-  // biggest piece of it; D1 charges per round trip, so a refactor back to two
-  // sequential awaits would return byte-identical data, pass every other test
-  // here, and quietly undo the fix.
+  // endpoint was measured at ~2x Django's and that this sequence of awaits was
+  // the biggest piece of it; a D1 round trip on this path measured 23-28 ms
+  // against production, so a refactor back to sequential awaits would return
+  // byte-identical data, pass every other test here, and quietly undo the fix.
   it("sends both SELECTs in a single round trip, not two sequential ones", async () => {
-    await getLocationsAndDonationPointsByFoodbankId(session, SALISBURY);
+    await getLocationsDonationPointsAndNearbyFoodbanks(session, SALISBURY, []);
 
     expect(log.batches).toBe(1);
     expect(log.executed).toHaveLength(2);
+  });
+
+  // The neighbours ride in the SAME batch (github #49): three statements, still
+  // one wait. Their needs cannot -- the need ids are columns of the rows this
+  // batch returns -- so that one query is the only extra round trip, and it is
+  // the one this test allows for. `nearest(..., 10, ...)` in the handler caps
+  // the id list, so this batch never grows past three statements.
+  it("sends the ranked neighbours in the same round trip, not a third one", async () => {
+    seedFoodbank(TROWBRIDGE, "Trowbridge Foodbank", "trowbridge");
+
+    await getLocationsDonationPointsAndNearbyFoodbanks(session, SALISBURY, [TROWBRIDGE]);
+
+    expect(log.batches).toBe(1);
+    expect(log.executed).toHaveLength(3);
+    expect(log.executed[2]!.sql).toBe("SELECT * FROM foodbank WHERE id IN (?)");
+    expect(log.executed[2]!.params).toEqual([TROWBRIDGE]);
+  });
+
+  // AND AN EMPTY LIST SENDS NO THIRD STATEMENT AT ALL. This is not a
+  // micro-optimisation: `SELECT * FROM foodbank WHERE id IN ()` is a syntax
+  // error, and ?format=geojson passes exactly this. The two assertions above
+  // would both pass if the statement were built and bound to nothing.
+  it("omits the third statement entirely when no neighbours are asked for", async () => {
+    const { nearbyFoodbanks } = await getLocationsDonationPointsAndNearbyFoodbanks(session, SALISBURY, []);
+
+    expect(log.batches).toBe(1);
+    expect(log.executed).toHaveLength(2);
+    expect(log.executed.some((e) => e.sql.includes("FROM foodbank WHERE id IN"))).toBe(false);
+    expect(nearbyFoodbanks).toEqual([]);
   });
 
   // The id must reach BOTH statements. Bound to only one, that statement
@@ -444,7 +511,7 @@ describe("the batch", () => {
   // both statements bind one value and it is the same value, so a swap is a
   // genuine no-op rather than an untested mutant.
   it("binds the same food bank id to both statements", async () => {
-    await getLocationsAndDonationPointsByFoodbankId(session, SALISBURY);
+    await getLocationsDonationPointsAndNearbyFoodbanks(session, SALISBURY, []);
 
     expect(log.executed[0]!.params).toEqual([SALISBURY]);
     expect(log.executed[1]!.params).toEqual([SALISBURY]);
@@ -458,10 +525,25 @@ describe("the batch", () => {
   // error. Asserted on the statement because a row from the base table would
   // simply be missing keys, which the mappers' bare casts do not notice.
   it("reads the two _full views, never the base tables", async () => {
-    await getLocationsAndDonationPointsByFoodbankId(session, SALISBURY);
+    await getLocationsDonationPointsAndNearbyFoodbanks(session, SALISBURY, []);
 
-    expect(log.executed[0]!.sql).toBe("SELECT * FROM foodbanklocation_full WHERE foodbank_id = ?");
+    expect(log.executed[0]!.sql).toContain("FROM foodbanklocation_full WHERE foodbank_id = ?");
+    expect(log.executed[0]!.sql).not.toContain("foodbanklocation WHERE");
     expect(log.executed[1]!.sql).toBe("SELECT * FROM foodbankdonationpoint_full WHERE foodbank_id = ?");
+  });
+
+  // THE PROJECTION (github #49). boundary_geojson is a TEXT blob worth 2.30 MB
+  // across one production food bank's locations and neither branch of the
+  // calling handler mentions it; `SELECT *` here was the last public-route
+  // violation of PLAN.md:2982's own hard rule. The drift detector further down
+  // checks the list is COMPLETE; this checks it is a list at all, which is the
+  // half a revert to `SELECT *` would silently undo while every row assertion
+  // in this file stayed green.
+  it("names the location columns instead of issuing SELECT *, and never asks for the blob", async () => {
+    await getLocationsDonationPointsAndNearbyFoodbanks(session, SALISBURY, []);
+
+    expect(log.executed[0]!.sql).not.toContain("SELECT *");
+    expect(log.executed[0]!.sql).not.toContain("boundary_geojson");
   });
 });
 
@@ -490,7 +572,7 @@ describe("the two lists are not interchangeable", () => {
   });
 
   it("puts the locations in `locations` and the donation points in `donationPoints`", async () => {
-    const { locations, donationPoints } = await getLocationsAndDonationPointsByFoodbankId(session, SALISBURY);
+    const { locations, donationPoints } = await getLocationsDonationPointsAndNearbyFoodbanks(session, SALISBURY, []);
 
     expect(locations.map((l) => l.name)).toEqual(["Amesbury Library", "Bemerton Heath Centre"]);
     expect(donationPoints.map((d) => d.name)).toEqual(["Sainsbury's Wilton", "Tesco Extra Salisbury"]);
@@ -498,14 +580,16 @@ describe("the two lists are not interchangeable", () => {
 
   // The name check above would survive a swap on a food bank whose two lists
   // happened to be similar. This one cannot: it compares each row's own key set
-  // against the view it must have come from. `boundary_geojson` and `is_mobile`
-  // exist only on a location; `in_store_only`, `wheelchair_accessible` and
-  // `store_id` only on a donation point.
+  // against the view it must have come from. `is_mobile` and `lsoa` exist only
+  // on a location; `in_store_only`, `wheelchair_accessible` and `store_id` only
+  // on a donation point. (`boundary_geojson` used to serve as the location
+  // marker here and no longer can -- the projection leaves it in D1 -- so
+  // `is_mobile` and `lsoa` carry that half now.)
   it("hands back rows shaped by their own table, so a swapped result index cannot pass", async () => {
-    const { locations, donationPoints } = await getLocationsAndDonationPointsByFoodbankId(session, SALISBURY);
+    const { locations, donationPoints } = await getLocationsDonationPointsAndNearbyFoodbanks(session, SALISBURY, []);
 
-    expect(Object.keys(locations[0]!)).toContain("boundary_geojson");
     expect(Object.keys(locations[0]!)).toContain("is_mobile");
+    expect(Object.keys(locations[0]!)).toContain("lsoa");
     expect(Object.keys(locations[0]!)).not.toContain("in_store_only");
     expect(Object.keys(locations[0]!)).not.toContain("wheelchair_accessible");
 
@@ -523,7 +607,7 @@ describe("the two lists are not interchangeable", () => {
     seedFoodbank(TROWBRIDGE, "Trowbridge Foodbank", "trowbridge");
     seedDonationPoint({ id: 30, foodbankId: TROWBRIDGE, name: "Morrisons Trowbridge" });
 
-    const trowbridge = await getLocationsAndDonationPointsByFoodbankId(session, TROWBRIDGE);
+    const trowbridge = await getLocationsDonationPointsAndNearbyFoodbanks(session, TROWBRIDGE, []);
 
     expect(trowbridge.locations).toEqual([]);
     expect(trowbridge.donationPoints.map((d) => d.name)).toEqual(["Morrisons Trowbridge"]);
@@ -550,7 +634,7 @@ describe("scoping to one food bank", () => {
     seedDonationPoint({ id: 30, foodbankId: SALISBURY, name: "Tesco Extra Salisbury" });
     seedDonationPoint({ id: 31, foodbankId: TROWBRIDGE, name: "Tesco Extra Trowbridge" });
 
-    const { locations, donationPoints } = await getLocationsAndDonationPointsByFoodbankId(session, SALISBURY);
+    const { locations, donationPoints } = await getLocationsDonationPointsAndNearbyFoodbanks(session, SALISBURY, []);
 
     expect(locations.map((l) => l.name)).toEqual(["Bemerton Heath Centre"]);
     expect(donationPoints.map((d) => d.name)).toEqual(["Tesco Extra Salisbury"]);
@@ -567,7 +651,7 @@ describe("scoping to one food bank", () => {
     seedDonationPoint({ id: 31, foodbankId: SALISBURY, name: "Sainsbury's Wilton" });
     seedDonationPoint({ id: 32, foodbankId: SALISBURY, name: "Waitrose Salisbury" });
 
-    const { locations, donationPoints } = await getLocationsAndDonationPointsByFoodbankId(session, SALISBURY);
+    const { locations, donationPoints } = await getLocationsDonationPointsAndNearbyFoodbanks(session, SALISBURY, []);
 
     // The names as well as the counts: 2 and 3 would also be satisfied by a
     // join that returned the right number of the wrong rows.
@@ -575,20 +659,28 @@ describe("scoping to one food bank", () => {
     expect(donationPoints.map((d) => d.name)).toEqual(["Sainsbury's Wilton", "Tesco Extra Salisbury", "Waitrose Salisbury"]);
   });
 
-  it("returns two empty arrays for a food bank with neither", async () => {
-    expect(await getLocationsAndDonationPointsByFoodbankId(session, SALISBURY)).toEqual({ locations: [], donationPoints: [] });
+  it("returns empty arrays for a food bank with neither", async () => {
+    expect(await getLocationsDonationPointsAndNearbyFoodbanks(session, SALISBURY, [])).toEqual({
+      locations: [],
+      donationPoints: [],
+      nearbyFoodbanks: [],
+    });
   });
 
-  // The caller destructures the result unconditionally and maps both lists
-  // (routes/api2/foodbanks.ts:136-140), so an unknown id must give two empty
-  // arrays rather than throwing or returning undefined. Reachable in practice:
-  // getFoodbankBySlug 404s first today, but nothing in this function's contract
-  // depends on that.
-  it("returns two empty arrays for a food bank id that does not exist", async () => {
+  // The caller destructures the result unconditionally and maps every list
+  // (routes/api2/foodbanks.ts), so an unknown id must give empty arrays rather
+  // than throwing or returning undefined. Reachable in practice:
+  // getFoodbankBySlugWithOpenCoordinates 404s first today, but nothing in this
+  // function's contract depends on that.
+  it("returns empty arrays for a food bank id that does not exist", async () => {
     seedLocation({ id: 20, foodbankId: SALISBURY, name: "Bemerton Heath Centre" });
     seedDonationPoint({ id: 30, foodbankId: SALISBURY, name: "Tesco Extra Salisbury" });
 
-    expect(await getLocationsAndDonationPointsByFoodbankId(session, 9999)).toEqual({ locations: [], donationPoints: [] });
+    expect(await getLocationsDonationPointsAndNearbyFoodbanks(session, 9999, [])).toEqual({
+      locations: [],
+      donationPoints: [],
+      nearbyFoodbanks: [],
+    });
   });
 });
 
@@ -613,7 +705,7 @@ describe("ordering", () => {
   // Seeded out of order, so a dropped sort is a different list and not a
   // coincidence. The exact sequence is the assertion, not "is sorted".
   it("returns the locations in en-US collation order", async () => {
-    const { locations } = await getLocationsAndDonationPointsByFoodbankId(session, SALISBURY);
+    const { locations } = await getLocationsDonationPointsAndNearbyFoodbanks(session, SALISBURY, []);
 
     expect(locations.map((l) => l.name)).toEqual([
       "Amesbury Library",
@@ -626,7 +718,7 @@ describe("ordering", () => {
   });
 
   it("returns the donation points in en-US collation order", async () => {
-    const { donationPoints } = await getLocationsAndDonationPointsByFoodbankId(session, SALISBURY);
+    const { donationPoints } = await getLocationsDonationPointsAndNearbyFoodbanks(session, SALISBURY, []);
 
     expect(donationPoints.map((d) => d.name)).toEqual([
       "iCentre Kiosk",
@@ -643,7 +735,7 @@ describe("ordering", () => {
   // collator here rather than written down, so this records a genuine
   // disagreement between two real orderings instead of a claim about one.
   it("is NOT the byte order an ORDER BY name would have produced on this engine", async () => {
-    const { locations, donationPoints } = await getLocationsAndDonationPointsByFoodbankId(session, SALISBURY);
+    const { locations, donationPoints } = await getLocationsDonationPointsAndNearbyFoodbanks(session, SALISBURY, []);
 
     expect(locations.map((l) => l.name)).not.toEqual(namesInByteOrder("foodbanklocation"));
     expect(donationPoints.map((d) => d.name)).not.toEqual(namesInByteOrder("foodbankdonationpoint"));
@@ -664,7 +756,7 @@ describe("ordering", () => {
   // their names and this fails here, loudly, rather than quietly turning the
   // ordering coverage into decoration.
   it("is handed the rows in an order that is genuinely wrong, so the sort has work to do", async () => {
-    const { locations, donationPoints } = await getLocationsAndDonationPointsByFoodbankId(session, SALISBURY);
+    const { locations, donationPoints } = await getLocationsDonationPointsAndNearbyFoodbanks(session, SALISBURY, []);
 
     expect(namesInScanOrder("foodbanklocation_full")).toEqual([...LOCATION_NAMES].sort(COLLATOR.compare).reverse());
     expect(namesInScanOrder("foodbankdonationpoint_full")).toEqual([...DONATION_POINT_NAMES].sort(COLLATOR.compare).reverse());
@@ -697,7 +789,7 @@ describe("closed rows", () => {
     seedDonationPoint({ id: 30, foodbankId: SALISBURY, name: "Sainsbury's Wilton", isClosed: 0 });
     seedDonationPoint({ id: 31, foodbankId: SALISBURY, name: "Tesco Extra Salisbury", isClosed: 1 });
 
-    const { locations, donationPoints } = await getLocationsAndDonationPointsByFoodbankId(session, SALISBURY);
+    const { locations, donationPoints } = await getLocationsDonationPointsAndNearbyFoodbanks(session, SALISBURY, []);
 
     expect(locations.map((l) => l.name)).toEqual(["Amesbury Library", "Bemerton Heath Centre"]);
     expect(locations.map((l) => l.is_closed)).toEqual([false, true]);
@@ -734,7 +826,7 @@ describe("the parent food bank's fields", () => {
       SALISBURY,
     );
 
-    const { locations, donationPoints } = await getLocationsAndDonationPointsByFoodbankId(session, SALISBURY);
+    const { locations, donationPoints } = await getLocationsDonationPointsAndNearbyFoodbanks(session, SALISBURY, []);
 
     expect(locations[0]!.foodbank_name).toBe("Salisbury & District Foodbank");
     expect(locations[0]!.foodbank_slug).toBe("salisbury-and-district");
@@ -767,7 +859,7 @@ describe("the parent food bank's fields", () => {
   it("resolves the parent's fields for a CLOSED food bank's own locations and donation points", async () => {
     db.prepare("UPDATE foodbank SET is_closed = 1 WHERE id = ?").run(SALISBURY);
 
-    const { locations, donationPoints } = await getLocationsAndDonationPointsByFoodbankId(session, SALISBURY);
+    const { locations, donationPoints } = await getLocationsDonationPointsAndNearbyFoodbanks(session, SALISBURY, []);
 
     expect(locations.map((l) => l.name)).toEqual(["Bemerton Heath Centre"]);
     expect(locations[0]!.foodbank_name).toBe("Salisbury Foodbank");
@@ -788,7 +880,7 @@ describe("the parent food bank's fields", () => {
     seedLocation({ id: 21, foodbankId: 999, name: "Orphan Centre" });
     seedDonationPoint({ id: 31, foodbankId: 999, name: "Orphan Co-op" });
 
-    const { locations, donationPoints } = await getLocationsAndDonationPointsByFoodbankId(session, 999);
+    const { locations, donationPoints } = await getLocationsDonationPointsAndNearbyFoodbanks(session, 999, []);
 
     expect(locations.map((l) => l.name)).toEqual(["Orphan Centre"]);
     expect(locations[0]!.foodbank_name).toBeNull();
@@ -866,34 +958,41 @@ describe("the columns that come back", () => {
   // database can do (see that list's comment: the added-column mutant survived
   // until it existed).
   //
-  // These are SELECT * reads, so `boundary_geojson` really does ride along on
-  // every location -- unlike the narrow variants elsewhere in the package. The
-  // blob is asserted rather than described BECAUSE IT IS THE SUSPECT PART OF
-  // THIS QUERY: the sole caller (routes/api2/foodbanks.ts:136) reads neither
-  // branch's boundary -- the json branch never mentions it and the geojson
-  // branch emits Point features only (:306-341) -- so a module whose entire
-  // reason for existing is a measured round-trip saving is also shipping a
-  // column that can run to ~1.6 MB per location and is then discarded.
-  // Everything that DOES want the boundary (lib/buildGeojson.ts,
-  // wfbn/locationDetail.ts, jobs' map.png) comes through a different query.
-  // Pinned as behaviour, not endorsed as a design: narrowing this statement
-  // would be an improvement, and this is the test that makes it a deliberate
-  // change rather than an accident.
-  it("returns every column of foodbanklocation_full, boundary_geojson included", async () => {
+  // THE LOCATION READ IS PROJECTED (github #49) and this is where the projection
+  // is held to "every column except one". The sole caller
+  // (routes/api2/foodbanks.ts) reads no boundary in either branch -- the json
+  // branch never mentions it and the geojson branch emits Point features only
+  // -- while the column runs to ~1.6 MB per location and 2.30 MB across one
+  // production food bank's. Everything that DOES want the boundary
+  // (lib/buildGeojson.ts, wfbn/locationDetail.ts, jobs' map.png) comes through
+  // a different query, so it is left in D1 here.
+  //
+  // "EXCEPT ONE" IS THE WHOLE ASSERTION, and it is deliberately not written as
+  // `not.toContain("boundary_geojson")`: that alone would also pass if the
+  // projection had quietly lost six other columns, each of which publishes
+  // `null` rather than throwing. The expectation is the full column list with
+  // exactly one name subtracted, so a seventh missing column is a failure and
+  // so is the blob coming back.
+  it("returns every column of foodbanklocation_full except boundary_geojson", async () => {
     seedLocation({ id: 20, foodbankId: SALISBURY, name: "Bemerton Heath Centre", boundaryGeojson: BOUNDARY });
 
-    const { locations } = await getLocationsAndDonationPointsByFoodbankId(session, SALISBURY);
+    const { locations } = await getLocationsDonationPointsAndNearbyFoodbanks(session, SALISBURY, []);
 
+    const expected = LOCATION_FULL_COLUMNS.filter((column) => column !== "boundary_geojson");
     expect(columnsOf("foodbanklocation_full")).toEqual(LOCATION_FULL_COLUMNS);
-    expect(Object.keys(locations[0]!).sort()).toEqual([...LOCATION_FULL_COLUMNS].sort());
-    expect(Object.keys(locations[0]!).sort()).toEqual(columnsOf("foodbanklocation_full").sort());
-    expect(locations[0]!.boundary_geojson).toBe(BOUNDARY);
+    expect(Object.keys(locations[0]!).sort()).toEqual([...expected].sort());
+    expect(Object.keys(locations[0]!).sort()).toEqual(columnsOf("foodbanklocation_full").filter((c) => c !== "boundary_geojson").sort());
+    // The view still HAS the column -- this is a projection, not a migration.
+    // Without this the test above would also pass if 0019's successor dropped
+    // boundary_geojson outright and left every reader of it broken.
+    expect(columnsOf("foodbanklocation_full")).toContain("boundary_geojson");
+    expect(locations[0]!).not.toHaveProperty("boundary_geojson");
   });
 
   it("returns every column of foodbankdonationpoint_full", async () => {
     seedDonationPoint({ id: 30, foodbankId: SALISBURY, name: "Tesco Extra Salisbury" });
 
-    const { donationPoints } = await getLocationsAndDonationPointsByFoodbankId(session, SALISBURY);
+    const { donationPoints } = await getLocationsDonationPointsAndNearbyFoodbanks(session, SALISBURY, []);
 
     expect(columnsOf("foodbankdonationpoint_full")).toEqual(DONATION_POINT_FULL_COLUMNS);
     expect(Object.keys(donationPoints[0]!).sort()).toEqual([...DONATION_POINT_FULL_COLUMNS].sort());
@@ -932,7 +1031,7 @@ describe("the columns that come back", () => {
     seedLocation({ id: 21, foodbankId: SALISBURY, name: "Cleared", isClosed: 0, isDonationPoint: 0, isMobile: 0, placeHasPhoto: 0 });
     seedLocation({ id: 22, foodbankId: SALISBURY, name: "Unknown", isClosed: 0, isDonationPoint: null, isMobile: null, placeHasPhoto: null });
 
-    const { locations } = await getLocationsAndDonationPointsByFoodbankId(session, SALISBURY);
+    const { locations } = await getLocationsDonationPointsAndNearbyFoodbanks(session, SALISBURY, []);
     const byName = new Map(locations.map((l) => [l.name, l]));
 
     // toBe throughout, never toBeTruthy/toBeFalsy: Object.is(1, true) is false
@@ -969,7 +1068,7 @@ describe("the columns that come back", () => {
     seedDonationPoint({ id: 31, foodbankId: SALISBURY, name: "Step-free", isClosed: 1, inStoreOnly: 0, wheelchairAccessible: 1, placeHasPhoto: 1 });
     seedDonationPoint({ id: 32, foodbankId: SALISBURY, name: "Stairs only", isClosed: 0, inStoreOnly: 0, wheelchairAccessible: 0, placeHasPhoto: 0 });
 
-    const { donationPoints } = await getLocationsAndDonationPointsByFoodbankId(session, SALISBURY);
+    const { donationPoints } = await getLocationsDonationPointsAndNearbyFoodbanks(session, SALISBURY, []);
     const byName = new Map(donationPoints.map((d) => [d.name, d]));
 
     expect(byName.get("Unchecked")!.wheelchair_accessible).toBeNull();
@@ -992,7 +1091,7 @@ describe("the columns that come back", () => {
   it("hands back a donation point with a NULL country rather than dropping it", async () => {
     seedDonationPoint({ id: 30, foodbankId: SALISBURY, name: "Tesco Extra Salisbury", country: null });
 
-    const { donationPoints } = await getLocationsAndDonationPointsByFoodbankId(session, SALISBURY);
+    const { donationPoints } = await getLocationsDonationPointsAndNearbyFoodbanks(session, SALISBURY, []);
 
     expect(donationPoints).toHaveLength(1);
     expect(donationPoints[0]!.country).toBeNull();
@@ -1008,7 +1107,7 @@ describe("the columns that come back", () => {
     seedLocation({ id: 20, foodbankId: SALISBURY, name: "Bemerton Heath Centre", edited: MODIFIED });
     seedDonationPoint({ id: 30, foodbankId: SALISBURY, name: "Tesco Extra Salisbury", edited: null });
 
-    const { locations, donationPoints } = await getLocationsAndDonationPointsByFoodbankId(session, SALISBURY);
+    const { locations, donationPoints } = await getLocationsDonationPointsAndNearbyFoodbanks(session, SALISBURY, []);
 
     expect(locations[0]!.modified).toBe("2026-09-05 19:28:08.853000");
     expect(locations[0]!.edited).toBe("2026-09-05 19:28:08.853000");
@@ -1022,23 +1121,38 @@ describe("the columns that come back", () => {
 // EQUIVALENCE WITH THE PAIR IT REPLACED
 // ===========================================================================
 
-describe("against the two single-statement functions it batches", () => {
+describe("against the single-statement functions it batches", () => {
   // THE CLAIM THE WHOLE MODULE RESTS ON: same rows, one round trip instead of
-  // two. getLocationsByFoodbankId and getDonationPointsByFoodbankId are the
+  // three. getLocationsByFoodbankId and getDonationPointsByFoodbankId are the
   // functions Django's `locations()` / `donation_points()` were ported into and
   // are still used elsewhere (foodbank(slug), the geojson branches), so if this
-  // batched pair ever drifts from them the API and the public page start
+  // batched set ever drifts from them the API and the public page start
   // disagreeing about the same food bank. Nothing else in this file would
   // notice: both would still return plausible, well-shaped rows.
+  //
+  // THE ONE PERMITTED DIFFERENCE IS boundary_geojson, and it is subtracted
+  // explicitly rather than by loosening the comparison: `toMatchObject` or a
+  // key-by-key loop would also pass if the projection lost five more columns.
+  // Everything else -- every other column, both orderings, the WHERE, the
+  // boolean coercion -- must still be equal value for value.
   //
   // Seeded with the divergent names, a closed row on each side and an
   // untouched-NULL boolean so the comparison covers ordering, filtering and
   // mapping at once rather than only row count.
-  it("returns exactly what the unbatched pair returns", async () => {
+  it("returns exactly what the unbatched pair returns, minus the boundary blob", async () => {
     seedFoodbank(SALISBURY, "Salisbury Foodbank", "salisbury");
     seedFoodbank(TROWBRIDGE, "Trowbridge Foodbank", "trowbridge");
     LOCATION_SEEDS.forEach((seed, i) =>
-      seedLocation({ id: 20 + i, foodbankId: SALISBURY, ...seed, isClosed: i === 0 ? 1 : 0, isMobile: i === 1 ? 1 : null }),
+      seedLocation({
+        id: 20 + i,
+        foodbankId: SALISBURY,
+        ...seed,
+        isClosed: i === 0 ? 1 : 0,
+        isMobile: i === 1 ? 1 : null,
+        // Only some rows carry one in production (40 of 1,973), and the
+        // comparison has to hold for both kinds.
+        boundaryGeojson: i % 2 === 0 ? BOUNDARY : null,
+      }),
     );
     DONATION_POINT_SEEDS.forEach((seed, i) =>
       seedDonationPoint({ id: 40 + i, foodbankId: SALISBURY, ...seed, isClosed: i === 0 ? 1 : 0, wheelchairAccessible: i === 1 ? null : 1 }),
@@ -1048,13 +1162,34 @@ describe("against the two single-statement functions it batches", () => {
     seedLocation({ id: 60, foodbankId: TROWBRIDGE, name: "Melksham Centre" });
     seedDonationPoint({ id: 61, foodbankId: TROWBRIDGE, name: "Tesco Extra Trowbridge" });
 
-    const batched = await getLocationsAndDonationPointsByFoodbankId(session, SALISBURY);
+    const batched = await getLocationsDonationPointsAndNearbyFoodbanks(session, SALISBURY, []);
 
-    expect(batched.locations).toEqual(await getLocationsByFoodbankId(session, SALISBURY));
+    const unbatched = (await getLocationsByFoodbankId(session, SALISBURY)).map(({ boundary_geojson, ...rest }) => rest);
+    expect(batched.locations).toEqual(unbatched);
     expect(batched.donationPoints).toEqual(await getDonationPointsByFoodbankId(session, SALISBURY));
     // Belt and braces on the comparison itself: toEqual on two empty arrays
-    // would pass while proving nothing, so both lists must be non-empty.
+    // would pass while proving nothing, so both lists must be non-empty -- and
+    // the subtraction above must have actually subtracted something.
     expect(batched.locations).toHaveLength(LOCATION_NAMES.length);
     expect(batched.donationPoints).toHaveLength(DONATION_POINT_NAMES.length);
+    expect((await getLocationsByFoodbankId(session, SALISBURY)).some((l) => l.boundary_geojson === BOUNDARY)).toBe(true);
+  });
+
+  // THE NEIGHBOURS, against the function whose statement they borrow. The risk
+  // is not that the rows are wrong -- it is that they come back in D1's rowid
+  // order instead of the caller's ranked one, which is invisible in any
+  // per-row assertion and turns nearby_foodbanks from "nearest first" into
+  // "lowest id first". The ids are passed here deliberately out of id order.
+  it("returns exactly what getFoodbanksByIds returns, in the caller's ranked order", async () => {
+    seedFoodbank(SALISBURY, "Salisbury Foodbank", "salisbury");
+    seedFoodbank(TROWBRIDGE, "Trowbridge Foodbank", "trowbridge");
+    seedFoodbank(3, "Andover Foodbank", "andover");
+    seedLocation({ id: 20, foodbankId: SALISBURY, name: "Bemerton Heath Centre" });
+
+    const ranked = [3, SALISBURY, TROWBRIDGE];
+    const { nearbyFoodbanks } = await getLocationsDonationPointsAndNearbyFoodbanks(session, SALISBURY, ranked);
+
+    expect(nearbyFoodbanks).toEqual(await getFoodbanksByIds(session, ranked));
+    expect(nearbyFoodbanks.map((f) => f.id)).toEqual(ranked);
   });
 });

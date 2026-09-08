@@ -213,7 +213,22 @@ function d1Session(db: DatabaseSync) {
       return { success: true, meta: { last_row_id: Number(result.lastInsertRowid), changes: result.changes } };
     },
   });
-  return { prepare: (sql: string) => statement(sql, []), getBookmark: () => null };
+  return {
+    prepare: (sql: string) => statement(sql, []),
+    // getFoodbankBySlug sends its food bank row and its latest-need row as ONE
+    // batch() rather than two sequential awaits (packages/db/src/foodbank.ts).
+    // The same adapter as packages/db/src/foodbankDetail.test.ts: statements
+    // run in order and there is one result per input statement, in that order,
+    // because the caller indexes straight into the array -- a batch that
+    // reordered or coalesced results would hand back the wrong row without
+    // erroring anywhere.
+    batch: async (statements: Array<{ all: () => Promise<unknown> }>) => {
+      const out: unknown[] = [];
+      for (const each of statements) out.push(await each.all());
+      return out;
+    },
+    getBookmark: () => null,
+  };
 }
 
 // ============================ fixture data ============================

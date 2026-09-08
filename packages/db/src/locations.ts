@@ -118,12 +118,27 @@ export async function getAllOpenLocations(session: Session): Promise<FoodbankLoc
 // way, by a pragma-driven drift test that reads the view's real columns and
 // fails when a migration adds one: see locations.test.ts and
 // constituencies.test.ts:961-969.
-const LOCATION_COLUMNS_NARROW =
+//
+// EXPORTED for foodbankDetail.ts (github #49), which imports from this file
+// already and so adds no third copy. That direction is the one that does not
+// cycle; the constituencies.ts copy stays where it is.
+export const LOCATION_COLUMNS_NARROW =
   "id, uuid, foodbank_id, foodbank_name, foodbank_slug, foodbank_network, foodbank_phone_number, foodbank_email, " +
   "name, slug, address, postcode, country, lat_lng, latitude, longitude, place_id, plus_code_compound, plus_code_global, " +
   "place_has_photo, county, district, ward, lsoa, msoa, parliamentary_constituency_id, parliamentary_constituency_name, " +
   "parliamentary_constituency_slug, mp, mp_party, mp_parl_id, is_closed, is_donation_point, is_mobile, phone_number, " +
   "email, modified, edited";
+
+// The row LOCATION_COLUMNS_NARROW yields, and its mapper. Declared here
+// rather than beside either of its callers because there are now two of them
+// -- constituencies.ts's getFoodbanksForConstituency and foodbankDetail.ts's
+// getLocationsDonationPointsAndNearbyFoodbanks -- and both are describing the
+// same thing: a location row with the ~1.6 MB boundary blob left in D1.
+export type FoodbankLocationRowNarrow = Omit<FoodbankLocationRow, "boundary_geojson">;
+
+export function mapLocationRowNarrow(raw: Record<string, unknown>): FoodbankLocationRowNarrow {
+  return coerceBooleans<FoodbankLocationRowNarrow>(raw, BOOLEAN_COLUMNS);
+}
 
 // The full row with the blob replaced by a 0/1 flag. `has_boundary` is
 // deliberately NOT run through coerceBooleans: 0/1 is what the SQL yields,

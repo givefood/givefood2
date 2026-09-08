@@ -100,8 +100,8 @@ export interface NeedEmailFoodbankRow {
 // The notification email templates touch exactly five food bank fields
 // (slug, and name/alt_name via full_name(), plus no_donation_points for the
 // "Find donation points" line). A narrow SELECT rather than reusing
-// getFoodbankBySlug/getFoodbanksByIds, both of which do `SELECT *` and then
-// a second query for latest_need -- neither of which this path needs.
+// getFoodbankBySlug/getFoodbanksByIds, both of which do `SELECT *` and carry
+// a second statement for latest_need -- neither of which this path needs.
 export async function getFoodbankForNeedEmail(session: Session, foodbankId: number): Promise<NeedEmailFoodbankRow | null> {
   return session
     .prepare("SELECT id, slug, name, alt_name, no_donation_points FROM foodbank WHERE id = ?")

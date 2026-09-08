@@ -1,9 +1,9 @@
 import { Hono } from "hono";
 import {
   getAllOpenFoodbanks,
-  getFoodbankBySlug,
+  getFoodbankBySlugWithOpenCoordinates,
   getFoodbanksByIds,
-  getLocationsAndDonationPointsByFoodbankId,
+  getLocationsDonationPointsAndNearbyFoodbanks,
   getOpenFoodbankCoordinates,
   toDashedUuid,
 } from "@givefood/db";
@@ -128,12 +128,55 @@ api2FoodbanksApp.get("/foodbank/:slug/", async (c) => {
   const slug = c.req.param("slug");
   const session = dbSession(c);
 
-  const foodbank = await getFoodbankBySlug(session, slug);
+  // THREE D1 ROUND TRIPS, NOT FIVE (github #49). Everything this endpoint
+  // reads falls into three dependency levels, and it used to await each query
+  // separately even where nothing connected them:
+  //
+  //   1. the food bank by slug, its latest need, and -- for nearby_foodbanks
+  //      only -- the id+coordinate candidate set of every open food bank.
+  //      None of the three depends on the others.
+  //   2. its locations, its donation points, and full rows for the ten
+  //      neighbours ranked out of (1). All three need only ids from (1).
+  //   3. those ten neighbours' latest needs, which are columns of (2).
+  //
+  // Each level is one `session.batch()`. At the 23-28 ms per round trip
+  // measured against production (interleaved cache-busted requests, reading
+  // this Worker's own Server-Timing `render` header, which on Workers only
+  // advances at I/O boundaries) that is ~50 ms off a 138-192 ms request.
+  //
+  // The candidate scan is gated on the format rather than hoisted: the
+  // geojson branch below has no nearby_foodbanks and would pay a 1,024-row
+  // scan for nothing. See getFoodbankBySlugWithOpenCoordinates.
+  const isGeojson = format === "geojson";
+  const { foodbank, openCoordinates } = await getFoodbankBySlugWithOpenCoordinates(session, slug, !isGeojson);
   if (!foodbank) return c.notFound();
 
-  // One D1 round trip for both, not two sequential ones -- found via real
-  // timing comparisons against production (a WP 2.5 follow-up).
-  const { locations, donationPoints } = await getLocationsAndDonationPointsByFoodbankId(session, foodbank.id);
+  // Foodbank.nearby() = find_foodbanks(self.lat_lng, 10, True): ALL open
+  // food banks (this one included, if open), ranked by haversine from
+  // THIS food bank's own lat_lng using v1's radius (R_PYTHON, not
+  // R_EARTHDISTANCE -- verified against foodbank.py:305), then
+  // skip_first=True drops index 0 (presumed to be this food bank itself
+  // at distance 0). If this food bank is closed it is absent from the
+  // candidate set and skip_first instead drops the true nearest other
+  // food bank -- a frozen quirk, not special-cased away.
+  // WP 2.5 perf: rank against the cheap id+coordinate candidate set (a
+  // covering-index scan over ~1000 rows), not the full open-foodbank
+  // row set -- full rows for only the 10 survivors are fetched below.
+  const [selfLat, selfLng] = parseLatLng(foodbank.lat_lng);
+  const nearbyRanked = isGeojson
+    ? []
+    : nearest(openCoordinates, selfLat, selfLng, (c) => [c.latitude, c.longitude], 10, R_PYTHON, true);
+
+  // One D1 round trip for all three, not three sequential ones -- found via
+  // real timing comparisons against production (a WP 2.5 follow-up, extended
+  // for #49). getLocationsDonationPointsAndNearbyFoodbanks preserves the
+  // ranked id order in nearbyFoodbanks; an empty id list sends no third
+  // statement, which is what the geojson branch relies on.
+  const { locations, donationPoints, nearbyFoodbanks } = await getLocationsDonationPointsAndNearbyFoodbanks(
+    session,
+    foodbank.id,
+    nearbyRanked.map((r) => r.item.id),
+  );
 
   let responseData: SerialisableValue;
   if (format !== "geojson") {
@@ -189,25 +232,9 @@ api2FoodbanksApp.get("/foodbank/:slug/", async (c) => {
       },
     }));
 
-    // Foodbank.nearby() = find_foodbanks(self.lat_lng, 10, True): ALL open
-    // food banks (this one included, if open), ranked by haversine from
-    // THIS food bank's own lat_lng using v1's radius (R_PYTHON, not
-    // R_EARTHDISTANCE -- verified against foodbank.py:305), then
-    // skip_first=True drops index 0 (presumed to be this food bank itself
-    // at distance 0). If this food bank is closed it is absent from the
-    // candidate set and skip_first instead drops the true nearest other
-    // food bank -- a frozen quirk, not special-cased away.
-    // WP 2.5 perf: rank against the cheap id+coordinate candidate set (a
-    // covering-index scan over ~1000 rows), not the full open-foodbank
-    // row set -- full rows for only the 10 survivors come from
-    // getFoodbanksByIds.
-    const [selfLat, selfLng] = parseLatLng(foodbank.lat_lng);
-    const nearbyCandidates = await getOpenFoodbankCoordinates(session);
-    const nearbyRanked = nearest(nearbyCandidates, selfLat, selfLng, (c) => [c.latitude, c.longitude], 10, R_PYTHON, true);
-    const nearbyFoodbanks = await getFoodbanksByIds(
-      session,
-      nearbyRanked.map((r) => r.item.id),
-    );
+    // Ranked and fetched above, before the locations batch, so that the
+    // neighbours' SELECT rides in it -- see the round-trip note at the top of
+    // this handler. The shaping below is unchanged.
     const nearbyFoodbankList = nearbyFoodbanks.map((nearbyFoodbank) => ({
       name: nearbyFoodbank.name,
       slug: nearbyFoodbank.slug,

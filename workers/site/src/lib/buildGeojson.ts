@@ -39,7 +39,7 @@ import {
   getOpenDonationPointsByCountry,
   getOpenLocationsByConstituencyId,
   getOpenLocationsByCountry,
-  type DonationPointRow,
+  type DonationPointRowNarrow,
   type FoodbankLocationRow,
   type FoodbankRow,
   type Session,
@@ -175,7 +175,16 @@ function locationFeature(
   return pointFeature("l", entries, location.lat_lng, decimalPlaces);
 }
 
-function donationPointFeature(dp: DonationPointRow, locale: string, includeAddress: boolean, decimalPlaces: number): string {
+// DonationPointRowNarrow, not DonationPointRow: the all-items feed's query
+// is projected (getAllOpenDonationPoints in packages/db) and the other three
+// scopes' wide rows satisfy the narrow shape anyway, so the narrow type is
+// the one that covers every caller. Unlike GeojsonLocationRow above it needs
+// no optional-column dodge, because nothing here tests a column the
+// projection drops -- name, foodbank_name, address, postcode, foodbank_slug,
+// slug and lat_lng are all in it. Typing it narrow is also what makes a
+// future `dp.opening_hours` a compile error rather than an `undefined`
+// quietly serialised into the public map.
+function donationPointFeature(dp: DonationPointRowNarrow, locale: string, includeAddress: boolean, decimalPlaces: number): string {
   const entries: Array<[string, string]> = [
     ["name", dp.name],
     ["foodbank", dp.foodbank_name],
@@ -206,7 +215,7 @@ export async function buildGeojsonResponse(session: Session, locale: string, sco
 
   let foodbanks: FoodbankRow[] = [];
   let locations: GeojsonLocationRow[] = [];
-  let donationpoints: DonationPointRow[] = [];
+  let donationpoints: DonationPointRowNarrow[] = [];
   let boundaryFeature: string | null = null;
 
   if (scope.kind === "all") {
@@ -219,6 +228,11 @@ export async function buildGeojsonResponse(session: Session, locale: string, sco
     // rows_read is unchanged. The other four scopes stay on the wide query
     // because they DO render the polygon (or, for country, because their
     // rows are a small country-filtered subset either way).
+    //
+    // getAllOpenDonationPoints is projected for the same reason and was the
+    // slowest of these three legs: 10.6 MB -> 3.3 MB and ~300 ms -> ~79 ms
+    // over 5,727 rows, rows_read again unchanged. Its other three scopes are
+    // likewise small filtered subsets and stay on `SELECT *`.
     [foodbanks, locations, donationpoints] = await Promise.all([
       getAllOpenFoodbanks(session),
       getAllOpenLocationsFlagged(session),

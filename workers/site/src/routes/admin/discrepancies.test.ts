@@ -133,12 +133,14 @@ CREATE VIEW foodbankdiscrepancy_full AS
 
 -- 0001_core.sql:109-122 as amended by 0019_drop_foodbank_cache.sql:57
 -- (foodbank_name dropped), plus 0019's foodbankchange_full view. Here for
--- ONE reason: getFoodbankBySlug ends in attachLatestNeed, which issues a
--- SECOND query against this view whenever the food bank's latest_need_id is
--- non-null. Every other test in this file leaves that column NULL, so that
--- branch never ran -- and in production it is set for nearly every food
--- bank, meaning a break in it would 500 this page for real data while the
--- suite stayed green. See "renders a food bank that has a latest need".
+-- ONE reason: getFoodbankBySlug reads this view for the food bank's latest
+-- need. It used to do so only when latest_need_id was non-null, and every
+-- other test in this file leaves that column NULL, so the branch went
+-- untested even though production sets it for nearly every food bank -- a
+-- break in it would have 500ed this page for real data while the suite
+-- stayed green. Since github #51 the read is batched with the food bank row
+-- and sent unconditionally, so the table is now load-bearing for EVERY test
+-- here. See "renders a food bank that has a latest need".
 CREATE TABLE foodbankchange (
   id INTEGER PRIMARY KEY,
   need_id TEXT NOT NULL,
@@ -204,7 +206,22 @@ function d1Session(db: DatabaseSync) {
       return { success: true, meta: {} };
     },
   });
-  return { prepare: (sql: string) => statement(sql, []), getBookmark: () => null };
+  return {
+    prepare: (sql: string) => statement(sql, []),
+    // getFoodbankBySlug sends its food bank row and its latest-need row as ONE
+    // batch() rather than two sequential awaits (packages/db/src/foodbank.ts).
+    // The same adapter as packages/db/src/foodbankDetail.test.ts: statements
+    // run in order and there is one result per input statement, in that order,
+    // because the caller indexes straight into the array -- a batch that
+    // reordered or coalesced results would hand back the wrong row without
+    // erroring anywhere.
+    batch: async (statements: Array<{ all: () => Promise<unknown> }>) => {
+      const out: unknown[] = [];
+      for (const each of statements) out.push(await each.all());
+      return out;
+    },
+    getBookmark: () => null,
+  };
 }
 
 const ORIGIN = "https://www.givefood.org.uk";
@@ -520,13 +537,14 @@ describe("adminDiscrepancyDetail", () => {
   });
 
   // getFoodbankBySlug does not stop at the food bank row: it resolves
-  // `latest_need_id` through foodbankchange_full in a second query. Nearly
-  // every food bank in production has one; every other test in this file
-  // leaves the column NULL and so never runs that query. Without this test a
-  // change that broke it -- a renamed view, a column the mapper needs going
-  // missing -- would 500 the review page for every real food bank while the
-  // suite stayed green.
-  it("renders a food bank that has a latest need, following the second query that resolves it", async () => {
+  // `latest_need_id` through foodbankchange_full in a second statement,
+  // batched with the first. Nearly every food bank in production has a need;
+  // every other test in this file leaves the column NULL, so this is the only
+  // one where that statement returns a ROW rather than an empty result.
+  // Without it a change that broke the mapping -- a renamed view, a column the
+  // mapper needs going missing -- would 500 the review page for every real
+  // food bank while the suite stayed green.
+  it("renders a food bank that has a latest need, following the second statement that resolves it", async () => {
     const subject = seedFoodbank({ latest_need_id: 501 });
     // An OLDER need for the same food bank, at the lower id, so "the latest
     // need" is a claim about the key and not about the only row present

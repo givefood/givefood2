@@ -7,6 +7,7 @@ import {
   getAllOpenFoodbanks,
   getAllOpenFoodbanksForSitemap,
   getFoodbankBySlug,
+  getFoodbankBySlugWithOpenCoordinates,
   getFoodbankIdBySlug,
   getFoodbankIdByUuid,
   getFoodbankRssCrawlTargetById,
@@ -20,6 +21,10 @@ import {
   getOpenFoodbanksWithDeliveryAddress,
   mapFoodbankRow,
 } from "./foodbank";
+// The oracle for github #51's "the rows did not move" comparison -- the
+// dependent PK lookup getFoodbankBySlug used to await after its food bank row.
+// Still live code, still used by the notify/translate queue consumers.
+import { getNeedById } from "./needs";
 import type { Session } from "./types";
 
 // The `foodbank` table's read layer -- fifteen queries that between them feed
@@ -104,6 +109,14 @@ interface FakeStatement extends Sent {
   all<T>(): Promise<{ results: T[] }>;
 }
 
+// One entry per D1 ROUND TRIP, each holding the statements that trip carried:
+// a bare `.first()`/`.all()` is a one-element array, a `batch()` of N is one
+// N-element array. STATEMENTS AND ROUND TRIPS ARE DIFFERENT COUNTS and both are
+// asserted below -- getFoodbankBySlug sends two statements in ONE trip, and
+// `calls` alone cannot tell that apart from the two sequential awaits it
+// replaced.
+type RoundTrip = Sent[];
+
 // The slice of the D1 Sessions API this module uses, over node:sqlite.
 // Deliberately dumb: it carries SQL to a real engine and never interprets it,
 // or these tests would be asserting against a second implementation of the
@@ -117,10 +130,31 @@ interface FakeStatement extends Sent {
 // back" is true of both the fast and the slow version, so the only way to
 // pin the fix is to count the statements that actually reached the engine.
 //
+// `roundTrips` is the same log grouped by NETWORK CALL, and it exists for the
+// same reason one step further on: getFoodbankBySlug sends two statements in
+// one batch(), so the statement count alone cannot distinguish it from the two
+// sequential awaits it replaced. Both versions execute two SELECTs; only one of
+// them waits for D1 twice.
+//
 // bind() returns a NEW statement rather than mutating this one, matching D1's
 // immutable prepared statements.
-function d1Session(db: SqliteDatabase): { session: Session; calls: Sent[] } {
+//
+// batch() RUNS ITS STATEMENTS IN ORDER AND RETURNS ONE RESULT PER INPUT, in
+// that order, copied from foodbankDetail.test.ts's adapter. That ordering is
+// part of what these tests defend: getFoodbankBySlug indexes straight into
+// `results[0]` and `results[1]`, and a batch that reordered or coalesced them
+// would attach one food bank's need row to another food bank without erroring.
+function d1Session(db: SqliteDatabase): { session: Session; calls: Sent[]; roundTrips: RoundTrip[] } {
   const calls: Sent[] = [];
+  const roundTrips: RoundTrip[] = [];
+
+  // Every path into the engine goes through here, so `calls` counts statements
+  // whether they arrived alone or inside a batch. The round trip is recorded by
+  // the caller instead, which is what keeps the two counts independent.
+  function exec(sql: string, params: Bindable[]): Record<string, unknown>[] {
+    calls.push({ sql, params });
+    return db.prepare(sql).all(...params);
+  }
 
   function statement(sql: string, params: Bindable[]): FakeStatement {
     return {
@@ -128,18 +162,23 @@ function d1Session(db: SqliteDatabase): { session: Session; calls: Sent[] } {
       params,
       bind: (...values: unknown[]) => statement(sql, values as Bindable[]),
       first: async <T,>() => {
-        calls.push({ sql, params });
-        return (db.prepare(sql).get(...params) ?? null) as T | null;
+        roundTrips.push([{ sql, params }]);
+        return (exec(sql, params)[0] ?? null) as T | null;
       },
       all: async <T,>() => {
-        calls.push({ sql, params });
-        return { results: db.prepare(sql).all(...params) as T[] };
+        roundTrips.push([{ sql, params }]);
+        return { results: exec(sql, params) as T[] };
       },
     };
   }
 
-  const session = { prepare: (sql: string) => statement(sql, []) } as unknown as Session;
-  return { session, calls };
+  async function batch(statements: FakeStatement[]): Promise<Array<{ results: unknown[] }>> {
+    roundTrips.push(statements.map((s) => ({ sql: s.sql, params: s.params })));
+    return statements.map((s) => ({ results: exec(s.sql, s.params) }));
+  }
+
+  const session = { prepare: (sql: string) => statement(sql, []), batch } as unknown as Session;
+  return { session, calls, roundTrips };
 }
 
 // ===========================================================================
@@ -149,6 +188,7 @@ function d1Session(db: SqliteDatabase): { session: Session; calls: Sent[] } {
 let db: SqliteDatabase;
 let session: Session;
 let calls: Sent[];
+let roundTrips: RoundTrip[];
 
 interface FoodbankSeed {
   id: number;
@@ -288,7 +328,7 @@ const sortedSlugs = (rows: { slug: string }[]): string[] => slugs(rows).sort();
 beforeEach(() => {
   db = new DatabaseSync(":memory:") as unknown as SqliteDatabase;
   db.exec(SCHEMA);
-  ({ session, calls } = d1Session(db));
+  ({ session, calls, roundTrips } = d1Session(db));
 });
 
 afterEach(() => {
@@ -898,16 +938,22 @@ describe("getFoodbankBySlug", () => {
     expect(row!.latestNeed!.need_id).toBe("8c1e9a3f4b7d4e2fa1c05d6b8e9f0a12");
   });
 
-  // A food bank that has never had a need at all. `latest_need_id === null`
-  // short-circuits BEFORE the query, so this is also the assertion that the
-  // second round trip is skipped -- see the call count.
-  it("returns latestNeed null, and issues no second query, when latest_need_id is null", async () => {
+  // A food bank that has never had a need at all. There is no longer a
+  // `latest_need_id === null` guard in front of the second statement -- the
+  // batch sends it either way and `id = (SELECT NULL)` is NULL, which matches
+  // nothing under SQLite's three-valued WHERE logic and returns zero rows. The
+  // OUTCOME is what the old short-circuit produced; what changed is that it now
+  // costs one extra rows_read instead of a saved statement. Pinned in both
+  // directions: the second statement IS sent (statement count 2) and it still
+  // arrives inside the single round trip (round-trip count 1).
+  it("returns latestNeed null when latest_need_id is null, without a second round trip", async () => {
     seedFoodbank({ id: 1, slug: "salisbury", latestNeedId: null });
 
     const row = await getFoodbankBySlug(session, "salisbury");
 
     expect(row!.latestNeed).toBeNull();
-    expect(calls).toHaveLength(1);
+    expect(calls).toHaveLength(2);
+    expect(roundTrips).toHaveLength(1);
   });
 
   // D1 HAS NO FOREIGN KEYS (PLAN.md §4.5), so `latest_need_id` can outlive the
@@ -932,6 +978,296 @@ describe("getFoodbankBySlug", () => {
     expect(row!.id).toBe(4);
     expect(row!.url).toBe("https://salisburyfoodbank.org.uk/");
     expect(row!.latest_need_id).toBe(500);
+  });
+
+  // -------------------------------------------------------------------------
+  // ONE ROUND TRIP -- github #51
+  // -------------------------------------------------------------------------
+  //
+  // This function used to await the food bank row and THEN await the need row,
+  // two sequential D1 waits for data that depends only on the slug. It is the
+  // most-called query in the port: 53 call sites across 36 files, 25 of them
+  // (in 16 files) on the public site -- every /needs/at/<slug>/ page, its /md/
+  // twin, the RSS feeds, gfapi1, gfapi2, the GeoJSON scope builder -- and those
+  // pages mostly miss the edge cache (11.9% HTML hit rate measured, 1.3% md),
+  // so ~88% of food bank page views paid for both waits.
+  //
+  // A round trip was measured at ~19-22 ms against production, by interleaving
+  // cache-busted requests and reading Server-Timing `render;dur` (which on
+  // these pages IS the D1 wait -- Workers' performance.now() only advances at
+  // I/O boundaries, see middleware/serverTiming.ts). /md/needs/at/<slug>/ calls
+  // this function and nothing else and ran a median 37 ms over 8 samples.
+  //
+  // THE ROWS ARE IDENTICAL EITHER WAY, which is exactly why this needs pinning
+  // by counting round trips: every assertion above passes on the slow version
+  // too. Nothing else stops someone "simplifying" the batch back into two
+  // awaits, or into the JOIN that needs a ~95-column alias list to dodge the
+  // four column names the two tables share.
+  //
+  // MUTATION-TESTED (TESTING.md's convention -- the evidence that a test is
+  // load-bearing rather than decoration). foodbank.ts was copied to a
+  // scratchpad, broken one way at a time, and this file re-run against each
+  // break. Twelve mutants, all caught: the batch unrolled back into two
+  // sequential awaits, and split into two batches of one; the two result
+  // indexes swapped, and the two statements swapped inside batch() with the
+  // indexes left alone; the subquery re-keyed onto `foodbank_id = (SELECT id
+  // ...)`; the second statement's bind put through `.toLowerCase()`; the slug
+  // string-interpolated into the SQL instead of bound; mapNeedRow replaced with
+  // a bare cast; the spread reversed to `{ latestNeed, ...foodbank }`; the
+  // `if (!row) return null` dropped; the view reverted to its base table; and
+  // the need statement made a copy-paste of the food bank one.
+  //
+  // ONE OF THOSE TWELVE SURVIVED the first version of this block --
+  // `.toLowerCase()` on the second bind -- because every fixture slug was
+  // already lowercase, so the mutated value was byte-identical. See the note on
+  // the binding test below for what now kills it. Verified against production
+  // D1 as well as here: for all 1,070 food banks, the slug-keyed subquery
+  // resolves to exactly the need id the old `latest_need_id` lookup did, and
+  // the full row comes back byte-identical (rows_read 3 against 2).
+  it("fetches the food bank and its latest need in ONE round trip, not two", async () => {
+    seedFoodbank({ id: 1, slug: "salisbury", latestNeedId: 500 });
+    seedNeed({ id: 500, needId: "ab".repeat(16), foodbankId: 1, changeText: "Beans" });
+
+    await getFoodbankBySlug(session, "salisbury");
+
+    expect(roundTrips).toHaveLength(1);
+    expect(roundTrips[0]).toHaveLength(2);
+  });
+
+  // The second statement reaches the need through a scalar subquery on the
+  // SLUG, not through the id it just read -- that is what makes the two
+  // independent enough to batch. Pinned as SQL text because a mutant that binds
+  // anything else (the food bank's id, a literal) returns a plausible row for
+  // the fixtures above and a wrong one in production. Both statements bind the
+  // caller's slug, verbatim, and nothing else.
+  //
+  // THE FIXTURE SLUG HAS A CAPITAL IN IT, deliberately. Every other slug in
+  // this file is lowercase, and `bind(slug.toLowerCase())` on the second
+  // statement SURVIVED an earlier version of this test for exactly that reason:
+  // the mutated value was byte-identical to the original. Production has no
+  // mixed-case slug (checked: 0 of 1,070), so this fixture is not a claim about
+  // the data -- it is the only way to tell "the caller's slug" apart from "a
+  // slug that has been through a transform" at all.
+  it("binds the slug to both statements, verbatim, and interpolates neither", async () => {
+    seedFoodbank({ id: 7, slug: "Salisbury", latestNeedId: 500 });
+    seedNeed({ id: 500, needId: "ab".repeat(16), foodbankId: 7, changeText: "Beans" });
+
+    const row = await getFoodbankBySlug(session, "Salisbury");
+
+    expect(row!.latestNeed!.id).toBe(500);
+    expect(roundTrips[0]).toEqual([
+      { sql: "SELECT * FROM foodbank WHERE slug = ?", params: ["Salisbury"] },
+      {
+        sql: "SELECT * FROM foodbankchange_full WHERE id = (SELECT latest_need_id FROM foodbank WHERE slug = ?)",
+        params: ["Salisbury"],
+      },
+    ]);
+  });
+
+  // The scalar subquery follows `latest_need_id`, NOT `foodbank_id`. A food
+  // bank's needs accumulate -- foodbankchange is every historical need, not
+  // just the current one -- so `WHERE foodbank_id = (SELECT id FROM foodbank
+  // WHERE slug = ?)` would also return rows, in rowid order, and hand back the
+  // OLDEST need as `latestNeed`. Every other test here seeds exactly one need
+  // per food bank, where that mutant is invisible.
+  it("follows latest_need_id, not the need's own foodbank_id", async () => {
+    seedFoodbank({ id: 1, slug: "salisbury", latestNeedId: 502 });
+    seedNeed({ id: 500, needId: "aa".repeat(16), foodbankId: 1, changeText: "Superseded, two months ago" });
+    seedNeed({ id: 501, needId: "bb".repeat(16), foodbankId: 1, changeText: "Superseded, last month" });
+    seedNeed({ id: 502, needId: "cc".repeat(16), foodbankId: 1, changeText: "Tinned tomatoes" });
+
+    const row = await getFoodbankBySlug(session, "salisbury");
+
+    expect(row!.latestNeed!.id).toBe(502);
+    expect(row!.latestNeed!.change_text).toBe("Tinned tomatoes");
+  });
+
+  // The two statements are resolved independently, so a subquery keyed on the
+  // wrong food bank would publish one town's shopping list under another town's
+  // name -- a 200, with wrong content, on a page people act on. Two food banks
+  // whose ids, need ids and slugs are all distinct, queried one after the other
+  // on the same session.
+  it("does not cross food banks over when several exist", async () => {
+    seedFoodbank({ id: 1, slug: "salisbury", latestNeedId: 500 });
+    seedFoodbank({ id: 2, slug: "andover", latestNeedId: 501 });
+    seedNeed({ id: 500, needId: "aa".repeat(16), foodbankId: 1, changeText: "Salisbury needs beans" });
+    seedNeed({ id: 501, needId: "bb".repeat(16), foodbankId: 2, changeText: "Andover needs pasta" });
+
+    const salisbury = await getFoodbankBySlug(session, "salisbury");
+    const andover = await getFoodbankBySlug(session, "andover");
+
+    expect(salisbury!.latestNeed!.change_text).toBe("Salisbury needs beans");
+    expect(andover!.latestNeed!.change_text).toBe("Andover needs pasta");
+    expect(roundTrips).toHaveLength(2);
+  });
+
+  // THE ROWS DID NOT MOVE. The batch is only a legitimate replacement for the
+  // two sequential awaits if it returns the same object -- same keys, same
+  // order, same values -- for every state the database can be in. Rather than
+  // trusting that, this runs the SUPERSEDED IMPLEMENTATION against the same
+  // seeded rows and compares, over the five shapes production actually holds.
+  //
+  // `toEqual` alone would not catch a reordered spread (`{ latestNeed, ...fb }`
+  // instead of `{ ...fb, latestNeed }`), which JSON.stringify -- and therefore
+  // every cached API response body -- WOULD notice, so the key order is
+  // asserted separately.
+  describe("returns exactly what the two sequential round trips returned", () => {
+    // github #51's "before": food bank row, then a dependent PK lookup on
+    // latest_need_id, with a JS short-circuit when it is NULL. Transcribed from
+    // the implementation this replaced (foodbank.ts's attachLatestNeed, deleted
+    // in that commit) and left here as the oracle rather than as live code.
+    async function beforeTheFix(slug: string): Promise<Record<string, unknown> | null> {
+      const row = await session.prepare("SELECT * FROM foodbank WHERE slug = ?").bind(slug).first();
+      if (!row) return null;
+      const foodbank = mapFoodbankRow(row as Record<string, unknown>);
+      const latestNeed =
+        foodbank.latest_need_id === null ? null : await getNeedById(session, foodbank.latest_need_id);
+      return { ...foodbank, latestNeed };
+    }
+
+    beforeEach(() => {
+      // Every state the production table holds, plus the two it can degrade
+      // into. `latest_need_id` is non-NULL on all 1,070 production rows today,
+      // but nothing enforces that and a brand-new food bank has none.
+      seedFoodbank({ id: 1, slug: "salisbury", latestNeedId: 502 });
+      seedFoodbank({ id: 2, slug: "closed-town", isClosed: 1, latestNeedId: 503 });
+      seedFoodbank({ id: 3, slug: "never-had-a-need", latestNeedId: null });
+      seedFoodbank({ id: 4, slug: "dangling", latestNeedId: 999 });
+      seedNeed({ id: 500, needId: "aa".repeat(16), foodbankId: 1, changeText: "Superseded" });
+      seedNeed({ id: 502, needId: "cc".repeat(16), foodbankId: 1, changeText: "Tinned tomatoes\nUHT milk" });
+      seedNeed({ id: 503, needId: "dd".repeat(16), foodbankId: 2, changeText: "Nothing", published: 0 });
+      // An unassigned need: foodbankchange_full is a LEFT JOIN precisely so
+      // these survive it, and the joined foodbank_name/foodbank_slug come back
+      // NULL rather than dropping the row.
+      seedNeed({ id: 504, needId: "ee".repeat(16), foodbankId: null, changeText: "Orphan" });
+    });
+
+    for (const slug of ["salisbury", "closed-town", "never-had-a-need", "dangling", "no-such-foodbank"]) {
+      it(`matches for /${slug}/`, async () => {
+        const now = await getFoodbankBySlug(session, slug);
+        const before = await beforeTheFix(slug);
+
+        expect(now).toEqual(before);
+        expect(now === null ? null : Object.keys(now)).toEqual(before === null ? null : Object.keys(before));
+      });
+    }
+
+    // And the same equality for a food bank whose latest_need is an UNASSIGNED
+    // need (foodbank_id NULL). The old code found it by primary key, which
+    // never touched the view's join condition; the new one still finds it by
+    // primary key, but through a subquery -- so this pins that the LEFT JOIN is
+    // still a LEFT JOIN and the row is not silently dropped.
+    it("matches when latest_need points at a need with no foodbank_id", async () => {
+      db.prepare("UPDATE foodbank SET latest_need_id = 504 WHERE slug = 'salisbury'").run();
+
+      const now = await getFoodbankBySlug(session, "salisbury");
+      const before = await beforeTheFix("salisbury");
+
+      expect(now!.latestNeed!.id).toBe(504);
+      expect(now!.latestNeed!.foodbank_name).toBeNull();
+      expect(now).toEqual(before);
+    });
+  });
+});
+
+// ===========================================================================
+// getFoodbankBySlugWithOpenCoordinates -- gfapi2 `foodbank`'s first wave
+// ===========================================================================
+// github #49. /api/2/foodbank/<slug>/ needs the food bank, its latest need and
+// -- for nearby_foodbanks -- the coordinates of every open food bank, and the
+// third of those depends on nothing whatsoever. Awaiting it separately cost a
+// round trip measured at 23-28 ms against production, on a route whose whole
+// cost is round trips (every statement on the path is index-covered).
+//
+// THE RISK IS NOT THAT IT RETURNS THE WRONG ROWS. It is that it returns the
+// RIGHT rows while quietly ceasing to be one round trip, or while scanning
+// 1,024 open food banks for a geojson request that discards them. Neither
+// shows up in any assertion about the data, so both are asserted directly, on
+// the round-trip log.
+//
+// MUTATION-TESTED against a scratchpad copy of the repo, never by editing a
+// source file in place. Caught here: the batch unrolled into three sequential
+// awaits; `wantOpenCoordinates` ignored so the scan always runs; the scan's
+// rows thrown away; and the coordinates read out of results[1] (the need
+// statement) instead of results[2], which returns need rows cast to
+// CoordinateRow and throws nowhere.
+
+describe("getFoodbankBySlugWithOpenCoordinates", () => {
+  beforeEach(() => {
+    seedFoodbank({ id: 1, slug: "salisbury", latestNeedId: 500, latitude: 51.0688, longitude: -1.7945 });
+    seedFoodbank({ id: 2, slug: "andover", latestNeedId: null, latitude: 51.2113, longitude: -1.4871 });
+    seedFoodbank({ id: 3, slug: "closed-town", isClosed: 1, latitude: 51.3, longitude: -1.3 });
+    seedNeed({ id: 500, needId: "ab".repeat(16), foodbankId: 1, changeText: "Beans" });
+  });
+
+  // THE EQUIVALENCE THE WHOLE CHANGE RESTS ON, against the two functions it
+  // folds together, both of which are still live for their other callers. If
+  // these ever drift, /api/2/foodbank/<slug>/ and /needs/at/<slug>/ start
+  // disagreeing about the same food bank, and every row here would still look
+  // perfectly plausible.
+  it("returns exactly what getFoodbankBySlug and getOpenFoodbankCoordinates return separately", async () => {
+    const combined = await getFoodbankBySlugWithOpenCoordinates(session, "salisbury", true);
+
+    expect(combined.foodbank).toEqual(await getFoodbankBySlug(session, "salisbury"));
+    expect(combined.openCoordinates).toEqual(await getOpenFoodbankCoordinates(session));
+    // Neither comparison may pass vacuously.
+    expect(combined.foodbank!.latestNeed!.change_text).toBe("Beans");
+    expect(combined.openCoordinates).toHaveLength(2);
+    // Key order too: `toEqual` ignores it, and JSON.stringify -- therefore every
+    // cached API response body -- does not.
+    expect(Object.keys(combined.foodbank!)).toEqual(Object.keys((await getFoodbankBySlug(session, "salisbury"))!));
+  });
+
+  it("waits for D1 once, with all three statements in the one batch", async () => {
+    await getFoodbankBySlugWithOpenCoordinates(session, "salisbury", true);
+
+    expect(roundTrips).toHaveLength(1);
+    expect(roundTrips[0]).toHaveLength(3);
+    expect(roundTrips[0]![2]!.sql).toBe("SELECT id, latitude, longitude FROM foodbank WHERE is_closed = 0");
+  });
+
+  // THE GATE, and it is the point rather than a tidy-up: ?format=geojson has no
+  // nearby_foodbanks section, so hoisting the candidate scan unconditionally
+  // would add a 1,024-row scan to every geojson request to save nothing. The
+  // empty array is asserted alongside the absent statement because a version
+  // that sent the query and threw the rows away would pass the second
+  // assertion on its own.
+  it("sends no candidate scan at all when the caller does not want one", async () => {
+    const combined = await getFoodbankBySlugWithOpenCoordinates(session, "salisbury", false);
+
+    expect(roundTrips).toHaveLength(1);
+    expect(roundTrips[0]).toHaveLength(2);
+    expect(calls.some((c) => c.sql.includes("latitude, longitude"))).toBe(false);
+    expect(combined.openCoordinates).toEqual([]);
+    // The food bank half is untouched by the gate.
+    expect(combined.foodbank!.slug).toBe("salisbury");
+    expect(combined.foodbank!.latestNeed!.change_text).toBe("Beans");
+  });
+
+  // THE 404 PATH SPECULATES, deliberately and with a cost: an unknown slug pays
+  // one wasted candidate scan (~4 ms of D1 SQL, and rows_read on a 404 goes
+  // from 1 to ~1,025). Accepted in exchange for a round trip on every good
+  // slug, and pinned here so it is a decision on record rather than a surprise
+  // in a billing report. What must NOT happen is a throw: `foodbank` is null
+  // and the caller 404s, exactly as before.
+  it("returns a null food bank for an unknown slug without throwing, having scanned anyway", async () => {
+    const combined = await getFoodbankBySlugWithOpenCoordinates(session, "no-such-foodbank", true);
+
+    expect(combined.foodbank).toBeNull();
+    expect(combined.openCoordinates).toHaveLength(2);
+  });
+
+  // The same NULL-latest_need and closed-food-bank cases getFoodbankBySlug
+  // carries, through the combined path: the scalar subquery still yields no
+  // row rather than a wrong one, and a closed food bank is still servable by
+  // slug even though it is absent from its own candidate set.
+  it("keeps latestNeed null where there is none, and still serves a closed food bank", async () => {
+    const andover = await getFoodbankBySlugWithOpenCoordinates(session, "andover", true);
+    expect(andover.foodbank!.latestNeed).toBeNull();
+
+    const closed = await getFoodbankBySlugWithOpenCoordinates(session, "closed-town", true);
+    expect(closed.foodbank!.is_closed).toBe(true);
+    expect(closed.openCoordinates.map((c) => c.id)).toEqual([1, 2]);
   });
 });
 

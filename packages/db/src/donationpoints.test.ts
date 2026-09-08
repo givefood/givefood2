@@ -64,6 +64,9 @@ import type { Session } from "./types";
 //   - `.map(mapDonationPointRow)` dropped from getAllOpenDonationPoints,
 //     getOpenDonationPointsByConstituencyId and getOpenDonationPointsByCountry
 //     -- no test looked at a flag column on any of those three results.
+//     (getAllOpenDonationPoints has since been projected and no longer maps
+//     at all -- see its own block for why that is now correct rather than a
+//     surviving mutant. The other two still map, and still need the guard.)
 //   - `results[0]` returned instead of the whole set from the constituency
 //     feed, the country feed, and (in types.ts) queryCoordinates: every test
 //     of all three matched exactly one row.
@@ -847,13 +850,72 @@ describe("getDonationPointBySlugs", () => {
 });
 
 // ---------------------------------------------------------------------------
-// getAllOpenDonationPoints
+// getAllOpenDonationPoints -- /api/2/donationpoints/ and the all-items
+// /needs/geo.json, PROJECTED to the twelve columns those two read
 // ---------------------------------------------------------------------------
+//
+// This was `SELECT *` over a ~41-column view for 5,727 open rows, and its two
+// callers name eleven fields between them. Measured against production D1:
+// 10.6 MB of result payload -> 3.3 MB and a server-reported ~300 ms -> ~79 ms,
+// with rows_read unchanged at 11,454 (`SELECT COUNT(*)` over the same view
+// and filter is 13-15 ms, so the scan was never the cost -- materialising
+// columns nobody read was). Byte figures are `wrangler --remote --json`
+// output size, the convention getAllOpenDonationPointSlugs' note already
+// uses for the identical `SELECT *`; see donationpoints.ts for the runs.
+//
+// THE FAILURE MODES ARE SILENT, which is why this block is long:
+//   * a column missing from the hand-written twelve-name list vanishes from
+//     the row with no error -- /api/2/donationpoints/ just publishes `null`.
+//   * a projection narrow enough to change which index the planner picks
+//     REORDERS the feed. Neither this query nor Django's queryset has an
+//     ORDER BY, so ~5,700 features and ~5,700 sitemap <loc> entries come back
+//     in the engine's scan order; a reordering is a whole-body diff that no
+//     status code reports.
+// So the cases below compare against the `SELECT *` this replaced, run
+// directly against the same fixture, rather than against a hand-written list.
+// (The response side is proved separately, and harder, in
+// workers/site/src/routes/api2/donationpoints.test.ts: whole-body assertions
+// written and run green against the `SELECT *` version FIRST, then re-run
+// against this one.)
+//
+// The exact SQL text the wide version issued, kept as the baseline every
+// parity case below is measured against. Run straight on `db` rather than
+// through the module, because the module no longer has a way to issue it.
+const WIDE_SQL = "SELECT * FROM foodbankdonationpoint_full WHERE is_closed = 0";
+const wideRows = (): Record<string, unknown>[] => db.prepare(WIDE_SQL).all() as Record<string, unknown>[];
+
+// EXPLAIN QUERY PLAN for two statements compared against EACH OTHER, not
+// against a pinned string: the claim is not "this plan", it is "the same plan
+// the wide query got", which is what makes the row ORDER the same. A pinned
+// plan string would go red on a SQLite upgrade that changed both equally.
+const planFor = (sql: string): string[] =>
+  db
+    .prepare(`EXPLAIN QUERY PLAN ${sql}`)
+    .all()
+    .map((r) => String((r as { detail: unknown }).detail));
+
+// The twelve columns, spelled out here as a second copy of the list in
+// donationpoints.ts on purpose: the point of the assertions below is that
+// the two copies agree, so sharing one constant would defeat them.
+const PROJECTED_COLUMNS = [
+  "address",
+  "foodbank_name",
+  "foodbank_network",
+  "foodbank_slug",
+  "id",
+  "lat_lng",
+  "name",
+  "parliamentary_constituency_name",
+  "phone_number",
+  "postcode",
+  "slug",
+  "url",
+];
 
 describe("getAllOpenDonationPoints", () => {
-  // The filter that keeps shut stores off the sitemap, the /donationpoints/
-  // API feed and every geo.json. A filter that does nothing passes any test
-  // that seeds only open rows, so the closed row here is the entire point.
+  // The filter that keeps shut stores off the /donationpoints/ API feed and
+  // every geo.json. A filter that does nothing passes any test that seeds
+  // only open rows, so the closed row here is the entire point.
   it("excludes closed donation points", async () => {
     seedFoodbank({ id: SALISBURY, slug: "salisbury" });
     seedDonationPoint({ id: 101, foodbankId: SALISBURY, name: "Tesco Extra", isClosed: 0 });
@@ -897,28 +959,105 @@ describe("getAllOpenDonationPoints", () => {
     expect(rows[0]!.foodbank_slug).toBeNull();
   });
 
-  // THE MAPPING RUNS HERE TOO. Nothing above this test looks at a flag column
-  // on these rows -- they assert ids and names -- so dropping
-  // `.map(mapDonationPointRow)` from this function passed the whole file. It
-  // is the worst place for that to happen: this feeds /donationpoints/, whose
-  // JSON would start publishing `"is_closed": 0` and `"in_store_only": 1`
-  // where every other endpoint publishes `false` and `true`, and
-  // `wheelchair_accessible: 0` would render as an unchecked store rather than
-  // an inaccessible one in the templates' `{% if %}`. Asserted per id rather
-  // than positionally because this feed is deliberately unordered.
-  // Mutant killed: `result.results.map(mapDonationPointRow)` returned raw.
-  it("coerces the flag columns on the rows it returns", async () => {
+  // THE COLUMNS, PINNED EXACTLY -- the same guard, and for the same reason,
+  // as getOpenDonationPointCoordinates' "projects exactly id, latitude and
+  // longitude" below. A widening back to `SELECT *` leaves every other test
+  // in this block green and only the bill and the latency change; a column
+  // dropped from the list reaches /api/2/donationpoints/ as `null`, not as an
+  // error. Both directions fail here.
+  it("projects exactly the twelve columns its two callers read", async () => {
+    seedFoodbank({ id: SALISBURY, slug: "salisbury" });
+    seedDonationPoint({ id: 101, foodbankId: SALISBURY, name: "Tesco Extra" });
+
+    const [row] = await getAllOpenDonationPoints(session);
+
+    expect(Object.keys(row!).sort()).toEqual(PROJECTED_COLUMNS);
+    // Named individually as well, because the sorted-array comparison above
+    // reads as a blob in a diff: these are the ones whose absence would be a
+    // wrong FACT on a public page rather than an obviously missing field.
+    expect(row!.foodbank_name).toBe("Salisbury Foodbank");
+    expect(row!.foodbank_slug).toBe("salisbury");
+    expect(row!.foodbank_network).toBe("Trussell Trust");
+    expect(row!.lat_lng).toBe("51.07,-1.79");
+  });
+
+  // The four flag columns are NOT selected any more, so nothing is left for
+  // mapDonationPointRow to coerce -- which is why this function no longer
+  // calls it. The test this replaced asserted is_closed/in_store_only/
+  // wheelchair_accessible on these rows and justified itself by claiming
+  // /donationpoints/ "would start publishing is_closed: 0"; that was never
+  // true (api2/donationpoints.ts:99-124 builds an explicit properties object
+  // and emits none of the three), and the whole-body test in
+  // routes/api2/donationpoints.test.ts now proves it directly. What IS worth
+  // pinning is that the coercion was not left behind: running it here would
+  // invent four null keys, and `is_closed: null` on a row from a query whose
+  // whole filter is `is_closed = 0` is a lie waiting for a future caller.
+  it("does not carry the four flag columns, nor null placeholders for them", async () => {
     seedFoodbank({ id: SALISBURY, slug: "salisbury" });
     seedDonationPoint({ id: 101, foodbankId: SALISBURY, name: "Aldi Salisbury", wheelchairAccessible: 0, inStoreOnly: 1 });
-    seedDonationPoint({ id: 102, foodbankId: SALISBURY, name: "Booths", wheelchairAccessible: null, inStoreOnly: 0 });
 
-    const byId = new Map((await getAllOpenDonationPoints(session)).map((r) => [r.id, r]));
+    const [row] = await getAllOpenDonationPoints(session);
 
-    expect(byId.get(101)!.is_closed).toBe(false);
-    expect(byId.get(101)!.in_store_only).toBe(true);
-    expect(byId.get(101)!.wheelchair_accessible).toBe(false);
-    expect(byId.get(102)!.in_store_only).toBe(false);
-    expect(byId.get(102)!.wheelchair_accessible).toBeNull();
+    for (const flag of ["is_closed", "in_store_only", "wheelchair_accessible", "place_has_photo"]) {
+      expect(Object.keys(row!)).not.toContain(flag);
+    }
+  });
+
+  // THE PARITY CHECK, and the reason this change is safe: same rows, same
+  // order, same values as the `SELECT *` it replaced, for every column that
+  // survived. Ids ascend while latitudes descend, so rowid order and the
+  // partial dp_open_latlng_idx's order are two different sequences here and
+  // "same order" cannot be satisfied by luck.
+  it("returns the same rows, in the same order, as the SELECT * it replaced", async () => {
+    seedFoodbank({ id: SALISBURY, slug: "salisbury" });
+    seedFoodbank({ id: WESTBURY, slug: "westbury" });
+    seedDonationPoint({ id: 101, foodbankId: SALISBURY, name: "Zeds Convenience", latitude: 51.03 });
+    seedDonationPoint({ id: 102, foodbankId: WESTBURY, name: "Aldi Westbury", latitude: 51.02 });
+    seedDonationPoint({ id: 103, foodbankId: SALISBURY, name: "Morrisons Daily", latitude: 51.01 });
+    seedDonationPoint({ id: 104, foodbankId: SALISBURY, name: "Shut Wilko", latitude: 51.0, isClosed: 1 });
+
+    const narrow = await getAllOpenDonationPoints(session);
+
+    expect(narrow).toEqual(
+      wideRows().map((row) => Object.fromEntries(PROJECTED_COLUMNS.map((column) => [column, row[column]]))),
+    );
+    expect(narrow).toHaveLength(3);
+    // ...and the closed one is gone from BOTH, which is what makes the
+    // comparison above more than "two identical bugs agreeing".
+    expect(names(narrow)).not.toContain("Shut Wilko");
+  });
+
+  // THE ROW ORDER ABOVE IS NOT AN ACCIDENT OF THE FIXTURE. Row order with no
+  // ORDER BY is the planner's scan order, so "same rows, same order" holds in
+  // production only if the projection did not change which index the planner
+  // picks. Compared plan-to-plan rather than against a pinned string, so a
+  // future SQLite that changes both equally stays green and one that changes
+  // only the narrow query goes red.
+  it("is planned the same way as the SELECT * it replaced", async () => {
+    seedFoodbank({ id: SALISBURY, slug: "salisbury" });
+    seedDonationPoint({ id: 101, foodbankId: SALISBURY, name: "Tesco Extra" });
+
+    await getAllOpenDonationPoints(session);
+
+    expect(planFor(prepared[0]!)).toEqual(planFor(WIDE_SQL));
+  });
+
+  // The whole reason the function changed, asserted on the SQL the MODULE
+  // prepared rather than on a copy retyped here -- planning or grepping a
+  // hand-typed string proves only that the string in the test is narrow.
+  it("names its columns instead of issuing SELECT *", async () => {
+    await getAllOpenDonationPoints(session);
+
+    expect(prepared[0]).toBe(
+      "SELECT id, name, slug, address, postcode, lat_lng, phone_number, url, " +
+        "parliamentary_constituency_name, foodbank_name, foodbank_slug, foodbank_network " +
+        "FROM foodbankdonationpoint_full WHERE is_closed = 0",
+    );
+    // READS THE VIEW, NOT THE BASE TABLE: foodbank_name/_slug/_network were
+    // dropped off foodbankdonationpoint by 0019 and now come from the LEFT
+    // JOIN, so pointing this at the base table would not throw here -- it
+    // would fail to prepare, which is 0019's exact live-500 failure mode.
+    expect(prepared[0]).toContain("FROM foodbankdonationpoint_full");
   });
 });
 
@@ -934,6 +1073,13 @@ describe("getAllOpenDonationPoints", () => {
 // 40 ms. Because the sitemap's four queries run in a Promise.all, that one
 // query WAS the critical path. rows_read is identical (11,454) either way,
 // so nothing about D1 billing changes.
+//
+// getAllOpenDonationPoints is itself projected now, so the "same as SELECT *"
+// baseline these cases lean on has moved one link along the chain: its own
+// block above pins narrow == `SELECT *`, rows, order and values, and the
+// cases here pin these two == it. Comparing against the function rather than
+// re-issuing `SELECT *` is deliberate -- it keeps the three sibling queries
+// pinned to each other, which is the property the sitemap actually depends on.
 //
 // WHAT THESE TESTS ARE FOR IS ORDER, not bytes. Neither the wide query nor
 // the narrow ones have an ORDER BY, and the note on "does not sort by name"

@@ -1,6 +1,6 @@
 import { coerceBooleans, type Session } from "./types";
 import { mapFoodbankRow, type FoodbankRow } from "./foodbank";
-import { LOCATION_BOOLEAN_COLUMNS, type FoodbankLocationRow } from "./locations";
+import { LOCATION_BOOLEAN_COLUMNS, type FoodbankLocationRowNarrow } from "./locations";
 
 export interface ConstituencyRow {
   id: number;
@@ -104,7 +104,11 @@ export async function getConstituencyBySlugNarrow(session: Session, slug: string
 // boundary_geojson can run to ~1.6 MB/row). Neither of getFoodbanksForConstituency's
 // two callers (wfbnConstituency's schema.org output, writeEmail's food-bank
 // name list) ever reads it.
-export type FoodbankLocationRowNarrow = Omit<FoodbankLocationRow, "boundary_geojson">;
+//
+// FoodbankLocationRowNarrow itself now lives in locations.ts, beside the row
+// it narrows, because foodbankDetail.ts describes the same shape (github #49).
+// This second copy of the COLUMN LIST stays here, guarded by its own drift
+// test below -- see locations.ts's note on why it is not imported from there.
 const LOCATION_COLUMNS_NARROW =
   "id, uuid, foodbank_id, foodbank_name, foodbank_slug, foodbank_network, foodbank_phone_number, foodbank_email, " +
   "name, slug, address, postcode, country, lat_lng, latitude, longitude, place_id, plus_code_compound, plus_code_global, " +
@@ -123,7 +127,7 @@ const LOCATION_COLUMNS_NARROW =
 // The two SELECTs are independent (different tables, same constituencyId),
 // so session.batch() sends them in one D1 round trip instead of two
 // sequential ones -- same pattern, and the same measured-slowdown
-// rationale, as foodbankDetail.ts's getLocationsAndDonationPointsByFoodbankId.
+// rationale, as foodbankDetail.ts's getLocationsDonationPointsAndNearbyFoodbanks.
 export async function getFoodbanksForConstituency(
   session: Session,
   constituencyId: number,
