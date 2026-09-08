@@ -182,31 +182,45 @@ describe("geoJsonPreload", () => {
     expect(await link("/cy/needs/at/sid-valley/nearby/", siteApp())).toBeNull();
   });
 
-  it("never fires on a constituency page either -- the branch is unreachable", async () => {
-    // DOCUMENTS CURRENT BEHAVIOUR. The constituency branch tests
-    // routePath === "/in/constituency/:slug/", but index.ts registers that
-    // page at "/needs/in/constituency/:slug/" (Django: gfwfbn/urls/i18n.py's
-    // "in/constituency/<slug:slug>/", included under "needs/"). The "/needs"
-    // prefix is missing from the middleware's literal, so the comparison can
-    // never be true and constituency pages get no preload. Reported as a
-    // suspected bug.
-    expect(await link("/needs/in/constituency/bath-and-north-east-somerset/")).toBeNull();
+  // github #29. This pair used to assert the opposite of what it asserts now,
+  // labelled "DOCUMENTS CURRENT BEHAVIOUR ... reported as a suspected bug":
+  // the middleware's literal was "/in/constituency/:slug/" while index.ts
+  // registers the page at "/needs/in/constituency/:slug/", so the branch was
+  // unreachable and ~650 constituency pages sent no Link header at all.
+  // Django's middleware.py:135 has the branch and does send it.
+  it("preloads the constituency geo.json on a constituency page", async () => {
+    // Requested through siteApp(), which registers the page at the literal
+    // index.ts really uses -- that is the whole substance of the fix. A test
+    // that built its own app around the middleware's literal would pass on
+    // either spelling, which is exactly how the bug survived.
+    expect(await link("/needs/in/constituency/bath-and-north-east-somerset/")).toBe(
+      `</needs/in/constituency/bath-and-north-east-somerset/geo.json>${PARAMS}`,
+    );
   });
 
-  it("builds the constituency URL correctly if that branch is ever reached", async () => {
-    // The other half of the bug above: only the MATCH is wrong, the URL the
-    // branch would emit is right. Django reverses
-    // wfbn:constituency_geojson with kwargs={'parlcon_slug': slug}, giving
-    // /needs/in/constituency/<slug>/geo.json -- which is precisely the route
-    // index.ts registers for wfbnConstituencyGeojson. So a one-word fix to
-    // the literal restores the header; this test pins the payload so that
-    // fix does not also have to re-derive the URL shape.
+  it("does not fire on the unprefixed path the broken literal named", async () => {
+    // The inverse of the fix, and the reason it is a fix rather than a
+    // widening: "/in/constituency/:slug/" is not a route this site has -- grep
+    // finds no registration for it anywhere in workers/ -- so the middleware
+    // must not answer to it. Without this, replacing the literal with
+    // something loose enough to match both spellings would pass every other
+    // test in this file.
     const app = new Hono();
     app.use("*", geoJsonPreload);
     app.get("/in/constituency/:slug/", html);
-    expect(await link("/in/constituency/bath/", app)).toBe(
-      `</needs/in/constituency/bath/geo.json>${PARAMS}`,
-    );
+    expect(await link("/in/constituency/bath/", app)).toBeNull();
+  });
+
+  // The URL the branch emits, pinned separately from the match that reaches
+  // it. Django reverses wfbn:constituency_geojson with
+  // kwargs={'parlcon_slug': slug}, giving /needs/in/constituency/<slug>/geo.json
+  // -- precisely the route index.ts registers for wfbnConstituencyGeojson, and
+  // the same URL constituencies.ts:234 puts in the page's own map_config. A
+  // mismatch between the two would preload a file the page never asks for,
+  // which is worse than no preload: it is a wasted request that also warms
+  // the wrong cache entry.
+  it("preloads the same geo.json URL the page's map_config asks for", async () => {
+    expect(await link("/needs/in/constituency/bath/")).toBe(`</needs/in/constituency/bath/geo.json>${PARAMS}`);
   });
 
   it("only touches 200 responses", async () => {

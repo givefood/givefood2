@@ -1432,26 +1432,33 @@ describe("the constituency page: the MP, the map and the nearby list", () => {
     expect(nearbyNames(html)).toHaveLength(5);
   });
 
-  it("is cacheable for a week and carries no cache tag or geojson preload hint", async () => {
-    // The week matches @cache_page(SECONDS_IN_WEEK); the two nulls are
-    // PRE-EXISTING BUGS ALREADY REPORTED against their own modules, asserted
-    // here because this is the page that suffers them:
-    //   * middleware/cacheTag.ts's CONSTITUENCY_PATH expects /constituency/
-    //     at the root, not /needs/in/constituency/, so nothing purges this
-    //     page when a food bank on it changes -- for a week (see
-    //     cacheTag.test.ts's "SUSPECTED BUG" case);
-    //   * middleware/geoJsonPreload.ts tests routePath ===
-    //     "/in/constituency/:slug/", which the real registration never
-    //     matches, so the preload Django emitted here is missing (see
-    //     geoJsonPreload.test.ts's "the branch is unreachable" case).
-    // Server-Timing is the control: both of those middlewares run on the way
-    // out, so its presence proves the unwind happened and the nulls are the
-    // bugs rather than a chain that never executed.
+  it("is cacheable for a week, preloads its geo.json, and still carries no cache tag", async () => {
+    // The week matches @cache_page(SECONDS_IN_WEEK).
+    //
+    // THE Link HEADER IS THE INTERESTING ONE, and it used to be asserted as
+    // null here alongside Cache-Tag, both labelled pre-existing reported bugs.
+    // github #29 fixed the preload half: middleware/geoJsonPreload.ts tested
+    // routePath === "/in/constituency/:slug/" while index.ts:307 registers
+    // "/needs/in/constituency/:slug/", so the branch was unreachable. This
+    // assertion is the end-to-end proof of that fix -- geoJsonPreload.test.ts
+    // exercises the middleware against a hand-built app, whereas this goes
+    // through the real router, which is where the literal actually has to
+    // match.
+    //
+    // Cache-Tag is STILL null and is still a reported bug (github #18):
+    // middleware/cacheTag.ts's CONSTITUENCY_PATH expects /constituency/ at the
+    // root rather than /needs/in/constituency/, so nothing purges this page
+    // when a food bank on it changes -- for a week. See cacheTag.test.ts's
+    // "SUSPECTED BUG" case. Left as it stands, not fixed in passing.
+    //
+    // Server-Timing is the control: all three of those middlewares run on the
+    // way out, so its presence proves the unwind happened and the remaining
+    // null is the bug rather than a chain that never executed.
     const res = await get("/needs/in/constituency/salisbury/");
     expect(res.status).toBe(200);
     expect(res.headers.get("Cache-Control")).toBe("max-age=604800");
+    expect(res.headers.get("Link")).toBe("</needs/in/constituency/salisbury/geo.json>; rel=preload; as=fetch; crossorigin=anonymous");
     expect(res.headers.get("Cache-Tag")).toBeNull();
-    expect(res.headers.get("Link")).toBeNull();
     expect(res.headers.get("Server-Timing")).toMatch(/^render;dur=/);
   });
 

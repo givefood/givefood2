@@ -29,7 +29,15 @@ export const geoJsonPreload: MiddlewareHandler = async (c, next) => {
     if (slug) geojsonUrl = `/needs/at/${slug}/geo.json`;
   } else if (routePath === "/needs/at/:slug/nearby/") {
     geojsonUrl = "/needs/geo.json";
-  } else if (routePath === "/in/constituency/:slug/") {
+    // `/needs/in/constituency/:slug/`, WITH the prefix (github #29). This
+    // literal was the only one of the five missing `/needs`, so the branch
+    // below could never be entered: index.ts registers the page at
+    // `/needs/in/constituency/:slug/` and nothing in workers/ is registered
+    // at `/in/constituency/...` at all. ~650 constituency pages therefore
+    // sent no Link header, where Django's middleware.py:135 sends one --
+    // and PLAN.md's own G3 acceptance criterion lists `constituency` among
+    // the seven route names this must cover.
+  } else if (routePath === "/needs/in/constituency/:slug/") {
     const slug = c.req.param("slug");
     if (slug) geojsonUrl = `/needs/in/constituency/${slug}/geo.json`;
   }
