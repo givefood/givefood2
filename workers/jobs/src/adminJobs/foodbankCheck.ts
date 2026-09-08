@@ -1,5 +1,5 @@
 import type { Env } from "../../worker-configuration";
-import { getFoodbankBySlug, getLocationsByFoodbankId, getDonationPointsByFoodbankId, markAdminJobRunning, markAdminJobDone, markAdminJobFailed } from "@givefood/db";
+import { getFoodbankBySlug, getLocationsByFoodbankIdNarrow, getDonationPointsByFoodbankId, markAdminJobRunning, markAdminJobDone, markAdminJobFailed } from "@givefood/db";
 import { geminiJsonCall } from "../lib/gemini";
 import { buildCheckPrompt, FOODBANK_CHECK_RESPONSE_SCHEMA, CHECK_USE_AI_FIELDS, type FoodbankCheckAiResponse } from "./checkPrompt";
 import { pyNow } from "@givefood/models";
@@ -102,7 +102,15 @@ export async function handleFoodbankCheckJob(env: Env, jobId: string, foodbankSl
     const foodbank = await getFoodbankBySlug(session, foodbankSlug);
     if (!foodbank) throw new Error(`no such foodbank: ${foodbankSlug}`);
 
-    const [locations, donationPoints] = await Promise.all([getLocationsByFoodbankId(session, foodbank.id), getDonationPointsByFoodbankId(session, foodbank.id)]);
+    // NARROW, not the unprojected `SELECT *` (github #52's closing observation,
+    // fourth and last caller). Every read of these rows names its field --
+    // `postcode` for the discrepancy sets, and slug/name/address/postcode for
+    // `ourLocations` and the prompt's location list -- so boundary_geojson was
+    // pure freight. The `...l` spreads further down are over aiResponse's rows,
+    // not these. On canterbury that is 2,319,826 -> 19,532 bytes at unchanged
+    // rows_read; this job runs per food bank, so it paid that on every check of
+    // the 7 food banks that carry a boundary at all.
+    const [locations, donationPoints] = await Promise.all([getLocationsByFoodbankIdNarrow(session, foodbank.id), getDonationPointsByFoodbankId(session, foodbank.id)]);
 
     // WP 6.8 (disclosed simplification, not a fix): Django also has a 6th
     // fetch -- a POST to a donation-points finder specific to food banks

@@ -59,6 +59,16 @@ export function mapLocationRow(raw: Record<string, unknown>): FoodbankLocationRo
 // bank's location list can, and does, include closed locations even when
 // the food bank itself is open. Sorted in JS, not SQL -- see sortByName's
 // comment in types.ts.
+//
+// THE `SELECT *` IS NOW LOAD-BEARING FOR EXACTLY ONE CALLER. Those Django view
+// names are provenance, not a list of this function's callers: after github
+// #52's closing observation, `api_foodbank`'s port (api1.ts) and the three
+// other callers read projections instead, and the last one left here is
+// admin/foodbankDetail.ts -- the only place that reads boundary_geojson
+// itself, for admin/foodbank_detail.njk:248's "Is Service Area" row. Anyone
+// narrowing this function must move that page's query first, or the row
+// silently disappears: `undefined` is falsy, so the page renders and simply
+// always says no. See getLocationsByFoodbankIdNarrow below for the census.
 export async function getLocationsByFoodbankId(session: Session, foodbankId: number): Promise<FoodbankLocationRow[]> {
   const result = await session
     .prepare("SELECT * FROM foodbanklocation_full WHERE foodbank_id = ?")
@@ -234,8 +244,8 @@ export async function getLocationsByFoodbankIdFlagged(
 }
 
 // getLocationsByFoodbankId, minus the blob and WITHOUT the flag -- the third
-// instalment of github #52's closing observation. Two callers pulled the
-// boundary blob and then never emitted it, and neither asks whether there IS
+// instalment of github #52's closing observation. Three callers pulled the
+// boundary blob and then never emitted it, and none asks whether there IS
 // one either, so `has_boundary` would be a field nothing reads:
 //
 //   * wfbn/md/locations.ts's mdFoodbankLocations (GET
@@ -250,17 +260,21 @@ export async function getLocationsByFoodbankIdFlagged(
 //     parliamentary_constituency, mp, mp_party, ward, district). The blob is
 //     not among them, and a v1 API field cannot be added by accident -- the
 //     serialiser names its keys.
+//   * workers/jobs' foodbankCheck.ts reads only slug/name/address/postcode (all
+//     four are in LOCATION_COLUMNS_NARROW) -- for the AI prompt's location
+//     list, the `ourLocations` result rows and the postcode discrepancy sets.
+//     The `...l` spreads beside them are over the AI's own response rows, not
+//     these. Not a request path, but it runs once per food bank per check, so
+//     it paid the full blob every time one of the 7 was checked.
 //
 // WHY A THIRD SIBLING RATHER THAN NARROWING THE FIRST. getLocationsByFoodbankId
 // keeps ONE reader of the column, and it is a real one: admin/foodbankDetail.ts
 // renders `{% if loc.boundary_geojson %}` as the admin's "Is Service Area" row
 // (admin/foodbank_detail.njk:248). Narrowing the shared function in place would
 // blank that row silently -- `undefined` is falsy, so the page would still
-// render, just always saying "no". Its other surviving caller,
-// workers/jobs' foodbankCheck.ts, reads only name/slug/address/postcode (all
-// four are in LOCATION_COLUMNS_NARROW) and would be safe to move; it is a
-// background job rather than a request path, so it is left alone here rather
-// than swept in unmeasured.
+// render, just always saying "no". That single reader is now the only thing
+// keeping the unprojected function alive, and admin/foodbankDetail.test.ts
+// pins it on the value so a later tidy-up cannot quietly make it false.
 //
 // WHAT IT COSTS THE PAGE, measured read-only against production D1 on
 // canterbury (foodbank_id 5712046691713024, 21 locations, all 21 with a

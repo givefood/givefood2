@@ -167,7 +167,12 @@ function d1Session(hooks: { failOn?: RegExp; failWith?: unknown }): unknown {
     };
   }
   return {
-    prepare: (sql: string) => statement(sql, []),
+    // Recorded HERE and not inside statement(), which bind() re-enters -- every
+    // bound statement would otherwise be counted twice.
+    prepare: (sql: string) => {
+      preparedSql.push(sql);
+      return statement(sql, []);
+    },
     batch: async (statements: Array<{ all: () => Promise<unknown> }>) => {
       const out: unknown[] = [];
       for (const each of statements) out.push(await each.all());
@@ -520,6 +525,7 @@ function stubAllPages(): void {
 let env: Env;
 /** The bookmark mode each DB.withSession() was asked for, in order. */
 let sessionModes: string[];
+let preparedSql: string[];
 
 /**
  * The Env this handler is given. withSession RECORDS its mode rather than
@@ -613,6 +619,7 @@ beforeEach(() => {
   rewriterSelectors = [];
   rewriterRemovals = [];
   sessionModes = [];
+  preparedSql = [];
 
   stubFetch();
   vi.stubGlobal("HTMLRewriter", FakeHTMLRewriter);
@@ -1690,6 +1697,57 @@ describe("location and donation-point discrepancies", () => {
       { slug: "amesbury", name: "Amesbury", address: "The Hollows", postcode: "SP4 7DL", discrepancy: true },
       { slug: "wilton", name: "Wilton", address: "The Hollows", postcode: "SP2 0HR", discrepancy: false },
     ]);
+  });
+
+  // THE LOCATION QUERY IS PROJECTED, not `SELECT *` -- github #52's closing
+  // observation, fourth and last caller. This job reads four string fields off
+  // each location (slug/name/address/postcode, for the prompt list, the
+  // ourLocations rows and the postcode discrepancy sets) and boundary_geojson
+  // is not one of them, so the blob was pure freight. On canterbury that is
+  // 2,319,826 bytes against 19,532, at unchanged rows_read, paid on every check
+  // of the 7 food banks that carry a boundary at all.
+  //
+  // ASSERTED ON THE STATEMENT TEXT, because it is the only place a revert can
+  // show. The blob never reaches the result -- ourLocations names its keys --
+  // so `SELECT *` here would change not one byte of anything this suite
+  // otherwise inspects, and every other test would stay green.
+  it("reads its locations with a named column list, never SELECT * and never the boundary blob", async () => {
+    seedLocation({ id: 1, name: "Amesbury", slug: "amesbury", postcode: "SP4 7DL" });
+    geminiReplies = [geminiOk(aiResponse())];
+
+    await runJob();
+
+    const locationReads = preparedSql.filter((sql) => sql.includes("FROM foodbanklocation"));
+    // The premise, executed rather than assumed: it really did read locations.
+    expect(locationReads).toHaveLength(1);
+    expect(locationReads[0]).not.toContain("SELECT *");
+    expect(locationReads[0]).not.toContain("boundary_geojson");
+    // The four fields the job actually consumes must all still be selected --
+    // a projection that dropped one would hand `undefined` to the prompt and to
+    // normalisePostcode, neither of which throws.
+    for (const column of ["slug", "name", "address", "postcode"]) {
+      expect(locationReads[0]).toContain(column);
+    }
+  });
+
+  // The blob is absent from the row, and the rows still carry everything the
+  // result is built from. Paired with the statement-text test above: that one
+  // catches a revert to SELECT *, this one catches a projection that went too
+  // far and dropped a column the job reads.
+  it("still builds ourLocations from the narrowed rows, with the boundary column gone", async () => {
+    seedLocation({ id: 1, name: "Amesbury", slug: "amesbury", postcode: "SP4 7DL" });
+    db.prepare("UPDATE foodbanklocation SET boundary_geojson = ? WHERE id = 1").run('{"type":"Polygon"}');
+    // The fixture really does hold a boundary, so "the blob is absent" below is
+    // a projection result and not an empty column.
+    expect(db.prepare("SELECT boundary_geojson FROM foodbanklocation WHERE id = 1").get()).toEqual({ boundary_geojson: '{"type":"Polygon"}' });
+    geminiReplies = [geminiOk(aiResponse({ locations: [{ name: "Amesbury", address: "The Hollows", postcode: "SP4 7DL" }] }))];
+
+    await runJob();
+
+    expect(storedResult().ourLocations).toEqual([
+      { slug: "amesbury", name: "Amesbury", address: "The Hollows", postcode: "SP4 7DL", discrepancy: false },
+    ]);
+    expect(storedResult().ourLocations[0]).not.toHaveProperty("boundary_geojson");
   });
 
   it("flags one of our donation points the model did not find", async () => {
