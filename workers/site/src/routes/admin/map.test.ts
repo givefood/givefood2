@@ -156,7 +156,6 @@ function env(): AppEnv["Bindings"] {
     CSRF_SECRET: "test-csrf-secret-not-a-real-one",
     GMAP_STATIC_KEY: STATIC_KEY,
     GMAP_GEOCODE_KEY: GEOCODE_KEY,
-    D1_DATABASE_NAME: "givefood-test",
     SITE_DOMAIN: ORIGIN,
   } as unknown as AppEnv["Bindings"];
 }

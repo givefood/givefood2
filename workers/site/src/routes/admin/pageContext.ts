@@ -56,9 +56,5 @@ export async function adminPageContext(c: Context<AppEnv>, section: string): Pro
     gmap_places_key: "",
     gmap_static_key: c.env.GMAP_STATIC_KEY ?? "",
     gmap_geocode_key: c.env.GMAP_GEOCODE_KEY ?? "",
-    // Django's footer answers "which database am I looking at" with DB_HOST.
-    // D1 exposes no name through the binding at runtime, so it comes from a
-    // plain var instead -- see workers/site/wrangler.jsonc.
-    d1_database: c.env.D1_DATABASE_NAME ?? "d1",
   };
 }

@@ -166,7 +166,6 @@ function env(overrides: Record<string, unknown> = {}): AppEnv["Bindings"] {
     CSRF_SECRET: "test-csrf-secret-not-a-real-one",
     GMAP_STATIC_KEY: "gmap-static-key-not-a-real-one",
     GMAP_GEOCODE_KEY: "gmap-geocode-key-not-a-real-one",
-    D1_DATABASE_NAME: "givefood-test",
     SITE_DOMAIN: ORIGIN,
     ...overrides,
   } as unknown as AppEnv["Bindings"];

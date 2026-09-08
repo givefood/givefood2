@@ -144,7 +144,7 @@ function dbDouble(): DbDouble {
 }
 
 function envWith(DB: unknown, extra: Record<string, unknown> = {}): AppEnv["Bindings"] {
-  return { DB, D1_DATABASE_NAME: "givefood-test", SITE_DOMAIN: ORIGIN, ...extra } as unknown as AppEnv["Bindings"];
+  return { DB, SITE_DOMAIN: ORIGIN, ...extra } as unknown as AppEnv["Bindings"];
 }
 
 interface RunResult<T> {

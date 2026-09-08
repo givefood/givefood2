@@ -195,7 +195,6 @@ function env(overrides: EnvOverrides = {}): AppEnv["Bindings"] {
     SESSIONS: { get: async () => null, put: async () => {}, delete: async () => {} },
     DATA: { get: async () => null, put: async () => {}, delete: async () => {} },
     CSRF_SECRET: "test-csrf-secret-not-a-real-one",
-    D1_DATABASE_NAME: "givefood-test",
     SITE_DOMAIN: ORIGIN,
     SUBSCRIBER_SALT: SALT,
     TURNSTILE_SECRET: "test-turnstile-secret",

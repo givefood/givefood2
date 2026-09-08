@@ -446,7 +446,6 @@ beforeEach(() => {
     PURGE_Q: { send: purgeSend },
     GMAP_STATIC_KEY: "",
     GMAP_GEOCODE_KEY: "",
-    D1_DATABASE_NAME: "givefood-test",
   } as unknown as AppEnv["Bindings"];
 
   app = new Hono<AppEnv>();

@@ -513,7 +513,6 @@ function env(): AppEnv["Bindings"] {
     CSRF_SECRET,
     GMAP_STATIC_KEY: "",
     GMAP_GEOCODE_KEY: "",
-    D1_DATABASE_NAME: "givefood-test",
     // getAdminSession hashes the cookie's session id into the KV key; this
     // fake answers on ANY key so the tests never have to reproduce that
     // derivation -- there is only ever one session in play. `signedIn` is the

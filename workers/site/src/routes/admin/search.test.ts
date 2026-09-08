@@ -594,7 +594,6 @@ beforeEach(() => {
     CSRF_SECRET: "test-secret",
     GMAP_STATIC_KEY: "static-key",
     GMAP_GEOCODE_KEY: "geocode-key",
-    D1_DATABASE_NAME: "givefood-test",
   } as unknown as AppEnv["Bindings"];
 
   // The production mount: index.ts:637 routes /admin at adminApp, and
@@ -982,7 +981,6 @@ describe("what reaches the template", () => {
     expect(context.page_context_present).toBe(true);
     expect(context.canonical_path).toBe(SEARCH_PATH);
     expect(mocks.pageContextCalls).toEqual([{ path: SEARCH_PATH }]);
-    expect(context.d1_database).toBe("givefood-test");
     // pageContext.ts:39-57: `places` and the Maps JS key are deliberately
     // blanked, the static and geocode keys published. Asserted on this page
     // because a search results page is one an unauthenticated visitor must

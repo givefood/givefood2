@@ -132,7 +132,6 @@ function env(overrides: Partial<Record<string, unknown>> = {}): AppEnv["Bindings
     SESSIONS: { get: async () => null, put: async () => {}, delete: async () => {} },
     DATA: { get: async () => null, put: async () => {}, delete: async () => {} },
     CSRF_SECRET: "test-csrf-secret-not-a-real-one",
-    D1_DATABASE_NAME: "givefood-test",
     SITE_DOMAIN: ORIGIN,
     ...overrides,
   } as unknown as AppEnv["Bindings"];

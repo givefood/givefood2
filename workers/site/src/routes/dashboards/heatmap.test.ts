@@ -99,7 +99,6 @@ function env(): AppEnv["Bindings"] {
     SESSIONS: { get: async () => null, put: async () => {}, delete: async () => {} },
     DATA: { get: async () => null, put: async () => {}, delete: async () => {} },
     CSRF_SECRET: "test-csrf-secret-not-a-real-one",
-    D1_DATABASE_NAME: "givefood-test",
     SITE_DOMAIN: ORIGIN,
     CF_VERSION_METADATA: { id: VERSION_ID, tag: "", timestamp: "2026-09-08T09:00:00Z" },
   } as unknown as AppEnv["Bindings"];

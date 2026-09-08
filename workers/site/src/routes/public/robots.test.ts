@@ -86,7 +86,6 @@ function env(overrides: Record<string, unknown> = {}): AppEnv["Bindings"] {
   return {
     SITE_DOMAIN: ORIGIN,
     CSRF_SECRET: "test-csrf-secret-not-a-real-one",
-    D1_DATABASE_NAME: "givefood-test",
     ...overrides,
   } as unknown as AppEnv["Bindings"];
 }

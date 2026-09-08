@@ -177,10 +177,6 @@
     "SITE_DOMAIN": "https://www.givefood.org.uk",
     "GOOGLE_OAUTH_CLIENT_ID": "927281004707-tboi1tsphl4bgtqn72e76rmc7r2q22tk.apps.googleusercontent.com",
     "TURNSTILE_SITEKEY": "0x4AAAAAAABxtIRWlPcEGwhj",
-    // Admin footer only -- the D1 equivalent of Django's DB_HOST, which its
-    // own admin footer shows so an admin with a local and a production tab
-    // open can tell them apart. The binding exposes no name at runtime.
-    "D1_DATABASE_NAME": "givefood",
     // /admin/jobs/'s queue-depth panel (lib/queueBacklog.ts). A plain var,
     // not a secret -- it is an account identifier, it is already in plain
     // text in workers/jobs/wrangler.jsonc, and it is useless without the

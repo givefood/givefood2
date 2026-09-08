@@ -458,7 +458,6 @@ beforeEach(() => {
     DB: { withSession: () => d1Session(db) },
     CSRF_SECRET,
     PURGE_Q: { send: purgeSend },
-    D1_DATABASE_NAME: "givefood-test",
     SESSIONS: {
       get: async (key: string) => sessions.get(key) ?? null,
       put: async (key: string, value: string) => void sessions.set(key, value),

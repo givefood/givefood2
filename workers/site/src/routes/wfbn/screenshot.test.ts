@@ -349,7 +349,6 @@ function env(): AppEnv["Bindings"] {
     DB: { withSession: () => d1Session(db, prepared) },
     BROWSER: BROWSER_BINDING,
     CSRF_SECRET: "test-csrf-secret-not-a-real-one",
-    D1_DATABASE_NAME: "givefood-test",
     SITE_DOMAIN: ORIGIN,
   } as unknown as AppEnv["Bindings"];
 }

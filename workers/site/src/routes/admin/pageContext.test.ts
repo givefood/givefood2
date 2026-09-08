@@ -48,9 +48,10 @@ import { adminPageContext } from "./pageContext";
 //
 //   4. THE KEY NAMES ARE THE ONES admin/page.njk READS. Pinned by rendering
 //      the real template at the bottom of this file rather than by inspection:
-//      renaming `d1_database` to anything else is invisible to every
-//      key-by-key assertion above and silently blanks the admin footer's
-//      "which database am I looking at" line for good.
+//      renaming any of them is invisible to every key-by-key assertion above
+//      and silently blanks a footer line on every admin page for good. That
+//      footer is github #35's five debug-comment facts; the `d1_database`
+//      line this note used to name was removed with them.
 
 // MUTATION TESTED, not assumed. The module and the two collaborators this
 // file deliberately runs for real (lib/csrf.ts, middleware/adminAuth.ts) were
@@ -116,7 +117,6 @@ const ENV_DEFAULTS = {
   GMAP_STATIC_KEY: "static-key-from-env",
   GMAP_GEOCODE_KEY: "geocode-key-from-env",
   GMAP_PLACES_KEY: "places-key-that-must-never-reach-the-browser",
-  D1_DATABASE_NAME: "givefood-under-test",
 };
 
 // The five columns of packages/db/migrations/0001_core.sql's `foodbank` that
@@ -274,7 +274,7 @@ afterEach(() => {
 });
 
 describe("the shape handed to every admin template", () => {
-  it("emits exactly these 23 keys, and no more", async () => {
+  it("emits exactly these 22 keys, and no more", async () => {
     // A LOCK, not a description. This object is spread FIRST at every call
     // site (`...(await adminPageContext(c, "needs")), foodbank, ...`), so a
     // new key added here is a new global on ~35 admin pages at once, and one
@@ -289,7 +289,6 @@ describe("the shape handed to every admin template", () => {
       "colo",
       "commit",
       "csrf_token",
-      "d1_database",
       "domain",
       "flag_path",
       "gmap_geocode_key",
@@ -378,16 +377,30 @@ describe("the Google keys admin.js reads off the page", () => {
   });
 });
 
-describe("the admin footer's 'which database am I looking at'", () => {
-  it("reports the wrangler var", async () => {
-    expect((await run()).ctx.d1_database).toBe("givefood-under-test");
+// github #35 replaced the footer's "which database am I looking at" line --
+// and `d1_database`, its only reader -- with the five facts the public
+// debug comment carries. These are the context half; the render half is at
+// the bottom of this file.
+describe("the admin footer's runtime identity", () => {
+  it("carries colo, machine and code, so the footer has something to print", async () => {
+    const { ctx } = await run();
+    // The values come from middleware/runtimeIdentity via buildPageContext,
+    // which is not running here -- so these are its unknown-identity
+    // fallbacks. That they are STRINGS rather than undefined is the point:
+    // the footer renders on an isolate that has not been through the
+    // middleware (a 500 page, a direct render in a test) and must not print
+    // "undefined" at an admin.
+    expect(typeof ctx.colo).toBe("string");
+    expect(typeof ctx.instance_id).toBe("string");
+    expect(typeof ctx.version).toBe("string");
   });
 
-  it("falls back to 'd1' rather than undefined when the var is missing", async () => {
-    // Django answered this question with DB_HOST; D1's binding exposes no name
-    // at runtime, so a missing var is a plausible state (a new environment, a
-    // wrangler.jsonc edit) and the footer must still say something.
-    expect((await run({ env: { D1_DATABASE_NAME: undefined } })).ctx.d1_database).toBe("d1");
+  it("no longer carries d1_database, whose only reader was the line #35 removed", async () => {
+    // Not merely absent from the key list above -- asserted by name, because
+    // "the footer stopped reading it" and "the context stopped providing it"
+    // are two separate changes and leaving only the first is how a value
+    // computed for nobody survives (the #34 shape this file's header names).
+    expect((await run()).ctx).not.toHaveProperty("d1_database");
   });
 });
 
@@ -806,17 +819,38 @@ describe("as admin/page.njk actually consumes it", () => {
   it("renders the real chrome: nav, footer and the four JS globals", async () => {
     // THE KEY-NAME PROOF, and the reason it is worth rendering a real template
     // in a unit test. Every assertion above names a key; none of them would
-    // notice if the TEMPLATE read a different one. Renaming `d1_database`
-    // leaves the footer reading "d1" (the template's own `or "d1"` default) on
-    // every admin page, forever, with nothing failing -- the #34 shape exactly:
-    // parsed, passed down, consumed by nobody.
+    // notice if the TEMPLATE read a different one -- a renamed key leaves the
+    // footer silently blank on every admin page, forever, with nothing
+    // failing. That is the #34 shape: parsed, passed down, consumed by nobody.
     const { ctx } = await run({ auth: true, cookie: SIGNED_IN, section: "needs" });
     const html = await render("admin/page.njk", ctx);
 
-    // The footer's three answers to "what am I looking at".
-    expect(html).toContain("<dd>givefood-under-test</dd>");
-    expect(html).toContain(`<dd>${ctx.render_time_ms} ms</dd>`);
-    expect(html).toContain(`<dd>${ctx.version}</dd>`);
+    // github #35's footer: the five facts the public debug comment carries.
+    //
+    // RENDERED WITH THREE DISTINCT SENTINELS, and that is not decoration.
+    // Outside the runtimeIdentity middleware -- which is not running here --
+    // `colo`, `instance_id` and `version` ALL fall back to the same "unknown"
+    // string, so a footer with all three lines wired to one variable renders
+    // identically to a correct one and passes any assertion made against the
+    // real context. Measured: mutating `In colo` to read `{{ version }}`
+    // survived the first version of this test. Distinct values are what make
+    // each line prove it reads its OWN key.
+    const wired = await render("admin/page.njk", { ...ctx, colo: "LHR", instance_id: "2ce04f4", version: "0f39cb09" });
+    expect(wired).toContain(`<dt>🌐 In colo</dt>\n      <dd>LHR</dd>`);
+    expect(wired).toContain(`<dt>🖥️ By machine</dt>\n      <dd>2ce04f4</dd>`);
+    expect(wired).toContain(`<dt>💾 Using code</dt>\n      <dd>0f39cb09</dd>`);
+    expect(wired).toContain(`<dt>⏱️ Took</dt>\n      <dd>${ctx.render_time_ms}ms</dd>`);
+    // now() is the renderer's own clock, so it is matched by shape rather
+    // than by value -- RFC 2822, the same spelling debugcomment.njk uses.
+    expect(wired).toMatch(/<dt>🕰️ Generated at<\/dt>\n      <dd>[A-Z][a-z]{2}, \d{2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2}:\d{2} \+0000<\/dd>/);
+    // And the same five against the UNMODIFIED context, so the sentinels above
+    // cannot hide a template that ignores the real key names.
+    expect(html).toContain(`<dd>${ctx.colo}</dd>`);
+    expect(html).toContain(`<dd>${ctx.render_time_ms}ms</dd>`);
+    // The removed line, asserted gone: the wrangler var is still in this
+    // test's env, so a footer that still read it would still print it.
+    expect(html).not.toContain("givefood-under-test");
+    expect(html).not.toContain("Database");
     // The cache-buster on every static asset, from the same `version`.
     expect(html).toContain(`/static/css/admin.css?v=${ctx.version}`);
     // The nav's identity block, from admin_user.
@@ -839,6 +873,7 @@ describe("as admin/page.njk actually consumes it", () => {
     const html = await render("admin/page.njk", (await run()).ctx);
     expect(html).not.toContain("someone@givefood.org.uk");
     expect(html).not.toContain('href="/auth/sign-out/"');
-    expect(html).toContain("<dd>givefood-under-test</dd>");
+    // The footer is outside the identity guard, so it renders either way.
+    expect(html).toContain("💾 Using code");
   });
 });

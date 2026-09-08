@@ -70,20 +70,43 @@
     {% block body %}{% endblock %}
   </div>
 
-  {# Django's footer shows the app version and DB_HOST -- "which database am
-     I actually looking at", the question that matters when an admin has a
-     local and a production tab open at once. D1's binding exposes no name at
-     runtime, so the equivalent comes from a wrangler var; render_time_ms is
-     already tracked by adminPageContext and is the closer Workers analogue of
-     the thing Django's own footer was for. #}
+  {# github #35: the five facts includes/debugcomment.njk puts in an HTML
+     comment on every PUBLIC page, shown here as visible text instead.
+     Django included that same partial in admin/page.html, where it was
+     invisible unless you opened view-source -- which is the wrong place for
+     it on a page whose entire audience is the person maintaining the site.
+
+     DATABASE IS GONE, and with it adminPageContext's `d1_database`, whose
+     only reader was the line above. It came from Django's DB_HOST, answering
+     "which database am I actually looking at" when a local and a production
+     tab are open at once. On Workers that question is answered better by the
+     three lines that replace it: `Using code` names the deployed version,
+     `In colo` where it ran and `By machine` which isolate served it -- none
+     of which a hand-maintained wrangler var could get wrong.
+
+     VERSION AND RENDERED IN ARE NOT MISSING, they are renamed: `Using code`
+     is the same `version`, `Took` the same `render_time_ms`. Adding the
+     debug-comment spellings alongside the old ones would have printed both
+     values twice under two names, so the footer carries the debug comment's
+     vocabulary throughout and the public and admin sides say the same thing
+     the same way.
+
+     `now()` is the render time, not the request time -- it is evaluated when
+     this template runs. That is what the public debug comment has always
+     meant by "Generated at", and the difference between the two is the
+     `Took` line below it. #}
   <footer class="footer">
     <dl>
-      <dt>Version</dt>
+      <dt>🕰️ Generated at</dt>
+      <dd>{{ now() }}</dd>
+      <dt>🌐 In colo</dt>
+      <dd>{{ colo }}</dd>
+      <dt>🖥️ By machine</dt>
+      <dd>{{ instance_id }}</dd>
+      <dt>💾 Using code</dt>
       <dd>{{ version }}</dd>
-      <dt>Database</dt>
-      <dd>{{ d1_database or "d1" }}</dd>
-      <dt>Rendered in</dt>
-      <dd>{{ render_time_ms }} ms</dd>
+      <dt>⏱️ Took</dt>
+      <dd>{{ render_time_ms }}ms</dd>
     </dl>
   </footer>
 

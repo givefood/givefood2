@@ -489,7 +489,6 @@ beforeEach(() => {
     ARTICLES_Q: { send: articlesSend },
     GMAP_STATIC_KEY: "",
     GMAP_GEOCODE_KEY: "",
-    D1_DATABASE_NAME: "givefood-test",
   } as unknown as AppEnv["Bindings"];
 
   app = buildApp();

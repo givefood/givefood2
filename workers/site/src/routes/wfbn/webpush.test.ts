@@ -160,7 +160,6 @@ function env(): AppEnv["Bindings"] {
     SESSIONS: { get: async () => null, put: async () => {}, delete: async () => {} },
     DATA: { get: async () => null, put: async () => {}, delete: async () => {} },
     CSRF_SECRET: "test-csrf-secret-not-a-real-one",
-    D1_DATABASE_NAME: "givefood-test",
     SITE_DOMAIN: ORIGIN,
     VAPID_PUBLIC_KEY: vapidPublicKey,
   } as unknown as AppEnv["Bindings"];

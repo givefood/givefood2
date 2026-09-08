@@ -201,7 +201,6 @@ async function post(path: string, fields: Record<string, string>): Promise<PostR
     PURGE_Q: { send: purgeSend },
     GMAP_STATIC_KEY: "",
     GMAP_GEOCODE_KEY: "",
-    D1_DATABASE_NAME: "givefood-test",
   } as unknown as AppEnv["Bindings"];
 
   const signature = await hmacSha256Hex(CSRF_SECRET, CSRF_RAW);

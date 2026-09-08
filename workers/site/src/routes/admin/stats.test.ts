@@ -478,7 +478,6 @@ function env(): AppEnv["Bindings"] {
     CSRF_SECRET,
     GMAP_STATIC_KEY: "static-key",
     GMAP_GEOCODE_KEY: "geocode-key",
-    D1_DATABASE_NAME: "givefood-test",
     // getAdminSession hashes the cookie's session id into the KV key; this
     // fake answers on ANY key, so no test has to reproduce that derivation --
     // there is only ever one session in play. `signedIn` is the switch the
@@ -511,7 +510,6 @@ interface StatsContext {
   title: string;
   section: string;
   csrf_token: string;
-  d1_database: string;
   stats: StatRow[];
 }
 
@@ -725,7 +723,6 @@ describe("the page context every stats view renders with", () => {
 
     expect(ctx.section).toBe("settings");
     expect(ctx.title).toBe(title);
-    expect(ctx.d1_database).toBe("givefood-test");
   });
 
   it("gives the graph page the same Settings highlight, on its own template", async () => {

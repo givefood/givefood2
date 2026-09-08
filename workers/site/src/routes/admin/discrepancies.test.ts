@@ -457,7 +457,6 @@ beforeEach(() => {
     CSRF_SECRET,
     GMAP_STATIC_KEY: "static-key",
     GMAP_GEOCODE_KEY: "geocode-key",
-    D1_DATABASE_NAME: "givefood-test",
   } as unknown as AppEnv["Bindings"];
 
   // The production registration, verbatim from routes/admin/index.ts:116-117,

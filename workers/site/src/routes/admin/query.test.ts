@@ -241,7 +241,6 @@ function buildEnv(log: string[], secret: string | undefined, executed: Executed[
     CSRF_SECRET: secret,
     GMAP_STATIC_KEY: "",
     GMAP_GEOCODE_KEY: "",
-    D1_DATABASE_NAME: "givefood-test",
   } as unknown as AppEnv["Bindings"];
 }
 

@@ -404,7 +404,6 @@ beforeEach(() => {
     CSRF_SECRET: "test-secret",
     GMAP_STATIC_KEY: "static-key",
     GMAP_GEOCODE_KEY: "geocode-key",
-    D1_DATABASE_NAME: "givefood-test",
   } as unknown as AppEnv["Bindings"];
 
   // The production mount, minus the middleware this route does not touch:
@@ -688,7 +687,6 @@ describe("what reaches the template", () => {
     expect(context.page_context_present).toBe(true);
     expect(context.canonical_path).toBe(DUPE_PATH);
     expect(mocks.pageContextCalls).toEqual([{ path: DUPE_PATH }]);
-    expect(context.d1_database).toBe("givefood-test");
     // pageContext.ts:55-57: `places` and the Maps JS key are deliberately
     // blanked, the static and geocode keys are published. Asserted here
     // because this is a page an unauthenticated visitor must never reach, and

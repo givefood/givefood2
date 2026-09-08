@@ -121,7 +121,6 @@ function env(overrides: Partial<AppEnv["Bindings"]> = {}): AppEnv["Bindings"] {
       delete: async (key: string) => void kv.delete(key),
     },
     CSRF_SECRET: "test-csrf-secret-not-a-real-one",
-    D1_DATABASE_NAME: "givefood-test",
     SITE_DOMAIN: ORIGIN,
     ...overrides,
   } as unknown as AppEnv["Bindings"];

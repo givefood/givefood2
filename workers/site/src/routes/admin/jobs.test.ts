@@ -277,7 +277,6 @@ function buildEnv(log: string[], creds: boolean): AppEnv["Bindings"] {
     CSRF_SECRET: "test-csrf-secret-not-a-real-one",
     GMAP_STATIC_KEY: "",
     GMAP_GEOCODE_KEY: "",
-    D1_DATABASE_NAME: "givefood-test",
     // Both or neither: getQueueBacklog degrades on either being unset, and
     // `creds: false` is the state this Worker was actually deployed in
     // before CF_API_KEY was set as a secret.
