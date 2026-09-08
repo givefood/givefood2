@@ -291,37 +291,48 @@ describe("constituencies", () => {
     expect(await tag("/api/2/constituency/hastings-and-rye/")).toBe("pc-hastings-and-rye");
   });
 
-  it("does NOT tag the constituency HTML page or its geo.json -- SUSPECTED BUG", async () => {
-    // CONSTITUENCY_PATH (cacheTag.ts:51) expects /constituency/<slug> at
-    // the root of the path. Nothing is served there. The real routes are
-    // /needs/in/constituency/<slug>/ and .../geo.json (index.ts:242-243,
-    // :218), ported straight from gfwfbn/urls/i18n.py:45-47 where the
-    // whole urlconf is included under "needs/".
-    //
-    // The consequence is a silent purge miss, which is exactly the failure
-    // this design was chosen to prevent: routes/admin/foodbank.ts:82
-    // queues constituencyTag(parliamentary_constituency_slug) on every
-    // save, and no HTML response carries it, so Cloudflare reports success
-    // and the constituency page keeps listing the old data until its TTL.
-    // Django DOES purge these two URLs by name (foodbank.py:751-752), so
-    // this is a regression against Django, not inherited behaviour.
-    //
-    // Pinned as current behaviour per the no-failing-tests rule. Fixing
-    // the prefix should flip these three to pc-hastings-and-rye.
-    await untagged("/needs/in/constituency/hastings-and-rye/");
-    await untagged("/needs/in/constituency/hastings-and-rye/geo.json");
-    await untagged("/cy/needs/in/constituency/hastings-and-rye/");
-    // The constituency LIST page, which the same save invalidates, is not an
-    // aggregate either -- so /needs/in/constituencies/ goes stale to TTL too.
-    await untagged("/needs/in/constituencies/");
+  // github #18. This pair used to assert the miss, ending "Fixing the prefix
+  // should flip these three to pc-hastings-and-rye." It did.
+  //
+  // CONSTITUENCY_PATH expected /constituency/<slug> at the ROOT of the path.
+  // Nothing is served there; the real routes are /needs/in/constituency/... .
+  // The consequence was the exact failure this design exists to prevent: a
+  // silent purge miss. routes/admin/foodbank.ts queues
+  // constituencyTag(parliamentary_constituency_slug) on every save, no HTML
+  // response carried it, Cloudflare reports success:true for a tag nothing
+  // matches, and the page kept listing the old need text, phone number and
+  // email until its own week-long TTL. Django purges both URLs by name
+  // (foodbank.py:751-752), so this was a regression against Django rather
+  // than inherited behaviour.
+  it("tags the constituency HTML page and its geo.json, in every locale", async () => {
+    const expected = constituencyTag("hastings-and-rye");
+    expect(await tag("/needs/in/constituency/hastings-and-rye/")).toBe(expected);
+    expect(await tag("/needs/in/constituency/hastings-and-rye/geo.json")).toBe(expected);
+    // All three locales, not just Welsh: index.ts registers the whole family
+    // per locale, and the LOCALE fragment has to cover them.
+    expect(await tag("/cy/needs/in/constituency/hastings-and-rye/")).toBe(expected);
+    expect(await tag("/ga/needs/in/constituency/hastings-and-rye/")).toBe(expected);
+    expect(await tag("/gd/needs/in/constituency/hastings-and-rye/geo.json")).toBe(expected);
   });
 
-  it("would tag a root-level /constituency/<slug>/, so the fault is the prefix and not the capture", async () => {
-    // Kept next to the test above so the diagnosis is not lost: the
-    // capture group and the locale handling both work, and the rule fires
-    // on a path shape the site has never served.
-    expect(await tag("/constituency/hastings-and-rye/")).toBe("pc-hastings-and-rye");
-    expect(await tag("/cy/constituency/hastings-and-rye/")).toBe("pc-hastings-and-rye");
+  it("still leaves the constituency LIST page untagged, which is parity and not this bug", async () => {
+    // /needs/in/constituencies/ goes stale to TTL on a food bank save, and
+    // Django never purged it either -- so this staleness is inherited, and
+    // fixing #18 must not quietly change it. It is also the reason the
+    // pattern says `constituency/` in full: `constituenc` would swallow the
+    // plural and mint a tag for a page nothing purges.
+    await untagged("/needs/in/constituencies/");
+    await untagged("/cy/needs/in/constituencies/");
+  });
+
+  it("no longer tags a root-level /constituency/<slug>/, a path this site has never served", async () => {
+    // The inverse of the fix, kept where its predecessor was. That test
+    // existed to prove the capture group and the locale handling worked and
+    // that only the prefix was wrong; now it guards the other direction --
+    // a pattern loose enough to match both shapes would pass every other
+    // assertion here while minting tags for URLs that do not exist.
+    await untagged("/constituency/hastings-and-rye/");
+    await untagged("/cy/constituency/hastings-and-rye/");
   });
 });
 

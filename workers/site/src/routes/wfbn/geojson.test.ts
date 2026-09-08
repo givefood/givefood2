@@ -960,17 +960,16 @@ describe("wfbnConstituencyGeojson", () => {
     expect(res.headers.get("Cache-Control")).toBe("max-age=604800");
   });
 
-  // NO CACHE-TAG, PINNED AS CURRENT BEHAVIOUR RATHER THAN ENDORSED.
-  // middleware/cacheTag.ts's CONSTITUENCY_PATH expects /constituency/<slug> at
-  // the root, while these URLs live under /needs/in/constituency/<slug>/, so
-  // this response is untagged and a constituency purge cannot reach it -- it
-  // simply serves the old boundary and pins for the full week. Already
-  // recorded, with the analysis, in middleware/cacheTag.test.ts ("does NOT tag
-  // the constituency HTML page or its geo.json -- SUSPECTED BUG"); asserted
-  // again here because from this route's side it is the difference between a
-  // purgeable week-long cache entry and an unpurgeable one.
-  it("carries no cache tag, so nothing can purge it before the week is out (suspect, pinned)", async () => {
-    expect((await get("/needs/in/constituency/salisbury/geo.json")).headers.get("Cache-Tag")).toBeNull();
+  // github #18: this asserted null, "pinned as current behaviour rather than
+  // endorsed". CONSTITUENCY_PATH expected /constituency/<slug> at the root
+  // while these URLs live under /needs/in/constituency/<slug>/, so the
+  // response was untagged and a constituency purge could not reach it -- it
+  // served the old boundary for the full week. From this route's side that is
+  // the difference between a purgeable week-long cache entry and an
+  // unpurgeable one, which is why it is asserted here as well as in
+  // middleware/cacheTag.test.ts.
+  it("carries the constituency cache tag, so a food bank save can purge it", async () => {
+    expect((await get("/needs/in/constituency/salisbury/geo.json")).headers.get("Cache-Tag")).toBe("pc-salisbury");
   });
 
   // THE WHOLE FEED, BYTE FOR BYTE, and the only scope with a boundary FIRST:

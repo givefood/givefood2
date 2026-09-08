@@ -47,8 +47,29 @@ const FOODBANK_PATH = new RegExp(`^(?:/md)?(?:/${LOCALE})?/needs/at/([^/]+)`);
 // representation. The LIST endpoints are aggregates, handled below.
 const FOODBANK_API = /^\/api\/[123]\/foodbank\/([^/]+)/;
 
-// /constituency/<slug>/ and its geo.json, in any locale.
-const CONSTITUENCY_PATH = new RegExp(`^(?:/${LOCALE})?/constituency/([^/]+)`);
+// /needs/in/constituency/<slug>/ and its geo.json, in any locale.
+//
+// THE `/needs/in` WAS MISSING (github #18). This read
+// `^(?:/<locale>)?/constituency/([^/]+)` -- a path this site does not serve --
+// so the HTML constituency page and its geo.json carried no Cache-Tag at all
+// and the pc-<slug> purge every food bank save enqueues matched nothing on
+// them. Cloudflare answers success:true for a tag no response carries, so
+// cachePurge.ts logged "purged 3 tag(s)" and the message acked: a correction
+// to a need list, phone number or email stayed stale on the constituency page
+// for the full week of its max-age=604800, with no signal anywhere. Django
+// purged both URLs by name (foodbank.py:751-752), so this was visible as a
+// straight regression at cutover. FOODBANK_PATH above had the prefix right;
+// this one was the odd one out.
+//
+// NO `(?:/md)?` HERE, unlike FOODBANK_PATH. The markdown mirror has food bank
+// pages but no constituency pages -- index.ts registers none -- so allowing
+// the segment would match a URL that does not exist. Add it in the same
+// change that adds the route, if that ever happens.
+//
+// `constituency` and not `constituenc`, so /needs/in/constituencies/ (the
+// list) is deliberately NOT matched: it is untagged today and Django never
+// purged it either, so that staleness is parity rather than this bug.
+const CONSTITUENCY_PATH = new RegExp(`^(?:/${LOCALE})?/needs/in/constituency/([^/]+)`);
 const CONSTITUENCY_API = /^\/api\/[123]\/constituency\/([^/]+)/;
 
 // Responses whose content changes when ANY food bank does: the homepage, the
