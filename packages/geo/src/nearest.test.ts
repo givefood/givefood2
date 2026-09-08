@@ -642,20 +642,22 @@ describe("nearest", () => {
       // bad ORIGIN is the reachable one, and it is worse: it poisons every
       // distance at once.
       //
-      // api1.ts's /api/1/foodbanks/search/ carries "B6: no is_uk() check,
-      // no numeric validation on `lattlong` -- deliberate, do not add
-      // either", then does `Number(latStr)` on the raw query string before
-      // calling nearest(). So `?lattlong=banana` arrives here as lat = lng
-      // = NaN, and so does `?lattlong=51.5` -- no comma means `lngStr` is
-      // undefined and Number(undefined) is NaN.
+      // NO ROUTE REACHES THIS ANY MORE (github #15, #16), and this test is
+      // kept anyway. It used to describe a live bug: api1.ts did
+      // `Number(latStr)` on the raw query string, so `?lattlong=banana` and
+      // `?lattlong=51.5` both arrived here as NaN, and api2/foodbanks.ts had
+      // the same hole behind Django's isdigit guard. Both now parse with
+      // packages/geo's parseLatLngLikePython, which raises where CPython's
+      // float() raises, so a NaN origin cannot come from user input.
       //
-      // What comes back is not "nothing" and not an error: every distance
-      // is NaN, so every comparator result is NaN, which ECMA-262
-      // SortCompare coerces to +0. The sort is then a no-op over a
-      // consistently-"equal" list and the response is simply the first
-      // `quantity` candidates in D1 row order, published with distance_m
-      // serialising to null. Pinned, not endorsed -- see this module's
-      // suspected-bug report.
+      // What it documents is still true of nearest() itself, and is why the
+      // bug looked like a working endpoint: every distance is NaN, so every
+      // comparator result is NaN, which ECMA-262 SortCompare coerces to +0.
+      // The sort is then a no-op over a consistently-"equal" list and the
+      // caller gets the first `quantity` candidates in D1 row order, with
+      // distance_m serialising to null. nearest() is CORRECT to behave this
+      // way -- Python's sorted() over NaN keys does the same -- and this test
+      // is the record of why callers must not hand it NaN.
       //
       // Asserting the input ORDER is the strong form. `every(isNaN)` alone
       // would pass just as well for an implementation that sorted NaNs to

@@ -7,7 +7,7 @@ import {
   getOpenFoodbankCoordinates,
   toDashedUuid,
 } from "@givefood/db";
-import { R_EARTHDISTANCE, R_PYTHON, isUk, miles, nearest } from "@givefood/geo";
+import { R_EARTHDISTANCE, R_PYTHON, isUk, miles, nearest, parseLatLngLikePython } from "@givefood/geo";
 import { round2, type SerialisableValue } from "@givefood/serialise";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
@@ -407,7 +407,22 @@ api2FoodbanksApp.get("/foodbanks/search/", async (c) => {
   // latLngParam is guaranteed defined here: the only ways to reach this
   // point without it are covered by the two early returns above (or it was
   // just set by geocode(), which always returns a "lat,lng" string).
-  const [lat, lng] = parseLatLng(latLngParam!);
+  // THROWS on a coordinate Python's float() would refuse (github #15). This
+  // was the file-local parseLatLng(), a bare parseFloat pair scoped by its own
+  // comment to the trusted `foodbank.lat_lng` COLUMN -- fine there, wrong on
+  // user input. The isdigit guard above is Django's and catches `abc,def`,
+  // but it strips `,`, `-` and `.` before testing, so `51.5074,` becomes
+  // "515074" and sails through; parseLatLng then answered [51.5074, NaN] and
+  // isUk(51.5074, NaN) is true (four `<`/`>` tests, all false against NaN),
+  // so the 400 never fired either. The result was a 200 listing the first ten
+  // open food banks in rowid order with `distance_m: null` -- exactly what a
+  // client emitting `${lat},${lng}` with an empty longitude would get.
+  // Django's is_uk() (geo.py:193-194) raises ValueError there, uncaught.
+  //
+  // Not caught here, for the same reason as the siblings: the throw must
+  // surface as the 500 Django sends, not as a tidier 400 it does not.
+  // parseLatLng() stays for the geojson branch's own `foodbank.lat_lng` read.
+  const [lat, lng] = parseLatLngLikePython(latLngParam!);
   if (!isUk(lat, lng)) {
     return new Response("", { status: 400 });
   }

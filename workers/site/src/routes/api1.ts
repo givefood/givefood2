@@ -9,7 +9,7 @@ import {
   getPublishedNeeds,
   toDashedUuid,
 } from "@givefood/db";
-import { miles, nearest, R_PYTHON } from "@givefood/geo";
+import { miles, nearest, parseLatLngLikePython, R_PYTHON } from "@givefood/geo";
 import { formatCsvRow, formatDjangoJsonDatetime, formatPyStrDatetime, round2 } from "@givefood/serialise";
 import type { AppEnv } from "../types";
 import { dbSession } from "../lib/session";
@@ -166,7 +166,9 @@ api1App.get("/foodbanks/", async (c) => {
 
 // --- api_foodbank_search (GET /foodbanks/search/) ---------------------
 // B6: no is_uk() check, no numeric validation on `lattlong` -- deliberate,
-// do not add either.
+// do not add either. That means no 400 and no allowlist; it does NOT mean
+// no error. Django reaches find_foodbanks() with whatever arrived and
+// float() raises there (github #16) -- see the parse below.
 api1App.get("/foodbanks/search/", async (c) => {
   const latLngParam = c.req.query("lattlong");
   const addressParam = c.req.query("address");
@@ -180,9 +182,22 @@ api1App.get("/foodbanks/search/", async (c) => {
     latLng = await geocode(c, addressParam);
   }
 
-  const [latStr, lngStr] = (latLng as string).split(",");
-  const lat = Number(latStr);
-  const lng = Number(lngStr);
+  // THROWS, AND THE THROW IS THE POINT (github #16). This was
+  // `Number(latStr)` / `Number(lngStr)`, which never throws -- so
+  // `?lattlong=abc`, `?lattlong=banana` and `?lattlong=51.5` (a truncated
+  // coordinate, the realistic client bug) each answered 200 with ten real
+  // food banks in database order and `distance_m: null`. A third-party
+  // widget rendered a Manchester food bank as "your nearest" regardless of
+  // where the caller was, with nothing for the client or for monitoring to
+  // detect. Django 500s on all three: geo.py:213-214's bare float() raises
+  // ValueError, and a comma-less string raises IndexError on `[1]` before
+  // that.
+  //
+  // NOT wrapped in a try/catch, deliberately, exactly like pythonInt() above
+  // does for frozen bug B4: the uncaught throw reaches index.ts's
+  // app.onError and renders the 500 Django renders. Adding a tidy 400 here
+  // would be the divergence this route's B6 comment forbids.
+  const [lat, lng] = parseLatLngLikePython(latLng as string);
 
   const session = dbSession(c);
   // WP 2.5 perf: rank against the cheap id+coordinate candidate set (a

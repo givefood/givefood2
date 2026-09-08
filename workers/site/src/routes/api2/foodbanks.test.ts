@@ -950,3 +950,83 @@ describe("GET /api/2/foodbanks/search/", () => {
     }
   });
 });
+
+// ===========================================================================
+// GET /api/2/foodbanks/search/ -- malformed coordinates (github #15)
+// ===========================================================================
+// Django's own guard is here and is kept: gfapi2/views.py:376-380 requires a
+// comma, then requires the value to be digits once `,`, `-` and `.` are
+// stripped. That catches `abc,def` and answers 400. What it does NOT catch is
+// an EMPTY HALF: "51.5074," strips to "515074" and passes, ",-0.1278" strips
+// to "01278" and passes, ",,12" strips to "12" and passes.
+//
+// Django then reaches is_uk(), whose bare `float(lat_lng.split(",")[0])`
+// (geo.py:193-194) raises ValueError on the empty string, uncaught -- a 500.
+// The port used a parseFloat pair that answered NaN, and isUk(51.5074, NaN)
+// is TRUE because its four comparisons are all false against NaN, so the 400
+// never fired either. The caller got 200 and the first ten open food banks in
+// rowid order with `distance_m: null`.
+describe("GET /api/2/foodbanks/search/ -- coordinates the isdigit guard lets through", () => {
+  const searchStatus = async (latLng: string): Promise<number> => {
+    const res = await get(`/api/2/foodbanks/search/?lat_lng=${encodeURIComponent(latLng)}`);
+    return res.status;
+  };
+
+  it.each([
+    ["51.5074,", "empty longitude -- a `${lat},${lng}` with one side undefined"],
+    [",-0.1278", "empty latitude"],
+    [",,12", "three parts, the first two empty"],
+    [".,1", "a bare point, which strips to nothing"],
+    ["-,1", "a bare sign, which strips to nothing"],
+  ])("500s on ?lat_lng=%s (%s), where it used to answer 200", async (value) => {
+    db.exec("UPDATE foodbank SET latest_need_id = 500 WHERE is_closed = 0");
+
+    expect(await searchStatus(value)).toBe(500);
+  });
+
+  // STILL 400, NOT 500, and the distinction is Django's. These never reach
+  // is_uk() at all: the isdigit guard rejects them first and returns
+  // HttpResponseBadRequest. A fix that moved the parse in front of the guard
+  // would turn these into 500s -- a new divergence, in the opposite direction.
+  //
+  // `,` is in this group and not the one above, which is not obvious: strip
+  // its comma and the empty string is left, and `"".isdigit()` is False in
+  // Python -- so Django rejects it at the guard and never reaches float().
+  // Same for a third part that is not numeric: "51.06,-1.79,junk" strips to
+  // "5106179junk" and fails isdigit, so it is a 400 rather than the 200 an
+  // indexing parser alone would give. Both verified by running the guard and
+  // the parse in CPython, after this suite asserted the opposite and was
+  // wrong.
+  it.each([["abc,def"], ["banana,split"], ["0x10,0x10"], [","], ["51.0688,-1.7945,junk"]])(
+    "still 400s on ?lat_lng=%s, which Django's isdigit guard rejects before the parse",
+    async (value) => {
+      expect(await searchStatus(value)).toBe(400);
+    },
+  );
+
+  it("still 400s on a value with no comma at all", async () => {
+    expect(await searchStatus("51.5074")).toBe(400);
+  });
+
+  // Django INDEXES rather than unpacks, so a third part is ignored, not an
+  // error -- and the obvious implementation, reject unless there are exactly
+  // two parts, would 500 this. It has to be a NUMERIC third part to get this
+  // far: a non-numeric one is a 400 at the guard above, which is why that case
+  // sits in the other list.
+  it("accepts a numeric third comma-separated part, which Django ignores", async () => {
+    db.exec("UPDATE foodbank SET latest_need_id = 500 WHERE is_closed = 0");
+
+    expect(await searchStatus(`${SALISBURY_LAT},${SALISBURY_LNG},999`)).toBe(200);
+  });
+
+  // The control: the fix must not have made everything an error.
+  it("still ranks a well-formed coordinate", async () => {
+    db.exec("UPDATE foodbank SET latest_need_id = 500 WHERE is_closed = 0");
+
+    const res = await get(`/api/2/foodbanks/search/?lat_lng=${SALISBURY_LAT},${SALISBURY_LNG}`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Array<{ slug: string; distance_m: number }>;
+    expect(body[0]!.slug).toBe("salisbury");
+    expect(typeof body[0]!.distance_m).toBe("number");
+  });
+});

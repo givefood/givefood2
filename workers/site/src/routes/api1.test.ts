@@ -1147,40 +1147,51 @@ describe("GET /api/1/foodbanks/search/", () => {
     expect(body[0]!.distance_m).toBeGreaterThan(10_000_000);
   });
 
-  // SUSPECT (reported, not fixed), and NOT a frozen bug -- Django 500s here.
-  // `float("abc")` raises ValueError inside find_foodbanks(), so the real API
-  // answers 500. The port's `Number("abc")` is NaN, every haversine distance is
-  // NaN, Array#sort treats a NaN comparator result as 0 (so the order is the
-  // candidate order, i.e. rowid), and JSON.stringify renders NaN as null. The
-  // caller gets 200 with a plausible-looking list of food banks whose distances
-  // are all null and whose order means nothing.
-  it("answers 200 with null distances for an unparseable lattlong, where Django 500s", async () => {
-    const body = (await json("/api/1/foodbanks/search/?lattlong=abc,def")) as Array<{ slug: string; distance_m: number | null; distance_mi: number | null }>;
+  // github #16. This pair used to assert 200s, labelled "SUSPECT (reported,
+  // not fixed)". They were the bug: JS's Number() answers NaN where Python's
+  // float() raises, every haversine distance came out NaN, Array#sort treats
+  // a NaN comparator result as 0 so the "ranking" was a no-op over the
+  // candidate scan's rowid order, and JSON.stringify renders NaN as null. The
+  // caller got 200 and ten real food banks with real addresses that had
+  // nothing to do with their location -- and `?lattlong=51.5`, a truncated
+  // coordinate rather than deliberate garbage, was enough to trigger it, live
+  // on www.givefood.org.uk.
+  //
+  // 500, NOT 400. Django has no validation on this route at all (B6, and
+  // api1.ts's own comment forbids adding any); it simply reaches float() and
+  // raises. The throw is left uncaught so app.onError renders the same 500.
+  it.each([
+    ["abc,def", "both halves unparseable"],
+    ["banana", "no comma and not a number"],
+    ["51.5", "truncated -- the realistic client bug"],
+    ["51.0688,", "empty longitude, from a `${lat},${lng}` with one side undefined"],
+    [",-1.7945", "empty latitude"],
+    [",", "both halves empty -- Number() called these 0, a real search at 0,0"],
+    ["0x10,0x10", "hex, which Number() reads as 16 and float() refuses"],
+  ])("500s on ?lattlong=%s (%s), where it used to answer 200", async (value) => {
+    const res = await get(`/api/1/foodbanks/search/?lattlong=${encodeURIComponent(value)}`);
 
-    // NOT the distance order (there are no distances): this is the candidate
-    // set in the order the scan produced it, ids 7, 12, 30 -- which is the
-    // giveaway that the ranking silently did nothing at all.
-    expect(body.map((f) => f.slug)).toEqual(["salisbury", "perth-kinross-foodbank", "st-marys-foodbank"]);
-    expect(body.map((f) => f.slug)).not.toEqual(["salisbury", "st-marys-foodbank", "perth-kinross-foodbank"]);
-    for (const entry of body) {
-      expect(entry.distance_m).toBeNull();
-      expect(entry.distance_mi).toBeNull();
-    }
+    expect(res.status).toBe(500);
   });
 
-  // Same family: Django does `lattlong.split(",")[1]`, which raises IndexError
-  // on a value with no comma -- a 500. Here the longitude is undefined, so
-  // again NaN, again 200.
-  it("answers 200 for a lattlong with no comma, where Django raises IndexError", async () => {
-    const res = await get("/api/1/foodbanks/search/?lattlong=51.0688");
+  // The other half of the same claim: a coordinate that IS parseable must not
+  // have become collateral. Asserted on the distances rather than the status,
+  // because a route that 500s everything would pass a status-only check.
+  it("still ranks a well-formed coordinate", async () => {
+    const body = (await json(`/api/1/foodbanks/search/?lattlong=${QUERY_LAT_LNG}`)) as Array<{ slug: string; distance_m: number }>;
 
-    expect(res.status).toBe(200);
-    expect(((await res.json()) as Array<{ distance_m: number | null }>)[0]!.distance_m).toBeNull();
+    expect(body.map((f) => f.slug)).toEqual(["salisbury", "st-marys-foodbank", "perth-kinross-foodbank"]);
+    expect(body.every((f) => typeof f.distance_m === "number")).toBe(true);
   });
 
   // A third coordinate is simply ignored -- "51,-1,999" splits and the extra
   // piece is dropped, on both sides. Pinned because it is the one malformed
-  // input of the family that does NOT diverge.
+  // input of the family that does NOT diverge -- and github #16 made it
+  // load-bearing: Django INDEXES (`float(lattlong.split(",")[0])` / `[1]`,
+  // geo.py:213-214) rather than unpacking, so the obvious way to write the new
+  // parser -- reject unless there are exactly two parts, which is what
+  // api2/locations.ts's helper does -- would 500 this and trade one divergence
+  // for another.
   it("ignores anything after the second comma", async () => {
     const three = await (await get("/api/1/foodbanks/search/?lattlong=51.0688,-1.7945,999")).text();
     const two = await (await get(`/api/1/foodbanks/search/?lattlong=${QUERY_LAT_LNG}`)).text();
