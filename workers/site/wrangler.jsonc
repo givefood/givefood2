@@ -263,18 +263,15 @@
     // a revoked token should do.
     // GEMINI_API_KEY: routes/admin/foodbankCheck.ts, since github #38 moved
     // the food bank check inline (it used to run in workers/jobs, which is
-    // where this key already lives and stays -- order-lines still uses it
-    // there). DELIBERATELY NOT IN THE LIST BELOW YET: per the note above,
-    // naming a secret here before `wrangler secret put` has actually set it
-    // makes Workers Builds fail and blocks every deploy from main. Add it in
-    // the same change that runs:
-    //
-    //   cd workers/site && npx wrangler secret put GEMINI_API_KEY
-    //
-    // Until then the check page degrades the way it does for any AI failure:
-    // Gemini rejects the empty key, the route catches it and renders the
-    // message in a notification, and the rest of the page still works.
+    // where this key also lives and stays -- order-lines still uses it
+    // there, so this is a second copy of the same secret in a second Worker,
+    // exactly like GMAP_STATIC_KEY below). Set 2026-09-08 and confirmed
+    // present via `wrangler secret list` BEFORE being named here, which is
+    // the order the note above insists on: listing a name in "required"
+    // that has not been set fails Workers Builds and blocks every deploy
+    // from main.
     "required": [
+      "GEMINI_API_KEY",
       "GMAP_GEOCODE_KEY",
       "VAPID_PUBLIC_KEY",
       "TURNSTILE_SECRET",
