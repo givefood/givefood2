@@ -32,9 +32,10 @@ import type { Session } from "./types";
 // by the query.
 //
 //   1. searchPlacePrefix (aac.ts) orders by
-//      `population IS NULL, population DESC, name ASC`. Duplicate place names
-//      are ordinary in a 253,584-row gazetteer and `population` is NULL in
-//      bulk, so rows tie on every visible key. Before, the scan fetched by
+//      `population IS NULL, population DESC, name ASC`. That is not a total
+//      order on real data: 18,966 (name, population) pairs occur more than
+//      once in production, covering 81,645 of 253,584 rows, so rows tie on
+//      every visible key. Before, the scan fetched by
 //      rowid and ties came out in `id` order; with the covering index they
 //      come out in the index's (name_upper, population, name, lat_lng,
 //      county, rowid) order -- i.e. by lat_lng. Measured here at both
@@ -75,8 +76,15 @@ import type { Session } from "./types";
 // `id` so that id order, insertion order and lat_lng order are three
 // different orders -- with those aligned an index scan and a table scan agree
 // by accident and the whole file proves nothing. Real place data looks like
-// this: the gazetteer carries many identically-named settlements, and
-// population is NULL for a large share of them.
+// this: a third of the gazetteer sits in a (name, population) group with at
+// least one twin.
+//
+// THE NULL-POPULATION GROUP IS FOR THE SORT KEY, NOT FOR REALISM. Production
+// has no NULL populations at all -- all 253,584 rows carry a figure -- so
+// `population IS NULL` is a leading sort key that never does anything there.
+// It is exercised here anyway: it is in the statement, a mutant that deletes
+// it should die, and the column is nullable in the schema (0009_aac.sql:17)
+// so tomorrow's import can reintroduce what today's does not have.
 
 const INDEX_NAME = "place_prefix_cover";
 const MIGRATION_FILE = "0025_place_prefix_cover.sql";

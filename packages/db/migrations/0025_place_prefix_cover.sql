@@ -76,6 +76,28 @@
 -- makes the ordering total and index-independent from here on.
 -- placePrefixCover.test.ts holds both halves of that.
 --
+-- MEASURED ON PRODUCTION AFTER APPLYING, interleaved against the same query
+-- forced back onto the old index with INDEXED BY:
+--
+--   place_name_upper_idx   227.1 / 29.8 / 37.8 / 38.7 ms
+--   place_prefix_cover      17.1 /  5.8 /  4.2 /  8.3 ms
+--   rows_read               25,241 on every one of the eight runs
+--
+-- The plan came out `SEARCH place USING COVERING INDEX place_prefix_cover`
+-- with no ANALYZE run: the planner picked it over place_name_upper_idx on
+-- its own, so the INDEXED BY pin the ticket offered as a fallback was not
+-- needed and is not used.
+--
+-- AND IT REORDERED /aac/ ON 74 REAL PREFIXES BEFORE THE TIE-BREAK WENT IN.
+-- Verified on production data, not inferred: with `, id ASC` the covering
+-- index returns byte-identical rows to the old access path on every prefix
+-- tried; without it, `?q=YR`, `?q=KA` and `?q=ZI` all come back in a
+-- different order in the top ten the endpoint actually serves. 74 of the
+-- two-character prefixes have a tie inside their first ten rows. The
+-- mechanism is NOT the NULLs the first sort key is about -- production has
+-- none, all 253,584 rows carry a population -- but duplicate names carrying
+-- equal populations: 18,966 such pairs, 81,645 rows, a third of the table.
+--
 -- Cost of carrying it: roughly 20 MB against a 437 MB database (+4.6%),
 -- from 253,584 rows at ~80 B/entry (measured average widths: name_upper
 -- 13.1, name 13.1, lat_lng 24.9, county 12.1). D1 bills storage. Write

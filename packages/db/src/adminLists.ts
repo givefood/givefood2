@@ -358,8 +358,10 @@ export async function getPlacesPage(session: Session, sort: PlaceListSort, direc
     session
       // `, id ASC` PINS AN ORDER THIS QUERY ALREADY HAD BY ACCIDENT. None of
       // the three sort keys is unique across 253,584 rows -- `county` has a
-      // few hundred distinct values and `population` is NULL in bulk -- so
-      // ties decide which rows land on which page, and nothing here decided
+      // few hundred distinct values, `population` repeats heavily (0 alone
+      // covers tens of thousands of rows) and even `name` is duplicated
+      // 18,966 times over -- so ties decide which rows land on which page,
+      // and nothing here decided
       // them. The engine did: with no index to use, `SCAN place` walks the
       // table in rowid order, and `id INTEGER PRIMARY KEY` IS the rowid, so
       // the sorter has been emitting ties in `id ASC` all along. Writing it

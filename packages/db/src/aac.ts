@@ -46,10 +46,14 @@ function ftsPhrase(q: string): string {
 
 // `, id ASC` IS THE TIE-BREAK THIS ORDERING ALWAYS HAD AND NEVER SAID.
 // Django's own `order_by` (views.py:1522-1580) ends at `name`, and on a
-// 253,584-row gazetteer that is not a total order: duplicate place names are
-// ordinary ("Newton", "Whitchurch", "Newport"), and `population` is NULL for
-// a large share of rows, so `population IS NULL, population DESC, name ASC`
-// leaves genuine ties -- rows equal on every key the sort can see. Something
+// 253,584-row gazetteer that is not a total order. Not because of the NULLs
+// the first sort key is about -- production has none, `population` is
+// non-NULL in all 253,584 rows -- but because duplicate names carrying the
+// same population are everywhere: 18,966 (name, population) pairs occur more
+// than once, covering 81,645 rows, a third of the table. Nine places called
+// "Yr Allt" in Powys and Ceredigion, four "Kames", seven "D Plantation".
+// `population IS NULL, population DESC, name ASC` cannot separate any of
+// them -- they are equal on every key the sort can see. Something
 // still has to order them, and until 0025_place_prefix_cover.sql that
 // something was the access path: the scan walked place_name_upper_idx and
 // fetched by rowid, so ties came out in `id` order. The covering index this
