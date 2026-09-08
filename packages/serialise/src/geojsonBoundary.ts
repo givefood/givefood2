@@ -70,9 +70,39 @@ import { pyJsonString } from "./pyJsonString";
 // one trailing comma before doing anything else. Confirmed real, not
 // just defensive Python: `givefood_parliamentaryconstituency`'s stored
 // text for bethnal-green-and-stepney ends "...}},direct from Postgres.
+//
+// THE CLOSING BRACE IS CHECKED TOO, not just the opening one -- see the two
+// call sites below. Both already asserted `text[0] === "{"` and neither
+// asserted the other end, which is the whole shape of #21: spliceObjectKey
+// takes `objEnd - 1` as the closing brace on trust. Whitespace was one way to
+// break that assumption and the trim below fixes it; a DOUBLED trailing comma
+// is another, and it was silently corrupting before this change and after it
+// -- `'{"a":1},,'` came back as `{"a":1},"properties":{...},`, a 200 whose
+// body is not JSON. Django raises JSONDecodeError on that input (geo.py's
+// json.loads sees the leftover comma), so the throw is the parity behaviour,
+// not extra strictness. Found while fixing #21, in the same function, one
+// character away; fixed here rather than left as a second silent-wrong-answer
+// report.
+//
+// TRIMMED AGAIN AFTER THE COMMA COMES OFF (github #21). Django gets away
+// without that second trim because `json.loads` tolerates whitespace on both
+// ends, so `'{...} ,'` -> strip -> drop the comma -> `'{...} '` -> parses
+// fine. This module does not parse: it SPLICES, and spliceObjectKey takes the
+// last character as the object's closing brace without checking that it is
+// one. A single space between the brace and the comma therefore left the
+// splice pointing at whitespace -- appending the new key OUTSIDE the object
+// (a 200 whose body is not JSON) when the last value was a scalar, and
+// throwing "expected a quoted key" when it was an object, which is the shape
+// every real Feature has. Either way the whole feed went, not just the one
+// feature: /needs/at/<slug>/geo.json, the location feed and the constituency
+// feed all render boundaries through here.
+//
+// No production row has this shape today -- the ONS-sourced ones end "}}," --
+// so the way in is a hand-pasted boundary in the admin's free-text textarea,
+// which parseAdminFields whole-value-trims and therefore cannot clean.
 function stripTrailingComma(raw: string): string {
   const trimmed = raw.trim();
-  return trimmed.endsWith(",") ? trimmed.slice(0, -1) : trimmed;
+  return trimmed.endsWith(",") ? trimmed.slice(0, -1).trimEnd() : trimmed;
 }
 
 // Index just past the closing quote of the string literal starting at
@@ -200,7 +230,7 @@ function spliceObjectKey(text: string, objStart: number, objEnd: number, key: st
 // gfwfbn/views.py:290-295: type, name, foodbank, url -- no address).
 export function replaceBoundaryProperties(rawGeojson: string, entries: readonly [string, string][]): string {
   const text = stripTrailingComma(rawGeojson);
-  if (text[0] !== "{") throw new Error("geojsonBoundary: not a JSON object");
+  if (text[0] !== "{" || text[text.length - 1] !== "}") throw new Error("geojsonBoundary: not a JSON object");
   const body = entries.map(([k, v]) => `${JSON.stringify(k)}:${JSON.stringify(v)}`).join(",");
   return spliceObjectKey(text, 0, text.length, "properties", `{${body}}`);
 }
@@ -212,7 +242,7 @@ export function replaceBoundaryProperties(rawGeojson: string, entries: readonly 
 // itself, is left as exactly the bytes that were already there.
 export function setBoundaryPropertyType(rawGeojson: string, typeValue: string): string {
   let text = stripTrailingComma(rawGeojson);
-  if (text[0] !== "{") throw new Error("geojsonBoundary: not a JSON object");
+  if (text[0] !== "{" || text[text.length - 1] !== "}") throw new Error("geojsonBoundary: not a JSON object");
   // Ensure a "properties" *object* exists before reaching inside it -- a
   // handful of stored rows have no "properties" key at all (see this
   // file's header), and GeoJSON also permits a present-but-null value

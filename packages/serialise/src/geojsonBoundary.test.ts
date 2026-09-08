@@ -142,12 +142,21 @@ describe("replaceBoundaryProperties", () => {
     // A SECOND trailing comma is not stripped -- Django's `if geojson[-1:]
     // == ","` runs once and json.loads then raises (JSONDecodeError,
     // confirmed with python3). This throws too rather than quietly
-    // repairing text Django would have rejected. Pinned to the exact
-    // message, not just /geojsonBoundary/: the scanner has four distinct
-    // failure modes and a loose regex cannot tell a "stopped at the stray
-    // comma" from a "ran off the end of the text".
+    // repairing text Django would have rejected.
+    //
+    // THE MESSAGE MOVED, AND SO DID THE GUARANTEE (github #21). It used to be
+    // "expected a quoted key", from the scanner running into the stray comma
+    // -- which only happened because the LAST VALUE here is a string. With a
+    // scalar last value the same input did not throw at all: `'{"a":1},,'`
+    // came back as `{"a":1},"properties":{...},`, a 200 whose body is not
+    // JSON, which this test could not see. Both entry points now check that
+    // the text ENDS with "}" as well as starting with "{", so the two
+    // variants fail the same way and the message is the earlier, clearer one.
+    // The scalar case is asserted right below, because it is the one that was
+    // silently wrong.
+    expect(() => replaceBoundaryProperties('{"a":1},,', [["type", "lb"]])).toThrow("geojsonBoundary: not a JSON object");
     expect(() => replaceBoundaryProperties('{"type":"Feature"},,', [["type", "lb"]])).toThrow(
-      "geojsonBoundary: expected a quoted key",
+      "geojsonBoundary: not a JSON object",
     );
   });
 
@@ -157,21 +166,61 @@ describe("replaceBoundaryProperties", () => {
     );
   });
 
-  it("SUSPECTED BUG: whitespace between the brace and the trailing comma corrupts the output", () => {
-    // stripTrailingComma trims BEFORE stripping the comma and never again
-    // after, so `{...} ,` leaves a trailing space that spliceObjectKey then
-    // treats as the object's closing brace: the new key is appended OUTSIDE
-    // the object and the result is not JSON at all. Django survives this
-    // shape -- python3 json.loads('{"a":1} ') returns {'a': 1} and the
-    // assignment succeeds -- so this is a real divergence, not a shared
-    // failure. Pinned, not fixed, per the rules of this port; reported
-    // separately. If someone fixes it, this test SHOULD fail.
-    expect(replaceBoundaryProperties('{"a":1} , ', [["type", "lb"]])).toBe('{"a":1},"properties":{"type":"lb"} ');
-    // With an object as the last value the same input throws instead of
-    // silently corrupting, because the scanner reaches the stray `}`.
-    expect(() => replaceBoundaryProperties('{"a":{"b":1}} ,', [["type", "lb"]])).toThrow(
-      "geojsonBoundary: expected a quoted key",
-    );
+  // github #21. This case used to assert the corruption, ending "If someone
+  // fixes it, this test SHOULD fail." It did.
+  //
+  // stripTrailingComma trimmed BEFORE stripping the comma and never again
+  // after, so `{...} ,` left a trailing space that spliceObjectKey treated as
+  // the object's closing brace. Django survives the same input only because
+  // json.loads tolerates trailing whitespace (geo.py:180-188 is strip, drop
+  // one comma, parse) -- this module splices instead of parsing, so it needed
+  // the second trim.
+  //
+  // ASSERTED BY PARSING, not only by string equality. The failure mode was a
+  // 200 whose body was not JSON, and `JSON.parse` is the only assertion that
+  // would have caught the scalar case for what it was -- the corrupted string
+  // looks plausible until something tries to read it.
+  it("handles whitespace between the closing brace and the trailing comma", () => {
+    const scalar = replaceBoundaryProperties('{"a":1} , ', [["type", "lb"]]);
+    expect(scalar).toBe('{"a":1,"properties":{"type":"lb"}}');
+    expect(JSON.parse(scalar)).toEqual({ a: 1, properties: { type: "lb" } });
+
+    // With an object as the last value the same input used to THROW rather
+    // than corrupt, because the scanner reached the stray `}` -- and that is
+    // the shape every real Feature has, so it was the whole-feed 500.
+    const nested = replaceBoundaryProperties('{"a":{"b":1}} ,', [["type", "lb"]]);
+    expect(JSON.parse(nested)).toEqual({ a: { b: 1 }, properties: { type: "lb" } });
+
+    // A real Feature, end to end: the reported reproduction.
+    const feature = replaceBoundaryProperties('{"type":"Feature","geometry":{"type":"Polygon","coordinates":[[[-0.05,51.5]]]}} ,', [
+      ["type", "lb"],
+      ["name", "Hall"],
+    ]);
+    expect(JSON.parse(feature)).toEqual({
+      type: "Feature",
+      geometry: { type: "Polygon", coordinates: [[[-0.05, 51.5]]] },
+      properties: { type: "lb", name: "Hall" },
+    });
+
+    // Newline and tab, not just a space -- a hand-pasted boundary is more
+    // likely to carry those, and `trimEnd` has to cover the whole class.
+    expect(JSON.parse(replaceBoundaryProperties('{"a":1}\n\t,', [["type", "lb"]]))).toEqual({ a: 1, properties: { type: "lb" } });
+
+    // The other splice function reaches the same helper.
+    expect(JSON.parse(setBoundaryPropertyType('{"type":"Feature","properties":{"a":1},"geometry":{"type":"Polygon"}} ,', "b"))).toEqual({
+      type: "Feature",
+      properties: { a: 1, type: "b" },
+      geometry: { type: "Polygon" },
+    });
+  });
+
+  it("still strips exactly ONE trailing comma, like Django", () => {
+    // geo.py:183-186 removes one comma and then parses, so a doubled comma is
+    // a JSONDecodeError there (confirmed with python3). The trimEnd must not
+    // become a loop that eats them all -- that would quietly accept input the
+    // original rejects, which is this bug pointing the other way.
+    expect(() => replaceBoundaryProperties('{"a":1} ,,', [["type", "lb"]])).toThrow("geojsonBoundary: not a JSON object");
+    expect(() => replaceBoundaryProperties('{"a":1} , , ', [["type", "lb"]])).toThrow("geojsonBoundary: not a JSON object");
   });
 
   it("is not fooled by braces, brackets or escaped quotes inside stored string values", () => {
@@ -429,10 +478,21 @@ describe("replaceBoundaryProperties", () => {
     // "unterminated {...}" / "unterminated [...]" failure and nothing else
     // reaches it: a stored polygon truncated mid-coordinate-array is
     // exactly how it would show up in production.
+    //
+    // BOTH INPUTS HAVE TO END IN "}" NOW (github #21): the entry guards check
+    // the closing brace as well as the opening one, so a truncation that
+    // stops mid-value is rejected before scanBalanced ever runs. The second
+    // input gained a nested `{}` for exactly that reason -- it ends in a brace,
+    // so it clears the guard, and the object opened before it is still
+    // unterminated, which is the failure this test is for. (The obvious
+    // shorter repair, just appending "}", does NOT work: it balances the
+    // scanner and the call succeeds.)
+    // Weakening the assertion to /geojsonBoundary/ would have been the easy
+    // way out and would have stopped testing scanBalanced at all.
     expect(() => replaceBoundaryProperties('{"geometry":[1,2}', [["type", "lb"]])).toThrow(
       "geojsonBoundary: unterminated [...]",
     );
-    expect(() => setBoundaryPropertyType('{"properties":{"a":1', "b")).toThrow("geojsonBoundary: unterminated {...}");
+    expect(() => setBoundaryPropertyType('{"properties":{"a":1,"b":{}', "b")).toThrow("geojsonBoundary: unterminated {...}");
   });
 
   it("SUSPECTED BUG: a Feature missing its own closing brace is silently mis-spliced", () => {
