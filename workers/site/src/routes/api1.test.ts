@@ -116,6 +116,13 @@ function d1Session(db: DatabaseSync, prepared: string[]): D1DatabaseSession {
   return {
     prepare: (sql: string) => {
       prepared.push(sql);
+      // A seam for simulating a row that vanishes MID-REQUEST. The candidate
+      // scan and the hydration read are two statements, and the only way to
+      // exercise the gap between them is to change the database while the
+      // handler is between the two -- which, with a synchronous engine behind
+      // an async facade, means acting when the second statement is prepared.
+      // Null except in the one test that sets it; reset in beforeEach.
+      onPrepare?.(sql);
       return statement(sql, []);
     },
     // getFoodbankBySlug sends the food bank row and its latest need as ONE
@@ -132,6 +139,7 @@ const execCtx = { waitUntil: (p: Promise<unknown>) => void p, passThroughOnExcep
 
 let db: DatabaseSync;
 let prepared: string[];
+let onPrepare: ((sql: string) => void) | null = null;
 let fetchMock: ReturnType<typeof vi.fn>;
 
 const GEOCODE_KEY = "test-geocode-key-not-a-real-one";
@@ -526,6 +534,7 @@ beforeEach(() => {
   db = new DatabaseSync(":memory:");
   db.exec(SCHEMA);
   prepared = [];
+  onPrepare = null;
   seed();
 
   // Date only. `updated_text` is django.utils.timesince against `new Date()`,
@@ -1012,6 +1021,45 @@ describe("GET /api/1/foodbanks/search/", () => {
     expect(body.map((f) => f.slug)).toEqual(["salisbury", "st-marys-foodbank", "perth-kinross-foodbank"]);
     expect(JSON.stringify(body)).not.toContain("shut-foodbank");
     expect(JSON.stringify(body)).not.toContain("wonky-latlng");
+  });
+
+  // GITHUB #48: THE FAILURE MODE HERE IS A 200 WITH WRONG NUMBERS IN IT, which
+  // is the worst kind this endpoint has. The handler used to zip distances
+  // onto food banks BY POSITION -- `enriched.map((foodbank, i) => ranked[i])` --
+  // on the strength of a comment claiming getFoodbanksByIds "preserves
+  // rankedIds's order". It does preserve the order. It does not preserve the
+  // LENGTH: mapFoodbanksByIds drops any id whose row it cannot find. Delete the
+  // FIRST of three ranked food banks between the two reads and the two that
+  // survive come back carrying the distances of the two that were ranked after
+  // them -- every number wrong, nothing to signal it.
+  //
+  // The window is narrow and it is not theoretical: /admin/'s food bank delete
+  // (foodbankAdmin.ts:29) removes the row outright. CLOSING one does not do
+  // this, which is worth stating because it is the intuitive guess -- the
+  // hydration query is `SELECT * FROM foodbank WHERE id IN (...)` with no
+  // is_closed filter, so a closed food bank still hydrates fine.
+  //
+  // Asserted against the SAME REQUEST RUN TWICE, once whole and once with a row
+  // pulled out from under it, so the expectation is the endpoint's own output
+  // rather than a transcription of it: every surviving food bank must keep the
+  // exact distance it had when nothing was missing.
+  it("keeps every distance attached to its own food bank when one is deleted mid-request", async () => {
+    const whole = (await json(`/api/1/foodbanks/search/?lattlong=${QUERY_LAT_LNG}`)) as Array<{ slug: string; distance_m: number }>;
+    expect(whole.map((f) => f.slug)).toEqual(["salisbury", "st-marys-foodbank", "perth-kinross-foodbank"]);
+
+    // Deleting the NEAREST one is what makes this test bite: it shifts every
+    // subsequent index, so a positional zip gets all of the remainder wrong
+    // rather than none of them.
+    onPrepare = (sql) => {
+      if (sql.startsWith("SELECT * FROM foodbank WHERE id IN")) db.exec("DELETE FROM foodbank WHERE slug = 'salisbury'");
+    };
+
+    const afterDelete = (await json(`/api/1/foodbanks/search/?lattlong=${QUERY_LAT_LNG}`)) as Array<{ slug: string; distance_m: number }>;
+
+    expect(afterDelete.map((f) => f.slug)).toEqual(["st-marys-foodbank", "perth-kinross-foodbank"]);
+    for (const row of afterDelete) {
+      expect(row.distance_m, row.slug).toBe(whole.find((f) => f.slug === row.slug)!.distance_m);
+    }
   });
 
   // WP 2.5's whole point, and invisible in the body: the ranking runs against

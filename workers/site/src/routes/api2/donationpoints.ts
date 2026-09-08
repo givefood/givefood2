@@ -256,11 +256,18 @@ api2DonationpointsApp.get("/donationpoints/search/", async (c) => {
     return new Response("", { status: 400 });
   }
 
-  const responseList = ranked.map(({ item, distanceM }) => {
-    const dp = item.kind === "donationpoint" ? donationPointById.get(item.coord.id)! : null;
-    const loc = item.kind === "location" ? locationById.get(item.coord.id)! : null;
-    const row = (dp ?? loc)! as { foodbank_id: number; uuid: string; slug: string; name: string; lat_lng: string };
-    const parentFoodbank = foodbankById.get(row.foodbank_id)!;
+  // flatMap and explicit misses, not `!` -- github #48; lib/findLocations.ts
+  // carries the full reasoning. Ranking and hydration are separate D1 reads,
+  // a row deleted between them is ranked and then not found, and `!` made
+  // that a TypeError rather than a shorter list. `parentFoodbank.latestNeed!`
+  // below is frozen bug B12 and keeps throwing.
+  const responseList = ranked.flatMap(({ item, distanceM }) => {
+    const dp = item.kind === "donationpoint" ? (donationPointById.get(item.coord.id) ?? null) : null;
+    const loc = item.kind === "location" ? (locationById.get(item.coord.id) ?? null) : null;
+    const row = (dp ?? loc) as { foodbank_id: number; uuid: string; slug: string; name: string; lat_lng: string } | null;
+    if (row === null) return [];
+    const parentFoodbank = foodbankById.get(row.foodbank_id);
+    if (parentFoodbank === undefined) return [];
     // Frozen bug B12: latest_need dereferenced unguarded in the source --
     // if it's null this throws here exactly as it 500s in Django. This
     // is OUTSIDE the try/catch above, matching the source's scope.

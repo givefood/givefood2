@@ -195,8 +195,26 @@ api1App.get("/foodbanks/search/", async (c) => {
     ranked.map((r) => r.item.id),
   );
 
-  const responseList = enriched.map((foodbank, i) => {
-    const distanceM = (ranked[i] as (typeof ranked)[number]).distanceM;
+  // KEYED BY id, NOT BY POSITION (github #48). getFoodbanksByIds preserves
+  // the order of the ids it is handed but SILENTLY DROPS any it cannot find
+  // (mapFoodbanksByIds' `.filter(row => row !== undefined)`), so `enriched`
+  // can be shorter than `ranked` -- and a positional `ranked[i]` then shifts
+  // every distance after the gap onto the wrong food bank. Not an exception:
+  // a 200 carrying ten real food banks with nine wrong distances.
+  //
+  // The window is small but it is real. The candidate scan and this
+  // hydration are two reads, and a food bank deleted between them
+  // (foodbankAdmin.ts's delete path) is missing from the second. Django has
+  // no such window -- it ranks and hydrates in one query -- so this is a gap
+  // the two-phase port opened, not a behaviour to reproduce.
+  //
+  // This direction of the lookup is TOTAL: every row in `enriched` was asked
+  // for by id, so its id is necessarily a key here. The map can only be
+  // short, never wrong.
+  const distanceById = new Map(ranked.map((r) => [r.item.id, r.distanceM]));
+
+  const responseList = enriched.map((foodbank) => {
+    const distanceM = distanceById.get(foodbank.id)!;
     // B12: `foodbank.latest_need` is dereferenced with no null guard in
     // the real view -- a food bank with no latest_need 500s here. The `!`
     // is compile-time only; it still throws at runtime on a null value,

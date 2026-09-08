@@ -46,6 +46,10 @@ function d1Session(db: DatabaseSync, prepared: string[]): D1DatabaseSession {
   return {
     prepare: (sql: string) => {
       prepared.push(sql);
+      // A seam for simulating a row that vanishes MID-REQUEST -- see the
+      // github #48 block at the bottom. Null except there; reset in
+      // beforeEach.
+      onPrepare?.(sql);
       return statement(sql, []);
     },
     getBookmark: () => null,
@@ -56,6 +60,7 @@ const execCtx = { waitUntil: (p: Promise<unknown>) => void p, passThroughOnExcep
 
 let db: DatabaseSync;
 let prepared: string[];
+let onPrepare: ((sql: string) => void) | null = null;
 
 function env(): AppEnv["Bindings"] {
   return {
@@ -148,6 +153,7 @@ beforeEach(() => {
   db.exec(SCHEMA);
   seed();
   prepared = [];
+  onPrepare = null;
 });
 
 afterEach(() => {
@@ -315,5 +321,66 @@ describe("api2 locations -- GET /api/2/locations/", () => {
     expect(queries).toHaveLength(1);
     expect(queries[0]).not.toContain("SELECT *");
     expect(queries[0]).toContain("(boundary_geojson IS NOT NULL AND boundary_geojson != '') AS has_boundary");
+  });
+});
+
+// ===========================================================================
+// GET /api/2/locations/search/ -- github #48
+// ===========================================================================
+// The search endpoint on this router had no test of its own; this covers the
+// one behaviour #48 changed. Ranking and hydration are separate D1 reads, so
+// a row deleted between them is ranked and then not found. The handler used
+// to assert `!` on those lookups, which turned the miss into a TypeError and
+// a 500 for the WHOLE search. It now drops the entry, which is the result
+// Django reaches by construction -- it ranks and hydrates in one queryset, so
+// a row deleted a moment earlier simply is not a candidate.
+describe("api2 locations -- GET /api/2/locations/search/ when a row vanishes mid-request", () => {
+  // The list fixture carries no coordinates and no needs, because the list
+  // endpoint needs neither. Both are added here rather than in seed() so the
+  // other suites keep the narrow fixture they were written against.
+  //
+  // The need matters for a reason worth naming: frozen bug B12 dereferences
+  // latest_need unguarded, so a ranked row without one 500s -- which would
+  // mask exactly the distinction this test is drawing.
+  const prepareForSearch = (): void => {
+    db.exec(`
+      INSERT INTO foodbankchange (id, need_id, foodbank_id, change_text, input_method, published, created, modified)
+        VALUES (700, '00000000000000000000000000000700', 1, 'Pasta', 'manual', 1, '2026-01-01 00:00:00.000000', '2026-01-01 00:00:00.000000');
+      UPDATE foodbank SET latitude = 51.07, longitude = -1.79, latest_need_id = 700 WHERE id = 1;
+      UPDATE foodbanklocation SET latitude = 51.08, longitude = -1.80 WHERE id = 11;
+      UPDATE foodbanklocation SET latitude = 51.09, longitude = -1.81 WHERE id = 13;
+    `);
+  };
+
+  const search = async (): Promise<Array<{ slug: string; type: string; distance_m: number }>> => {
+    const res = await get("/api/2/locations/search/?lat_lng=51.07,-1.79");
+    expect(res.status).toBe(200);
+    return (await res.json()) as Array<{ slug: string; type: string; distance_m: number }>;
+  };
+
+  it("ranks the food bank and both open locations", async () => {
+    prepareForSearch();
+
+    const body = await search();
+
+    // The closed location (12) must not be here, and both open ones must be.
+    expect(body.map((r) => r.slug).sort()).toEqual(["amesbury", "salisbury", "st-johns"]);
+    expect(body.map((r) => r.distance_m)).toEqual([...body.map((r) => r.distance_m)].sort((a, b) => a - b));
+  });
+
+  it("drops the vanished location and leaves the others with their own distances", async () => {
+    prepareForSearch();
+    const whole = await search();
+
+    onPrepare = (sql) => {
+      if (sql.includes("FROM foodbanklocation_full WHERE id IN")) db.exec("DELETE FROM foodbanklocation WHERE id = 11");
+    };
+    const afterDelete = await search();
+
+    // A 200 with two entries, not a 500 with none.
+    expect(afterDelete.map((r) => r.slug)).toEqual(whole.map((r) => r.slug).filter((slug) => slug !== "amesbury"));
+    for (const row of afterDelete) {
+      expect(row.distance_m, row.slug).toBe(whole.find((r) => r.slug === row.slug)!.distance_m);
+    }
   });
 });

@@ -95,6 +95,10 @@ function d1Session(db: DatabaseSync, prepared: string[], roundTrips: string[][])
   return {
     prepare: (sql: string) => {
       prepared.push(sql);
+      // A seam for simulating a row that vanishes MID-REQUEST -- see the
+      // github #48 test at the bottom of this file. Null except there, and
+      // reset in beforeEach.
+      onPrepare?.(sql);
       return statement(sql, []);
     },
     batch: async (statements: Array<{ sql: string; params: Bindable[] }>) => {
@@ -110,6 +114,7 @@ const execCtx = { waitUntil: (p: Promise<unknown>) => void p, passThroughOnExcep
 let db: DatabaseSync;
 let prepared: string[];
 let roundTrips: string[][];
+let onPrepare: ((sql: string) => void) | null = null;
 
 function env(): AppEnv["Bindings"] {
   return {
@@ -437,6 +442,7 @@ beforeEach(() => {
   db.exec(SCHEMA);
   prepared = [];
   roundTrips = [];
+  onPrepare = null;
   seed();
 });
 
@@ -873,6 +879,75 @@ describe("the round trips", () => {
       expect(body).toContain("wilton-road");
       expect(body).not.toContain("boundary_geojson");
       expect(body).not.toContain("coordinates\\\":[[[");
+    }
+  });
+});
+
+// ===========================================================================
+// GET /api/2/foodbanks/search/ -- github #48
+// ===========================================================================
+// THIS ENDPOINT HAD NO FUNCTIONAL TEST AT ALL before #48, which is part of
+// why the defect below survived: the only mention of it in this file was a
+// comment observing that it exists.
+//
+// The defect was a 200 with wrong numbers in it, the worst kind this endpoint
+// has. Distances were zipped onto food banks BY POSITION --
+// `foodbanksWithNeed.map((foodbank, i) => ranked[i].distanceM)` -- on the
+// strength of a comment claiming getFoodbanksByIds "preserves rankedIds's
+// order". It does preserve the order; it does not preserve the LENGTH.
+// mapFoodbanksByIds drops any id whose row it cannot find, so one missing row
+// shifts every distance after it onto the wrong food bank, and nothing
+// downstream can tell.
+//
+// The window is narrow and real: the candidate scan and the hydration read
+// are two statements, and /admin/'s delete (foodbankAdmin.ts:29) removes the
+// row outright between them. CLOSING a food bank does NOT do this, which is
+// worth saying because it is the intuitive guess -- the hydration query is
+// `SELECT * FROM foodbank WHERE id IN (...)` with no is_closed filter.
+describe("GET /api/2/foodbanks/search/", () => {
+  // Every open food bank is pointed at need 500 first: frozen bug B12
+  // dereferences latest_need unguarded, and the shared fixture deliberately
+  // leaves most neighbours without one, so an untouched search 500s before it
+  // can say anything about distances. The need's CONTENT is irrelevant here --
+  // the assertion is about which distance is attached to which slug.
+  const searchBody = async (): Promise<Array<{ slug: string; distance_m: number }>> => {
+    const res = await get(`/api/2/foodbanks/search/?lat_lng=${SALISBURY_LAT},${SALISBURY_LNG}`);
+    expect(res.status).toBe(200);
+    return (await res.json()) as Array<{ slug: string; distance_m: number }>;
+  };
+
+  it("returns the ten nearest open food banks, nearest first", async () => {
+    db.exec("UPDATE foodbank SET latest_need_id = 500 WHERE is_closed = 0");
+
+    const body = await searchBody();
+
+    expect(body).toHaveLength(10);
+    expect(body[0]!.slug).toBe("salisbury");
+    expect(body.map((f) => f.distance_m)).toEqual([...body.map((f) => f.distance_m)].sort((a, b) => a - b));
+    // The closed rows must not appear: shut-foodbank sits nearer than every
+    // neighbour, and wonky-latlng would reorder the whole list.
+    expect(JSON.stringify(body)).not.toContain("shut-foodbank");
+    expect(JSON.stringify(body)).not.toContain("wonky-latlng");
+  });
+
+  // Asserted against the SAME REQUEST RUN TWICE, once whole and once with a
+  // row pulled out from under it, so the expectation is the endpoint's own
+  // output rather than a transcription of it.
+  it("keeps every distance attached to its own food bank when one is deleted mid-request", async () => {
+    db.exec("UPDATE foodbank SET latest_need_id = 500 WHERE is_closed = 0");
+    const whole = await searchBody();
+
+    // Deleting the NEAREST one is what makes this bite: it shifts every
+    // subsequent index, so a positional zip gets all of the remainder wrong
+    // rather than none of them.
+    onPrepare = (sql) => {
+      if (sql.startsWith("SELECT * FROM foodbank WHERE id IN")) db.exec("DELETE FROM foodbank WHERE slug = 'salisbury'");
+    };
+    const afterDelete = await searchBody();
+
+    expect(afterDelete.map((f) => f.slug)).toEqual(whole.map((f) => f.slug).filter((slug) => slug !== "salisbury"));
+    for (const row of afterDelete) {
+      expect(row.distance_m, row.slug).toBe(whole.find((f) => f.slug === row.slug)!.distance_m);
     }
   });
 });

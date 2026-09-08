@@ -419,12 +419,22 @@ api2FoodbanksApp.get("/foodbanks/search/", async (c) => {
   const candidates = await getOpenFoodbankCoordinates(session);
   const ranked = nearest(candidates, lat, lng, (c) => [c.latitude, c.longitude], 10, R_EARTHDISTANCE);
   const rankedIds = ranked.map((r) => r.item.id);
-  // getFoodbanksByIds preserves rankedIds's order, so index i here lines
-  // up with ranked[i]'s distance.
   const foodbanksWithNeed = await getFoodbanksByIds(session, rankedIds);
 
-  const responseList: SerialisableValue[] = foodbanksWithNeed.map((foodbank, i) => {
-    const distanceM = ranked[i]!.distanceM;
+  // KEYED BY id, NOT BY POSITION (github #48). The comment this replaced said
+  // getFoodbanksByIds preserves rankedIds's order "so index i lines up" --
+  // true of the order, false of the LENGTH. mapFoodbanksByIds drops any id it
+  // cannot find (`.filter(row => row !== undefined)`), so one missing row
+  // shifts every distance after it onto the wrong food bank: a 200 with wrong
+  // distances, which nothing downstream can detect. See api1.ts's fuller note
+  // on the window that makes an id go missing between the two reads.
+  //
+  // Total in this direction: every row in `foodbanksWithNeed` was asked for by
+  // id, so its id is necessarily a key here.
+  const distanceById = new Map(ranked.map((r) => [r.item.id, r.distanceM]));
+
+  const responseList: SerialisableValue[] = foodbanksWithNeed.map((foodbank) => {
+    const distanceM = distanceById.get(foodbank.id)!;
     // Frozen bug B12: latest_need dereferenced unguarded in the source
     // (gfapi1/views.py:143, gfapi2/views.py:401) -- if it's null this
     // throws here exactly as it 500s in Django.

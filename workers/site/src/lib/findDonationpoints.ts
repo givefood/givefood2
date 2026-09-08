@@ -78,10 +78,18 @@ export async function findDonationpoints(
   const foodbanksWithNeed = await getFoodbanksByIds(session, foodbankIds);
   const foodbankById = new Map(foodbanksWithNeed.map((fb) => [fb.id, fb]));
 
-  return ranked.map(({ item, distanceM }) => {
+  // flatMap and explicit misses, not `!` -- github #48; findLocations.ts
+  // carries the full reasoning. Short version: ranking and hydration are
+  // separate D1 reads, a row deleted between them is ranked and then not
+  // found, and `!` turned that into a TypeError and a 500. Dropping the entry
+  // is what Django's single ranking query already does. The `latestNeed!`s
+  // below are frozen bug B12 and must keep throwing.
+  return ranked.flatMap(({ item, distanceM }) => {
     if (item.kind === "donationpoint") {
-      const row = donationPointById.get(item.coord.id)!;
-      const parentFoodbank = foodbankById.get(row.foodbank_id)!;
+      const row = donationPointById.get(item.coord.id);
+      if (row === undefined) return [];
+      const parentFoodbank = foodbankById.get(row.foodbank_id);
+      if (parentFoodbank === undefined) return [];
       return {
         type: "donationpoint",
         name: row.name,
@@ -96,8 +104,10 @@ export async function findDonationpoints(
       latest_need_id: parentFoodbank.latestNeed!.id,
       };
     }
-    const row = locationById.get(item.coord.id)!;
-    const parentFoodbank = foodbankById.get(row.foodbank_id)!;
+    const row = locationById.get(item.coord.id);
+    if (row === undefined) return [];
+    const parentFoodbank = foodbankById.get(row.foodbank_id);
+    if (parentFoodbank === undefined) return [];
     return {
       type: "location",
       name: row.name,

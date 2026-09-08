@@ -738,53 +738,52 @@ describe("findDonationpoints", () => {
     );
   });
 
-  it("throws when a ranked row's parent food bank row has itself vanished", async () => {
-    // The third distinct unguarded `!`: foodbankById.get(row.foodbank_id)!.
-    // A food bank deleted (or closed and pruned) between the hydrate read
-    // and the parent read leaves a donation point row pointing at nothing.
-    // Current behaviour, documented not defended -- and pinned separately
-    // because a guard added for B12's latestNeed would not cover this one.
+  // THESE THREE USED TO ASSERT A 500. Their own comment called it "reported
+  // as a suspected bug, not fixed here" -- github #48 is where it is fixed.
+  // A ranked id whose row has gone now drops out of the list, which is the
+  // outcome Django reaches by construction: it ranks and hydrates in one
+  // queryset, so a row deleted a moment earlier is simply not a candidate.
+  // The unguarded `!`s were the port's own two-phase read showing through.
+  //
+  // What has NOT changed is the B12 pair above: a parent food bank that is
+  // FOUND and has a null latest_need still throws, because Django throws
+  // there too. Found-but-null and not-found-at-all are different faults and
+  // only the second one is the port's doing.
+  it("drops a ranked row whose parent food bank has itself vanished", async () => {
     const { session } = build({
       foodbanks: [{ id: 1, name: "Croydon Foodbank", slug: "croydon", omitFoodbankRow: true }],
       donationpoints: [{ id: 11, name: "Croydon Tesco", ...CROYDON }],
     });
 
-    await expect(findDonationpoints(session, LONDON.lat, LONDON.lng, 10)).rejects.toThrow(
-      /Cannot read properties of undefined \(reading 'facebook_page'\)/,
-    );
+    await expect(findDonationpoints(session, LONDON.lat, LONDON.lng, 10)).resolves.toEqual([]);
   });
 
-  it("throws if a ranked candidate has no row in the _full view", async () => {
-    // Current behaviour, documented rather than defended: the candidate scan
-    // and the hydrate run as two statements, so a row deleted between them
-    // (or a lagging read replica) leaves a ranked id with no row and the
-    // unguarded `!` throws. Django cannot hit this -- it ranks and hydrates
-    // in one queryset. Reported as a suspected bug, not fixed here.
+  it("drops a ranked candidate that has no row in the _full view", async () => {
     const { session } = build({
       donationpoints: [{ id: 11, name: "Croydon Tesco", ...CROYDON, omitFullRow: true }],
     });
 
-    // `row.foodbank_id` is the first field read off the missing row, so
-    // that is the property named in the message -- pinning it distinguishes
-    // this failure from the two B12 ones above, which are also TypeErrors.
-    await expect(findDonationpoints(session, LONDON.lat, LONDON.lng, 10)).rejects.toThrow(
-      /Cannot read properties of undefined \(reading 'foodbank_id'\)/,
-    );
+    await expect(findDonationpoints(session, LONDON.lat, LONDON.lng, 10)).resolves.toEqual([]);
   });
 
-  it("throws in the same way when it is a ranked LOCATION that has vanished", async () => {
-    // The location branch is a separate object literal with its own
-    // unguarded `!`, so the donation-point case above does not cover it.
-    // A location deleted between the candidate scan and the hydrate read
-    // is the likelier of the two in practice: locations are edited far
-    // more often than donation points.
+  it("drops a vanished LOCATION while keeping the donation points around it", async () => {
+    // The location branch is a separate object literal with its own lookup,
+    // so the donation-point case above does not cover it. A location deleted
+    // between the candidate scan and the hydrate read is the likelier of the
+    // two in practice: locations are edited far more often than donation
+    // points.
+    //
+    // Seeded WITH a surviving donation point, unlike the two above: "drops
+    // the bad one" and "returns nothing at all" are the same assertion on a
+    // one-row fixture, and only the first of those is the fix.
     const { session } = build({
       locations: [{ id: 21, name: "Croydon Church", ...CROYDON, omitFullRow: true }],
+      donationpoints: [{ id: 11, name: "Croydon Tesco", ...CROYDON }],
     });
 
-    await expect(findDonationpoints(session, LONDON.lat, LONDON.lng, 10)).rejects.toThrow(
-      /Cannot read properties of undefined \(reading 'foodbank_id'\)/,
-    );
+    const results = await findDonationpoints(session, LONDON.lat, LONDON.lng, 10);
+    expect(results.map((r) => r.name)).toEqual(["Croydon Tesco"]);
+    expect(results[0]!.type).toBe("donationpoint");
   });
 
   it("returns an empty list, and issues no hydrate queries, when nothing is open", async () => {

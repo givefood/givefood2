@@ -794,30 +794,57 @@ describe("findLocations frozen bug B12 and missing rows", () => {
     await expect(findLocations(SESSION, LAT, LNG, 1)).rejects.toThrow(/reading 'change_text'/);
   });
 
-  it("throws if a ranked food bank vanishes between the scan and the hydration read", async () => {
-    // The non-null assertions on the id-map lookups. This is a real race:
-    // the coordinate scan and the by-ids read are separate queries, and an
-    // admin closing a food bank in between makes the second return fewer
-    // rows than the first. Current behaviour is a 500, not a silently
-    // shortened list -- pinned so that a change to either is deliberate.
+  // THIS PAIR USED TO ASSERT A 500, and their own comment said the 500 was
+  // "pinned so that a change to either is deliberate". github #48 is that
+  // deliberate change: a row that vanishes between the coordinate scan and
+  // the hydration read now drops out of the list instead of throwing.
+  //
+  // Dropping is the DJANGO outcome, not a lenient one. Django ranks and
+  // hydrates in a single query, so a row deleted a moment earlier is simply
+  // not a candidate and the list comes back shorter. The two-phase port is
+  // what created a window in which an id can outlive its row; degrading to a
+  // shorter list is what closes it.
+  //
+  // THE OLD COMMENT NAMED THE WRONG TRIGGER, and it is worth correcting
+  // rather than copying: it said "an admin CLOSING a food bank in between
+  // makes the second return fewer rows". It does not. getFoodbanksByIds is
+  // `SELECT * FROM foodbank WHERE id IN (...)` with no is_closed filter
+  // (foodbank.ts's foodbanksByIdsStatement), so a closed food bank still
+  // hydrates. Only DELETION shortens the result -- foodbankAdmin.ts:29 for a
+  // food bank, locationsAdmin.ts:288 for a location.
+  it("drops a ranked food bank that vanished between the scan and the hydration read", async () => {
     db.getOpenLocationCoordinates.mockResolvedValue([]);
     db.getFoodbanksByIds.mockResolvedValue([]);
-    await expect(findLocations(SESSION, LAT, LNG, 1)).rejects.toThrow(TypeError);
-    // `foodbankById.get(...)` returned undefined and the first field read
-    // off it is `name` -- i.e. it failed at the map lookup, not later at
-    // the latestNeed assertion, which is a different fault entirely.
-    await expect(findLocations(SESSION, LAT, LNG, 1)).rejects.toThrow(/reading 'name'/);
+    await expect(findLocations(SESSION, LAT, LNG, 1)).resolves.toEqual([]);
   });
 
-  it("throws if a ranked location vanishes between the scan and the hydration read", async () => {
+  it("drops a ranked location that vanished, and keeps the rest of the list intact", async () => {
     db.getLocationsByIds.mockResolvedValue([]);
-    await expect(findLocations(SESSION, LAT, LNG, 1)).rejects.toThrow(TypeError);
-    // The location branch reads `row.foodbank_id` first, to find the
-    // parent -- so this is the missing LOCATION, not a missing parent.
-    await expect(findLocations(SESSION, LAT, LNG, 1)).rejects.toThrow(/reading 'foodbank_id'/);
-    // And with no location row there is nothing to look a parent up for,
-    // so the third read is skipped rather than issued with a junk id.
-    expect(db.getFoodbanksByIds).toHaveBeenCalledTimes(2); // one per attempt above
+    const results = await findLocations(SESSION, LAT, LNG, 4);
+
+    // The point of asking for 4 rather than 1: the surviving entries must
+    // still be there, in order, with THEIR OWN distances. A fix that dropped
+    // the missing row by shifting the array would show up here as an
+    // organisation carrying a location's distance.
+    expect(results.every((r) => r.type === "organisation")).toBe(true);
+    expect(results.length).toBeGreaterThan(0);
+    const distances = results.map((r) => r.distance_mi);
+    expect([...distances].sort((a, b) => a - b)).toEqual(distances);
+
+    // With no location row there is nothing to look a parent up for, so the
+    // third read is skipped rather than issued with a junk id.
+    expect(db.getFoodbanksByIds).toHaveBeenCalledTimes(1);
+  });
+
+  // The other half of the same rule, and the reason this is not simply "stop
+  // throwing": a miss that DJANGO WOULD ALSO HAVE HIT keeps throwing. B12 is
+  // pinned by the two tests above this block and is untouched by #48.
+  it("still throws for frozen bug B12 even though missing rows no longer throw", async () => {
+    db.getOpenLocationCoordinates.mockResolvedValue([]);
+    db.getFoodbanksByIds.mockImplementation((session: Session, ids: readonly number[]) =>
+      fetchFoodbanks(session, ids).then((rows) => rows.map((row) => ({ ...row, latestNeed: null }))),
+    );
+    await expect(findLocations(SESSION, LAT, LNG, 1)).rejects.toThrow(/reading 'change_text'/);
   });
 });
 

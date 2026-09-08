@@ -1031,7 +1031,7 @@ describe("findLocationsByCategory -- degenerate arguments, unguarded on purpose"
   });
 });
 
-describe("findLocationsByCategory -- documented crashes, pinned as-is", () => {
+describe("findLocationsByCategory -- frozen crashes kept, port-only crashes dropped", () => {
   it("throws on a food bank with no latest need (frozen bug B12), rather than skipping the row", async () => {
     // The module says so explicitly: a null latest_need throws here
     // exactly as it 500s in Django, matching findLocations.ts and
@@ -1057,45 +1057,54 @@ describe("findLocationsByCategory -- documented crashes, pinned as-is", () => {
     await expect(search("Pasta")).rejects.toThrow(TypeError);
   });
 
-  it("throws if a ranked winner's full row is missing when hydration runs", async () => {
-    // The non-null assertions on the two lookup maps are load-bearing:
-    // the coordinate scan and the by-ids fetch are separate D1 queries,
-    // so a row deleted in between comes back missing. Current behaviour
-    // is that the whole /needs/ page 500s, not that the one row is
-    // dropped -- documented here so a future change to that is a
-    // deliberate decision rather than a silent one.
+  // THE THREE BELOW USED TO ASSERT A 500 on a row that vanished between the
+  // coordinate scan and the hydration read, "documented here so a future
+  // change to that is a deliberate decision rather than a silent one".
+  // github #48 is that decision: the row is dropped and the rest of the list
+  // survives. Django ranks and hydrates in one queryset and so cannot reach
+  // this state at all; the crash was the port's own two-phase read showing
+  // through.
+  //
+  // The two B12 tests above are untouched and still throw. The rule that
+  // separates them: a row that is FOUND with a null latest_need fails in
+  // Django too and must keep failing here; a row that is NOT FOUND is a
+  // window Django does not have, and degrades to the shorter list Django
+  // would have produced.
+  it("drops a ranked winner whose full row is missing when hydration runs", async () => {
     setWorld({ foodbanks: [{ id: 1, lat: latKmNorth(1), needs: ["Pasta"] }] });
     db.getFoodbanksByIds.mockResolvedValue([]);
-    await expect(search("Pasta")).rejects.toThrow(TypeError);
+    await expect(search("Pasta")).resolves.toEqual([]);
   });
 
-  it("throws the same way when a winning LOCATION's own row is missing", async () => {
-    // locationById's non-null assertion, the sibling of the one above.
-    // Pinned separately because the two maps are populated from
-    // different queries: a guard added to the organisation branch alone
-    // would leave this one crashing, and a guard added here alone would
-    // leave the other one crashing.
+  it("drops a winning LOCATION whose own row is missing, keeping the rest", async () => {
+    // Pinned separately because the two maps are populated from different
+    // queries: a guard added to the organisation branch alone would leave
+    // this one crashing, and vice versa.
+    //
+    // The food bank at 19 km is INSIDE the radius and survives, so this
+    // asserts a drop rather than an empty list -- on a one-row world those
+    // two are the same assertion and only the first is the fix.
     setWorld({
       foodbanks: [{ id: 1, lat: latKmNorth(19), needs: ["Pasta"] }],
       locations: [{ id: 10, foodbank_id: 1, lat: latKmNorth(1) }],
     });
     db.getLocationsByIds.mockResolvedValue([]);
-    await expect(search("Pasta")).rejects.toThrow(TypeError);
+
+    const results = await search("Pasta");
+    expect(results.map((r) => r.type)).toEqual(["organisation"]);
   });
 
-  it("throws when a winning location's PARENT food bank row is missing", async () => {
-    // The third non-null assertion, and the one most likely to fire for
-    // real: the parent lookup is a separate round trip issued after the
-    // location rows come back, so a food bank deleted (or closed and
-    // pruned) in between resolves to undefined here. The parent is
-    // beyond the ceiling in this world, so the organisation branch is
-    // not involved at all -- this is purely foodbankById.get() on the
-    // location branch.
+  it("drops a winning location whose PARENT food bank row is missing", async () => {
+    // The parent lookup is a separate round trip issued after the location
+    // rows come back, so a food bank deleted in between resolves to
+    // undefined here. The parent is beyond the ceiling in this world, so the
+    // organisation branch is not involved at all -- this is purely
+    // foodbankById.get() on the location branch.
     setWorld({
       foodbanks: [{ id: 1, lat: latKmNorth(25), needs: ["Pasta"] }],
       locations: [{ id: 10, foodbank_id: 1, lat: latKmNorth(1) }],
     });
     db.getFoodbanksByIds.mockResolvedValue([]);
-    await expect(search("Pasta")).rejects.toThrow(TypeError);
+    await expect(search("Pasta")).resolves.toEqual([]);
   });
 });

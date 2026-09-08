@@ -229,7 +229,12 @@ api2LocationsApp.get("/locations/search/", async (c) => {
     parentFoodbankIds.length === 0 ? [] : await getFoodbanksByIds(session, parentFoodbankIds);
   const foodbankById = new Map([...organisationFoodbanks, ...parentFoodbanks].map((fb) => [fb.id, fb]));
 
-  const responseList = ranked.map(({ item, distanceM }) => {
+  // flatMap and explicit misses, not `!` -- github #48; lib/findLocations.ts
+  // carries the full reasoning. Ranking and hydration are separate D1 reads,
+  // a row deleted between them is ranked and then not found, and `!` made
+  // that a TypeError rather than a shorter list. `row.latestNeed!` below is
+  // frozen bug B12 and keeps throwing.
+  const responseList = ranked.flatMap(({ item, distanceM }) => {
     let address: string;
     let phone: string | null;
     let email: string;
@@ -254,7 +259,8 @@ api2LocationsApp.get("/locations/search/", async (c) => {
     let commonParlConSlug: string | null;
 
     if (item.kind === "organisation") {
-      const row = foodbankById.get(item.coord.id)!;
+      const row = foodbankById.get(item.coord.id);
+      if (row === undefined) return [];
       address = fullAddressUnconditional(row.address, row.postcode);
       phone = row.phone_number;
       email = row.contact_email;
@@ -283,8 +289,10 @@ api2LocationsApp.get("/locations/search/", async (c) => {
       commonDistrict = row.district;
       commonParlConSlug = row.parliamentary_constituency_slug;
     } else {
-      const row = locationById.get(item.coord.id)!;
-      const parentFoodbank = foodbankById.get(row.foodbank_id)!;
+      const row = locationById.get(item.coord.id);
+      if (row === undefined) return [];
+      const parentFoodbank = foodbankById.get(row.foodbank_id);
+      if (parentFoodbank === undefined) return [];
       address = fullAddressNullable(row.address, row.postcode);
       phone = phoneOrFoodbankPhone(row.phone_number, row.foodbank_phone_number);
       email = emailOrFoodbankEmail(row.email, row.foodbank_email);

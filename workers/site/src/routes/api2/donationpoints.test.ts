@@ -6,7 +6,9 @@ import type { AppEnv } from "../../types";
 
 // routes/api2/donationpoints.ts's list endpoint -- GET /api/2/donationpoints/,
 // ported from gfapi2/views.py's `donationpoints`. The sibling search endpoint
-// on the same router is untouched by this work and is not covered here.
+// on the same router was uncovered until github #48; it now has the block at
+// the bottom of this file, which covers the one behaviour #48 changed and
+// nothing else.
 //
 // WHY THIS FILE EXISTS. getAllOpenDonationPoints was `SELECT *` over
 // foodbankdonationpoint_full, a ~41-column view, for 5,727 open rows -- and
@@ -50,6 +52,10 @@ function d1Session(db: DatabaseSync, prepared: string[]): D1DatabaseSession {
   return {
     prepare: (sql: string) => {
       prepared.push(sql);
+      // A seam for simulating a row that vanishes MID-REQUEST -- see the
+      // github #48 block at the bottom. Null except there; reset in
+      // beforeEach.
+      onPrepare?.(sql);
       return statement(sql, []);
     },
     getBookmark: () => null,
@@ -60,6 +66,7 @@ const execCtx = { waitUntil: (p: Promise<unknown>) => void p, passThroughOnExcep
 
 let db: DatabaseSync;
 let prepared: string[];
+let onPrepare: ((sql: string) => void) | null = null;
 
 function env(): AppEnv["Bindings"] {
   return {
@@ -179,6 +186,7 @@ beforeEach(() => {
   db.exec(SCHEMA);
   seed();
   prepared = [];
+  onPrepare = null;
 });
 
 afterEach(() => {
@@ -350,5 +358,60 @@ describe("api2 donationpoints -- GET /api/2/donationpoints/", () => {
     expect(queries).toHaveLength(1);
     expect(queries[0]).not.toContain("SELECT *");
     expect(queries[0]).toContain("FROM foodbankdonationpoint_full WHERE is_closed = 0");
+  });
+});
+
+// ===========================================================================
+// GET /api/2/donationpoints/search/ -- github #48
+// ===========================================================================
+// Ranking and hydration are separate D1 reads, so a row deleted between them
+// is ranked and then not found. The handler used to assert `!` on those
+// lookups, so the miss became a TypeError and a 500 for the whole search. It
+// now drops the entry -- the result Django reaches by construction, since it
+// ranks and hydrates in one queryset.
+describe("api2 donationpoints -- GET /api/2/donationpoints/search/ when a row vanishes mid-request", () => {
+  // The list fixture carries no needs, because the list endpoint does not
+  // read them. The search endpoint does, through the PARENT food bank, and
+  // frozen bug B12 dereferences latest_need unguarded -- so without this every
+  // search below would 500 for a reason that has nothing to do with #48.
+  const prepareForSearch = (): void => {
+    db.exec(`
+      INSERT INTO foodbankchange (id, need_id, foodbank_id, change_text, input_method, published, created, modified)
+        VALUES (700, '00000000000000000000000000000700', 1, 'Pasta', 'manual', 1, '2026-01-01 00:00:00.000000', '2026-01-01 00:00:00.000000'),
+               (701, '00000000000000000000000000000701', 2, 'Rice',  'manual', 1, '2026-01-01 00:00:00.000000', '2026-01-01 00:00:00.000000');
+      UPDATE foodbank SET latest_need_id = 700 WHERE id = 1;
+      UPDATE foodbank SET latest_need_id = 701 WHERE id = 2;
+    `);
+  };
+
+  const search = async (): Promise<Array<{ slug: string; type: string; distance_m: number }>> => {
+    const res = await get("/api/2/donationpoints/search/?lat_lng=51.03,-1.79");
+    expect(res.status).toBe(200);
+    return (await res.json()) as Array<{ slug: string; type: string; distance_m: number }>;
+  };
+
+  it("ranks the open donation points and excludes the closed one", async () => {
+    prepareForSearch();
+
+    const body = await search();
+
+    expect(body.map((r) => r.slug).sort()).toEqual(["aldi", "tesco-extra"]);
+    expect(JSON.stringify(body)).not.toContain("shut-wilko");
+  });
+
+  it("drops the vanished donation point and leaves the other with its own distance", async () => {
+    prepareForSearch();
+    const whole = await search();
+
+    onPrepare = (sql) => {
+      if (sql.includes("FROM foodbankdonationpoint_full WHERE id IN")) db.exec("DELETE FROM foodbankdonationpoint WHERE id = 11");
+    };
+    const afterDelete = await search();
+
+    // A 200 with the survivor in it, not a 500 with nothing.
+    expect(afterDelete.map((r) => r.slug)).toEqual(whole.map((r) => r.slug).filter((slug) => slug !== "tesco-extra"));
+    for (const row of afterDelete) {
+      expect(row.distance_m, row.slug).toBe(whole.find((r) => r.slug === row.slug)!.distance_m);
+    }
   });
 });

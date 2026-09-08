@@ -87,9 +87,28 @@ export async function findLocations(
   const parentFoodbanks = parentFoodbankIds.length === 0 ? [] : await getFoodbanksByIds(session, parentFoodbankIds);
   const foodbankById = new Map([...organisationFoodbanks, ...parentFoodbanks].map((fb) => [fb.id, fb]));
 
-  return ranked.map(({ item, distanceM }) => {
+  // flatMap, NOT map, AND THE DIFFERENCE IS A 500 (github #48). Ranking and
+  // hydration are separate D1 reads, so a row deleted between them is ranked
+  // and then not found. These lookups used to assert `!` on that, which is a
+  // compile-time claim the runtime does not honour: the miss returned
+  // undefined and the next property access threw a TypeError, i.e. a 500 on
+  // /needs/, /needs/at/<slug>/nearby/ and the /md/ twin.
+  //
+  // Dropping the entry is not a lenient choice, it is the DJANGO one. Django
+  // ranks and hydrates in a single query, so a row that has just been deleted
+  // is simply not among the results and the list comes back one shorter. The
+  // two-phase port is what opened the window; degrading to Django's own
+  // outcome closes it.
+  //
+  // NOT TO BE CONFUSED WITH THE `!`s THAT REMAIN below. `row.latestNeed!` is
+  // frozen bug B12 -- Django dereferences a null latest_need unguarded and
+  // 500s, and this port reproduces that deliberately. Those must keep
+  // throwing. The rule is: a miss caused by the port's own read window is
+  // dropped; a miss Django would also have hit is left alone.
+  return ranked.flatMap(({ item, distanceM }) => {
     if (item.kind === "organisation") {
-      const row = foodbankById.get(item.coord.id)!;
+      const row = foodbankById.get(item.coord.id);
+      if (row === undefined) return [];
       // Frozen bug B12 (already reproduced in api2/locations.ts): a null
       // latest_need throws here exactly as it 500s in Django.
       return {
@@ -106,8 +125,10 @@ export async function findLocations(
         latest_need_id: row.latestNeed!.id,
       };
     }
-    const row = locationById.get(item.coord.id)!;
-    const parentFoodbank = foodbankById.get(row.foodbank_id)!;
+    const row = locationById.get(item.coord.id);
+    if (row === undefined) return [];
+    const parentFoodbank = foodbankById.get(row.foodbank_id);
+    if (parentFoodbank === undefined) return [];
     return {
       type: "location",
       name: row.name,
