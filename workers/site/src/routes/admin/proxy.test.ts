@@ -1,4 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
+import { schemaFor } from "@givefood/db/src/schema.testkit";
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { adminApp } from "./index";
@@ -55,12 +56,10 @@ const SESSION_ID = "test-admin-session-id";
 // the slug it looks up by, the five proxyable columns, three real columns that
 // hold URLs and are deliberately NOT proxyable, and `latest_need_id`.
 //
-// latest_need_id is not optional scenery. getFoodbankBySlug hands its row to
-// attachLatestNeed (packages/db/src/foodbank.ts:103), which tests
-// `latest_need_id === null` -- a column missing from the fixture would read as
-// `undefined`, fail that test and send the real getNeedById at a foodbankchange
-// table that does not exist here. Present and NULL is the shape production has
-// for a food bank with no need on file.
+// latest_need_id is not optional scenery. getFoodbankBySlug resolves the need
+// through `WHERE id = (SELECT latest_need_id FROM foodbank WHERE slug = ?)`, so
+// a column missing from this fixture is a SQL error rather than a NULL. Present
+// and NULL is the shape production has for a food bank with no need on file.
 //
 // `url` and `shopping_list_url` are NOT NULL in production and nullable here on
 // purpose: the empty-string case below is the one production can actually
@@ -76,6 +75,17 @@ CREATE TABLE foodbank (
   modified TEXT NOT NULL
 );
 CREATE UNIQUE INDEX foodbank_slug_uniq ON foodbank(slug);
+-- github #51: getFoodbankBySlug reads the food bank row and its latest need in
+-- ONE batch(), so the need side is sent even when latest_need_id is NULL: the
+-- scalar subquery yields NULL and the comparison matches nothing. Every route
+-- below reaches that function, so this narrow fixture now needs the table and
+-- the view.
+--
+-- TAKEN FROM THE MIGRATIONS, NOT TRANSCRIBED. 0019 drops a column off
+-- foodbankchange long after 0001 creates it and recreates the view around it,
+-- so a hand-copied CREATE TABLE here would have been wrong on the day it was
+-- pasted -- which is the drift schema.testkit.ts exists to stop.
+${schemaFor("foodbankchange", "foodbankchange_full")}
 `;
 
 // Written out rather than inferred from the first fixture: every URL column is
@@ -173,7 +183,22 @@ function d1Session(db: DatabaseSync): D1DatabaseSession {
       return { success: true, meta: {} };
     },
   });
-  return { prepare: (sql: string) => statement(sql, []), getBookmark: () => null } as unknown as D1DatabaseSession;
+  return {
+    prepare: (sql: string) => statement(sql, []),
+    // getFoodbankBySlug sends its food bank row and its latest-need row as ONE
+    // batch() rather than two sequential awaits (packages/db/src/foodbank.ts).
+    // The same adapter as packages/db/src/foodbankDetail.test.ts: statements
+    // run in order and there is one result per input statement, in that order,
+    // because the caller indexes straight into the array -- a batch that
+    // reordered or coalesced results would hand back the wrong row without
+    // erroring anywhere.
+    batch: async (statements: Array<{ all: () => Promise<unknown> }>) => {
+      const out: unknown[] = [];
+      for (const each of statements) out.push(await each.all());
+      return out;
+    },
+    getBookmark: () => null,
+  } as unknown as D1DatabaseSession;
 }
 
 /** The one KV namespace the auth gate reads. */
@@ -443,7 +468,9 @@ describe("adminProxy -- reaching the handler", () => {
     const res = await get("/admin/proxy/?foodbank=salisbury&field=url", { cookie: "" });
 
     expect(res.status).toBe(302);
-    expect(res.headers.get("Location")).toBe("/auth/?next=%2Fadmin%2Fproxy%2F");
+    // The query rides along in `next`: requireAdminAuth captures c.req.path
+    // plus the query string, matching Django's request.get_full_path().
+    expect(res.headers.get("Location")).toBe("/auth/?next=%2Fadmin%2Fproxy%2F%3Ffoodbank%3Dsalisbury%26field%3Durl");
     expect(fetchMock).not.toHaveBeenCalled();
     expect(withSession).not.toHaveBeenCalled();
   });
@@ -458,24 +485,37 @@ describe("adminProxy -- reaching the handler", () => {
     const res = await get("/admin/proxy/?foodbank=salisbury&field=url");
 
     expect(res.status).toBe(302);
-    expect(res.headers.get("Location")).toBe("/auth/?next=%2Fadmin%2Fproxy%2F");
+    expect(res.headers.get("Location")).toBe("/auth/?next=%2Fadmin%2Fproxy%2F%3Ffoodbank%3Dsalisbury%26field%3Durl");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
   // The gate runs before any validation, so a signed-out caller cannot use the
   // 400-vs-404 difference to enumerate which food bank slugs exist.
-  it("answers a signed-out request identically whatever the querystring", async () => {
-    for (const path of [
-      "/admin/proxy/?foodbank=salisbury&field=url",
-      "/admin/proxy/?foodbank=does-not-exist&field=url",
-      "/admin/proxy/?foodbank=salisbury&field=rss_url",
-      "/admin/proxy/",
-    ]) {
+  it("tells a signed-out request nothing the caller did not already supply", async () => {
+    // The 302 echoes the blocked URL back in `next` -- requireAdminAuth
+    // captures path AND query, as Django's request.get_full_path() did -- so
+    // the Location necessarily varies with the querystring. What must NOT vary
+    // is anything derived from the DATABASE: a real slug and an invented one
+    // both come back as the same status with the caller's own query reflected
+    // and nothing added, so there is still no enumeration oracle here.
+    const cases: [path: string, location: string][] = [
+      ["/admin/proxy/?foodbank=salisbury&field=url", "/auth/?next=%2Fadmin%2Fproxy%2F%3Ffoodbank%3Dsalisbury%26field%3Durl"],
+      ["/admin/proxy/?foodbank=does-not-exist&field=url", "/auth/?next=%2Fadmin%2Fproxy%2F%3Ffoodbank%3Ddoes-not-exist%26field%3Durl"],
+      ["/admin/proxy/?foodbank=salisbury&field=rss_url", "/auth/?next=%2Fadmin%2Fproxy%2F%3Ffoodbank%3Dsalisbury%26field%3Drss_url"],
+      ["/admin/proxy/", "/auth/?next=%2Fadmin%2Fproxy%2F"],
+    ];
+    for (const [path, location] of cases) {
       const res = await get(path, { cookie: "" });
       expect(res.status).toBe(302);
-      expect(res.headers.get("Location")).toBe("/auth/?next=%2Fadmin%2Fproxy%2F");
+      expect(res.headers.get("Location")).toBe(location);
+      expect(await res.text()).toBe("");
     }
     expect(fetchMock).not.toHaveBeenCalled();
+    // The half that carries the claim now that the Location legitimately
+    // varies: no database session was ever opened, so there is nothing for a
+    // real slug and an invented one to differ BY. Without this the test would
+    // only be checking that the gate echoes its input.
+    expect(withSession).not.toHaveBeenCalled();
   });
 
   // GET only (routes/admin/index.ts:86). Django's `path("proxy/", proxy)`

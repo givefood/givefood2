@@ -36,10 +36,20 @@ function appWith(register: (app: Hono<AppEnv>) => void) {
 }
 
 /**
- * The six mounts from index.ts:137-144, copied verbatim. noStore itself has no
- * path awareness at all -- it stamps whatever response reaches it -- so "which
- * URLs are protected" is entirely a question of this mount list, and the list
- * is therefore part of the contract these tests pin.
+ * The public-route mounts from index.ts, copied verbatim -- including the
+ * locale-prefixed loop added for issue #32. noStore itself has no path
+ * awareness at all -- it stamps whatever response reaches it -- so "which URLs
+ * are protected" is entirely a question of this mount list, and the list is
+ * therefore part of the contract these tests pin.
+ *
+ * IT IS A COPY, AND A COPY CANNOT NOTICE index.ts CHANGING. That is deliberate
+ * -- this file pins the middleware, not the app -- but it means the copy is
+ * only ever evidence about noStore's own behaviour. The app's real mount list
+ * is pinned against index.ts's own default export in src/index.test.ts, and
+ * that is the file that fails if a mount is dropped. Keep them in step: the
+ * only record of issue #32 was a PASSING test in THIS file, which by
+ * construction could neither fail while the gap was open nor notice when it
+ * was closed.
  */
 function mountedLikeIndex() {
   const app = new Hono<AppEnv>();
@@ -48,6 +58,9 @@ function mountedLikeIndex() {
   app.use("/auth", noStore);
   app.use("/auth/*", noStore);
   app.use("/needs/at/*/updates/*", noStore);
+  for (const locale of PREFIXES) {
+    app.use(`/${locale}/needs/at/*/updates/*`, noStore);
+  }
   app.use("/write/to/*/email/done/*", noStore);
   app.all("*", (c) => c.html("<p>page</p>"));
   return app;
@@ -428,33 +441,42 @@ describe("noStore", () => {
     }
   });
 
-  it("does NOT cover the locale-prefixed subscriber routes -- current behaviour, reported as a gap", async () => {
-    // Documenting what the code does today, not endorsing it. index.ts:298-299
-    // registers the updates routes under /cy/, /ga/ and /gd/ as well as
-    // unprefixed, but the mount at index.ts:143 is "/needs/at/*/updates/*",
-    // which matches on the path as it arrives -- resolveLanguage runs after
-    // routing and cannot strip the prefix in time. So the Welsh, Irish and
-    // Scots Gaelic forms of the confirm and unsubscribe URLs get no header at
-    // all, and are eligible for the same cache-HIT-without-executing behaviour
-    // the unprefixed ones were mounted to prevent.
+  it("covers the locale-prefixed subscriber routes as well as the unprefixed ones (issue #32)", async () => {
+    // THIS ASSERTION USED TO BE INVERTED, and the inversion is the whole
+    // point of the row. index.ts registers the updates routes under /cy/,
+    // /ga/ and /gd/ as well as unprefixed, but its only mount for them was
+    // "/needs/at/*/updates/*" -- matched against the path AS IT ARRIVES,
+    // because resolveLanguage is a middleware and runs long after the router
+    // has picked handlers, so it cannot strip the prefix in time. The Welsh,
+    // Irish and Scots Gaelic forms of two GET endpoints that DELETE a row and
+    // send mail therefore went out unstamped, and pageCacheControl -- mounted
+    // on "*", skipping only responses that ALREADY carry Cache-Control --
+    // filled the gap with `public, max-age=300, s-maxage=86400`. wrangler.jsonc
+    // enables the Workers Cache, where a HIT never executes the Worker: the
+    // visitor is told they were unsubscribed while the row survives.
     //
-    // Left as a failing-in-spirit test that passes on today's behaviour, per
-    // the brief; if the mount list gains the locale prefixes this assertion
-    // should be inverted to match.
+    // The old version of this test PASSED on that behaviour and said so in its
+    // comment ("reported as a gap ... should be inverted"). Both halves of that
+    // arrangement are gone: index.ts now mounts the prefixed forms, and this
+    // asserts the same exact header triple every other row in the file does.
+    //
     // Driven off resolveLanguage's own PREFIXES rather than a hardcoded
-    // ["cy","ga","gd"], because index.ts:295 builds the prefixed routes from
-    // that same set: adding a fourth language would create a fourth uncovered
-    // URL, and this loop grows with it instead of quietly continuing to check
-    // three. The size guard is not ceremony -- a `for...of` over an empty set
-    // passes every assertion inside it, so a refactor that emptied PREFIXES
-    // would turn this test green and meaningless.
+    // ["cy","ga","gd"], because index.ts builds the prefixed ROUTES from that
+    // same set: adding a fourth language would otherwise create a fourth
+    // uncovered URL, and this loop grows with it instead of quietly continuing
+    // to check three. The size guard is not ceremony -- a `for...of` over an
+    // empty set passes every assertion inside it, so a refactor that emptied
+    // PREFIXES would turn this test green and meaningless.
     expect(PREFIXES.size).toBeGreaterThan(0);
     const app = mountedLikeIndex();
     for (const locale of PREFIXES) {
       const res = await app.request(`https://www.givefood.org.uk/${locale}/needs/at/sid-valley/updates/unsubscribe/?key=abc`, {}, env);
-      expect(res.headers.get("Cache-Control"), `/${locale}/ is currently uncovered`).toBeNull();
-      expect(res.headers.get("CDN-Cache-Control")).toBeNull();
-      expect(res.headers.get("Vary")).toBeNull();
+      expect(res.headers.get("Cache-Control"), `/${locale}/ must be no-store`).toBe(NO_STORE);
+      expect(res.headers.get("CDN-Cache-Control"), `/${locale}/ must be no-store at the edge`).toBe("no-store");
+      // Exactly "Cookie", not "Cookie, Cookie": the prefixed URL is matched by
+      // its own mount and no other, so noStore runs once. The doubled value is
+      // what an overlapping pair looks like -- see the /admin row below.
+      expect(res.headers.get("Vary"), `/${locale}/ must vary on Cookie`).toBe("Cookie");
     }
   });
 

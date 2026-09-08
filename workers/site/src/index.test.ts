@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import app from "./index";
+import { PREFIXES } from "./middleware/resolveLanguage";
 import type { Env } from "../worker-configuration";
 
 // THE MOUNT LIST, and nothing else. index.ts is 700 lines of route
@@ -23,6 +24,9 @@ import type { Env } from "../worker-configuration";
 // that did NOT: a future edit that generalises "/flag/ doesn't need this" one
 // mount too far has to fail a test to do it.
 //
+// Issue #32 is the same list rotting the other way, by omission rather than
+// subtraction, and has its own describe block at the foot of this file.
+//
 // REAL APP, REAL MIDDLEWARE ORDER. `app` is index.ts's own default export,
 // so these requests unwind through the real registration order rather than a
 // copy of the mount list transcribed into the test (which is what
@@ -40,8 +44,8 @@ const env = { CSRF_SECRET: "test-csrf-secret" } as unknown as Env;
 const NO_STORE = "private, no-store, max-age=0, must-revalidate";
 const url = (path: string) => `https://www.givefood.org.uk${path}`;
 
-async function headers(path: string) {
-  const res = await app.request(url(path), {}, env);
+async function headers(path: string, method = "GET") {
+  const res = await app.request(url(path), { method }, env);
   return {
     status: res.status,
     cacheControl: res.headers.get("Cache-Control"),
@@ -146,5 +150,159 @@ describe("noStore mounts: what issue #40 removed", () => {
       cdn: null,
       vary: null,
     });
+  });
+});
+
+// ISSUE #32. The same mount list, from the other direction: what it must cover
+// that it did not.
+//
+// GET /needs/at/<slug>/updates/confirm/ and .../unsubscribe/ MUTATE -- they
+// confirm a subscriber row and send a "thank you" mail, or delete the row --
+// and index.ts has mounted noStore on them since 2026-09-02 for exactly that
+// reason. index.ts registers the SAME handler under /cy/, /ga/ and /gd/, and
+// Hono matches app.use() against the path AS IT ARRIVES: resolveLanguage is a
+// middleware, so it runs after the router has already chosen handlers and
+// cannot strip the prefix in time. So "/needs/at/*/updates/*" missed the
+// prefixed forms entirely.
+//
+// The result was worse than a missing header. pageCacheControl is mounted on
+// "*" and its "never override" guard only skips a response that ALREADY
+// carries Cache-Control, so with noStore absent it filled the gap and stamped
+// `public, max-age=300, s-maxage=86400` on a mutating GET whose URL carries a
+// per-subscriber capability key -- and wrangler.jsonc enables the Workers
+// Cache, where a HIT is served WITHOUT EXECUTING THE WORKER. An unsubscribe
+// answered from that cache tells the visitor it worked while the row survives.
+// The first test in the file above is the live proof that the gap-filler does
+// exactly this to a prefixed 200 that has no mount (/cy/flag/).
+//
+// Latent when found -- every link the site emits for these actions is
+// unprefixed, and the language switcher's prefixed variants drop the query
+// string, so they 404/403 rather than reaching a cacheable 200. Nothing
+// STRUCTURAL held that in place, which is why the mount is the fix rather than
+// the link-building.
+describe("noStore mounts: the locale-prefixed subscriber routes (issue #32)", () => {
+  // DRIVEN OFF PREFIXES, NEVER A LITERAL ["cy","ga","gd"]. index.ts builds
+  // both the prefixed ROUTES and (now) the prefixed MOUNTS from this one set,
+  // so a fourth language cannot add a fourth uncovered URL without this loop
+  // growing to check it. The size guard is not ceremony: a `for...of` over an
+  // empty set passes every assertion inside it, so a refactor that emptied
+  // PREFIXES would turn this whole block green and meaningless.
+  const prefixes = [...PREFIXES];
+
+  it("has at least one prefix to test", () => {
+    expect(prefixes.length).toBeGreaterThan(0);
+  });
+
+  it("stamps no-store on every locale form of every updates action", async () => {
+    // 500, not 200: these need D1 and the test env has no binding, so the
+    // handler throws and app.onError renders the error page. noStore runs on
+    // the way OUT and stamps it regardless -- which is the whole reason the
+    // sibling test above can reach the unprefixed mounts at all, and is a
+    // stronger check than a 200 would be, because pageCacheControl bails on a
+    // non-200 and therefore contributes NOTHING here. Before the fix these
+    // three headers were all null on a 500 and `public, max-age=300,
+    // s-maxage=86400` on a 200; the only thing that can put NO_STORE on this
+    // response is the mount actually matching.
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    // TRAILING SLASHES AND THE QUERY STRING ARE BOTH LOAD-BEARING and both
+    // appear here as they appear in the wild. Hono matches "/x" and "/x/" as
+    // different paths -- index.ts says so in its own comment about /flag -- so
+    // a mount written without the slash-swallowing "*" would fail open,
+    // silently. The ?key= is the per-subscriber capability key from the issue's
+    // reproduction: it is what makes a cached copy of this page a leak as well
+    // as a lost mutation, and it must not affect which mount matches.
+    const paths = prefixes.flatMap((locale) => [
+      `/${locale}/needs/at/sid-valley/updates/confirm/?key=SUBKEY`,
+      `/${locale}/needs/at/sid-valley/updates/unsubscribe/?key=UNSUBKEY`,
+      `/${locale}/needs/at/sid-valley/updates/subscribe/`,
+    ]);
+
+    for (const path of paths) {
+      expect(await headers(path), path).toEqual({
+        status: 500,
+        cacheControl: NO_STORE,
+        cdn: "no-store",
+        // EXACTLY "Cookie", not "Cookie, Cookie". The doubling pinned in the
+        // test above is what two overlapping mounts look like; one value here
+        // proves the prefixed URL is matched by its own mount only, and that
+        // adding it did not widen the unprefixed one to reach across a locale.
+        vary: "Cookie",
+      });
+    }
+
+    expect(consoleError).toHaveBeenCalled();
+  });
+
+  it("gives the prefixed forms byte-identical headers to the unprefixed one", async () => {
+    // The parity statement the issue is actually about. Not "the prefixed URLs
+    // have some cache header" but "the /cy/ URL and the / URL of the same
+    // mutating handler are told the same thing", which is the property that
+    // stops a locale-aware confirm mail -- the obvious next step for a site
+    // shipping three non-English locales -- from turning this back into the
+    // incident noStore.ts was written for.
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    // BOTH METHODS. index.ts registers .get() AND .post() for these routes,
+    // and the POST is not a duplicate of the GET: it is the RFC 8058
+    // one-click unsubscribe an email client fires by itself, the one branch
+    // in routes/wfbn/updates.ts that deletes the row and then returns a bare
+    // 200 with no body at all. `app.use()` is method-agnostic in Hono, so a
+    // single mount covers both today -- this row is what fails if the mount
+    // is ever narrowed to `app.on("GET", ...)`, which would leave the
+    // unattended, no-human-in-the-loop request as the uncovered one.
+    for (const method of ["GET", "POST"]) {
+      const control = await headers("/needs/at/sid-valley/updates/unsubscribe/?key=UNSUBKEY", method);
+      expect(control.cacheControl, method).toBe(NO_STORE);
+
+      for (const locale of prefixes) {
+        const h = await headers(`/${locale}/needs/at/sid-valley/updates/unsubscribe/?key=UNSUBKEY`, method);
+        expect(h, `${method} ${locale}`).toEqual(control);
+      }
+    }
+  });
+
+  it("does not cover a path segment that merely looks like a locale", async () => {
+    // /de/ is one of the 17 Django languages this Worker does NOT serve
+    // (resolveLanguage.ts: no prefix match => "en"), so no route is registered
+    // under it and it 404s. This row exists to kill the lazy version of the
+    // fix -- a mount written as "/:locale/needs/at/*/updates/*", or with a
+    // "[a-z]{2}" character class, would match here too. It has to be PREFIXES
+    // or it is not derived from anything.
+    for (const path of [
+      "/de/needs/at/sid-valley/updates/unsubscribe/?key=UNSUBKEY",
+      "/en/needs/at/sid-valley/updates/unsubscribe/?key=UNSUBKEY",
+    ]) {
+      const h = await headers(path);
+      expect(h.status, path).toBe(404);
+      expect(h.cdn, path).toBeNull();
+    }
+  });
+
+  it("does not widen to the rest of a locale's food bank pages", async () => {
+    // THE COST HALF, and the reason the mount stops at "/updates/*". Issue #40
+    // is the cautionary tale in the other direction: a noStore mount left on
+    // /flag/ held 16.94% of the zone's 200s at cf-cache-status BYPASS. A
+    // prefixed mount that crept up to "/<locale>/needs/at/*" would do the same
+    // to every Welsh, Irish and Gaelic food bank page -- the most-requested
+    // HTML on the site. These paths need D1 too, so they 500 and
+    // pageCacheControl (200-only) leaves them alone; the assertion is that
+    // NOTHING stamped them, which is only true if the mount is narrow.
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const paths = prefixes.flatMap((locale) => [
+      `/${locale}/needs/at/sid-valley/`,
+      `/${locale}/needs/at/sid-valley/news/`,
+      `/${locale}/needs/at/sid-valley/locations/`,
+    ]);
+
+    for (const path of paths) {
+      expect(await headers(path), path).toEqual({
+        status: 500,
+        cacheControl: null,
+        cdn: null,
+        vary: null,
+      });
+    }
   });
 });

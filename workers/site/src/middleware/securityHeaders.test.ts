@@ -9,22 +9,27 @@ import { securityHeaders } from "./securityHeaders";
 // settings.py's MIDDLEWARE list and so runs on the way out of every single
 // response Django produces. index.ts:113 mounts it the same way --
 // `app.use("*", securityHeaders)`, second only to serverTiming -- so "on
-// every response" is the contract, not "on pages".
+// every response" is the contract, not "on pages". The one gap in that is not
+// COOP-specific and not fixable here: wrangler.jsonc's `assets` block sets no
+// run_worker_first and no code in workers/site fetches the ASSETS binding, so
+// /static/* is answered by the asset layer without the Worker running at all,
+// and carries none of these three headers.
 //
 // The module was written after a beta-vs-production header diff on
-// 2026-09-05 found both headers missing. These tests are the shape of that
-// diff, frozen.
+// 2026-09-05 found two of its three headers missing. These tests are the shape
+// of that diff, frozen -- plus Cross-Origin-Opener-Policy, which that diff
+// missed and which was added 2026-09-08 (issue #33) to match Django's source.
 //
 // A note on what "boundaries" mean for this module, because it looks
 // untestable at first glance: securityHeaders takes NO input. It has no
-// arguments, no config, no request-derived values -- it writes two constants.
-// So there is no empty-string/null/NaN surface to probe; the entire input
-// space is the SHAPE OF THE RESPONSE the handler below it produced, and the
+// arguments, no config, no request-derived values -- it writes three
+// constants. So there is no empty-string/null/NaN surface to probe; the entire
+// input space is the SHAPE OF THE RESPONSE the handler below it produced, and the
 // SHAPE OF THE MIDDLEWARE CHAIN it sits in. That is what is enumerated here:
 // bodyless responses, 304s, redirects, thrown errors, immutable responses,
 // responses that already carry the same headers, responses carrying multiple
 // Set-Cookie lines, sub-apps, double mounts, and neighbours that run before
-// and after it. Anything that only asserts the two constants is a tautology
+// and after it. Anything that only asserts the three constants is a tautology
 // dressed as a test; the tests below are written to fail against a plausible
 // wrong implementation, and each one names the wrong implementation it kills.
 const env = {} as unknown as AppEnv["Bindings"];
@@ -41,24 +46,63 @@ function mounted(register: (app: Hono<AppEnv>) => void): Hono<AppEnv> {
 }
 
 describe("securityHeaders", () => {
-  it("sends SecurityMiddleware's two always-on defaults, with Django's exact values", async () => {
+  it("sends SecurityMiddleware's three always-on defaults, with Django's exact values", async () => {
     // django/middleware/security.py process_response(), driven by
-    // global_settings.py's SECURE_CONTENT_TYPE_NOSNIFF = True and
-    // SECURE_REFERRER_POLICY = "same-origin". Not "no-referrer", not
-    // "strict-origin-when-cross-origin" -- production sends literally
-    // `same-origin`, and the site's outbound referrer behaviour to food bank
-    // websites depends on it.
+    // global_settings.py's SECURE_CONTENT_TYPE_NOSNIFF = True,
+    // SECURE_REFERRER_POLICY = "same-origin" and
+    // SECURE_CROSS_ORIGIN_OPENER_POLICY = "same-origin". Referrer-Policy is not
+    // "no-referrer" and not "strict-origin-when-cross-origin" -- production
+    // sends literally `same-origin`, and the site's outbound referrer behaviour
+    // to food bank websites depends on it.
+    //
+    // The COOP value is spelled out for the same reason: "same-origin-allow-
+    // popups" and "unsafe-none" are both valid header values a plausible
+    // implementation reaches for, and both are weaker than what Django emits.
+    // Checked by running it, not read off the defaults list --
+    //   cd /Users/jasoncartwright/Sites/foodcharity && ./.venv/bin/python -c "
+    //   import os, django; os.environ.setdefault('DJANGO_SETTINGS_MODULE','givefood.settings')
+    //   django.setup()
+    //   from django.middleware.security import SecurityMiddleware
+    //   from django.http import HttpResponse
+    //   from django.test import RequestFactory
+    //   print(dict(SecurityMiddleware(lambda r: HttpResponse('<p>home</p>'))(
+    //       RequestFactory().get('/', secure=True)).headers))"
+    // prints X-Content-Type-Options, Referrer-Policy AND
+    // Cross-Origin-Opener-Policy on django 6.1 with the site's own settings.
     const app = mounted((a) => a.get("/", (c) => c.html("<p>home</p>")));
     const res = await app.request("https://x/", {}, env);
 
     expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
     expect(res.headers.get("Referrer-Policy")).toBe("same-origin");
+    expect(res.headers.get("Cross-Origin-Opener-Policy")).toBe("same-origin");
     // Exactly one line each. `.get()` joins duplicates with ", ", so an
     // implementation that used append() rather than set() would still satisfy
     // a naive .toContain("nosniff") -- and "nosniff, nosniff" is not a value
     // any scanner accepts.
     expect([...res.headers].filter(([k]) => k === "x-content-type-options")).toHaveLength(1);
     expect([...res.headers].filter(([k]) => k === "referrer-policy")).toHaveLength(1);
+    expect([...res.headers].filter(([k]) => k === "cross-origin-opener-policy")).toHaveLength(1);
+  });
+
+  it("sends COOP on plain-http requests too, exactly as Django does", async () => {
+    // SecurityMiddleware gates HSTS on `request.is_secure()` but NOT COOP --
+    // the `if self.cross_origin_opener_policy:` branch has no scheme check, and
+    // the same one-liner above with `secure=False` still prints
+    // Cross-Origin-Opener-Policy: same-origin. Browsers only honour COOP in a
+    // secure context, which makes `if (url.protocol === "https:")` a tempting
+    // and plausible-looking addition here; it would be a divergence from the
+    // middleware being ported, and it would silently drop the header from
+    // anything reaching the Worker over http (a health check, a preview URL, a
+    // curl in a test harness) -- which is exactly where a scanner looks.
+    //
+    // Every other test in this file uses an https:// URL, so this is the only
+    // thing standing between that mutant and a green run.
+    const app = mounted((a) => a.get("/", (c) => c.html("<p>home</p>")));
+    const res = await app.request("http://x/", {}, env);
+
+    expect(res.headers.get("Cross-Origin-Opener-Policy")).toBe("same-origin");
+    expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
+    expect(res.headers.get("Referrer-Policy")).toBe("same-origin");
   });
 
   it("covers every response kind, not just rendered pages", async () => {
@@ -107,6 +151,7 @@ describe("securityHeaders", () => {
       expect([url, method, res.status]).toEqual([url, method, status]);
       expect([url, res.headers.get("X-Content-Type-Options")]).toEqual([url, "nosniff"]);
       expect([url, res.headers.get("Referrer-Policy")]).toEqual([url, "same-origin"]);
+      expect([url, res.headers.get("Cross-Origin-Opener-Policy")]).toEqual([url, "same-origin"]);
     }
 
     // HEAD is dispatched by Hono as a GET whose body is then discarded
@@ -116,6 +161,7 @@ describe("securityHeaders", () => {
     const head = await app.request("https://x/", { method: "HEAD" }, env);
     expect(await head.text()).toBe("");
     expect(head.headers.get("X-Content-Type-Options")).toBe("nosniff");
+    expect(head.headers.get("Cross-Origin-Opener-Policy")).toBe("same-origin");
   });
 
   it("sets the headers AFTER next(), which only a chain-order probe can prove", async () => {
@@ -137,27 +183,37 @@ describe("securityHeaders", () => {
     // registered BELOW securityHeaders reaches its own post-next() code first
     // -- and at that instant the header must not exist yet. A hoisted version
     // records "nosniff" here; the real one records null.
-    const observedMidUnwind: (string | null)[] = [];
+    //
+    // All THREE are probed, not just the first: the `set` calls are three
+    // separate statements, so hoisting just one of them above `await next()`
+    // (the shape a careless edit takes when a new header is added at the top of
+    // the body) is a state a one-header probe cannot see.
+    const observedMidUnwind: (string | null)[][] = [];
     const app = new Hono<AppEnv>();
     app.use("*", securityHeaders);
     app.use("*", async (c, next) => {
       await next();
-      observedMidUnwind.push(c.res.headers.get("X-Content-Type-Options"));
+      observedMidUnwind.push([
+        c.res.headers.get("X-Content-Type-Options"),
+        c.res.headers.get("Referrer-Policy"),
+        c.res.headers.get("Cross-Origin-Opener-Policy"),
+      ]);
     });
     app.get("/media/x.png", () => new Response("bytes", { status: 200, headers: { "Content-Type": "image/png" } }));
 
     const res = await app.request("https://x/media/x.png", {}, env);
 
-    expect(observedMidUnwind).toEqual([null]); // hoisted => ["nosniff"]
+    expect(observedMidUnwind).toEqual([[null, null, null]]); // any hoisted set => a non-null slot
     expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
     expect(res.headers.get("Referrer-Policy")).toBe("same-origin");
+    expect(res.headers.get("Cross-Origin-Opener-Policy")).toBe("same-origin");
     // ...and the handler's own raw Response really is the one that came back,
-    // unmodified apart from the two headers.
+    // unmodified apart from the three headers.
     expect(res.headers.get("Content-Type")).toBe("image/png");
     expect(await res.text()).toBe("bytes");
   });
 
-  it("adds ONLY those two headers -- no HSTS, no CSP, no X-Frame-Options, no COOP", async () => {
+  it("adds ONLY those three headers -- no HSTS, no CSP, no X-Frame-Options, no COEP", async () => {
     // The module comment's load-bearing claim: production sends no HSTS and no
     // CSP, and XFrameOptionsMiddleware is not in settings.py's MIDDLEWARE, so
     // adding any of them here would be a behaviour change smuggled in as a
@@ -185,33 +241,60 @@ describe("securityHeaders", () => {
 
       const beforeNames = new Set([...before.headers.keys()]);
       const added = [...after.headers.keys()].filter((n) => !beforeNames.has(n)).sort();
-      expect([path, added]).toEqual([path, ["referrer-policy", "x-content-type-options"]]);
+      expect([path, added]).toEqual([path, ["cross-origin-opener-policy", "referrer-policy", "x-content-type-options"]]);
       // ...and nothing that was already there was removed either.
       const afterNames = new Set([...after.headers.keys()]);
       expect([path, [...beforeNames].filter((n) => !afterNames.has(n))]).toEqual([path, []]);
     }
 
-    // Named explicitly as well, because these four are what a reviewer copying
-    // Django's SECURE_* defaults list would be tempted to add.
-    // Cross-Origin-Opener-Policy is the interesting one: Django DOES default
-    // SECURE_CROSS_ORIGIN_OPENER_POLICY to "same-origin", so SecurityMiddleware
-    // would emit it -- the module deliberately went with the observed live
-    // headers over the defaults list. Pinned as-is.
+    // Named explicitly as well, because these are what a reviewer reaching for
+    // a security-header checklist would be tempted to add.
+    //
+    // COOP USED TO BE ON THIS LIST, asserted null (issue #33). It is now sent,
+    // because running the real SecurityMiddleware against the real settings
+    // module emits it: SECURE_CROSS_ORIGIN_OPENER_POLICY defaults to
+    // "same-origin" and settings.py overrides no SECURE_* option. The header
+    // diff that produced this module in ca1ed3e enumerated only HSTS, CSP and
+    // X-Frame-Options, and its module comment described SecurityMiddleware as
+    // having "two always-on defaults" -- a mistake that is itself the reason
+    // COOP fell off the checklist, so its absence from that diff is not
+    // evidence production omitted it. That question is now unanswerable
+    // (www is this Worker; the Django origin is decommissioned), so the source
+    // is the reference.
+    //
+    // The three below stay null on stronger evidence than a defaults list:
+    // HSTS and CSP were observed absent from live responses, and
+    // XFrameOptionsMiddleware is genuinely not in settings.py's MIDDLEWARE.
+    // Cross-Origin-Embedder-Policy joins them -- Django has no such default at
+    // all, and it is the header most likely to be added "while we're here"
+    // alongside COOP, where it would break the third-party embeds
+    // (Facebook, maps, fonts) the site loads.
     const res = await mounted((a) => a.get("/", (c) => c.html("<p>home</p>"))).request("https://x/", {}, env);
+    expect(res.headers.get("Cross-Origin-Opener-Policy")).toBe("same-origin");
     expect(res.headers.get("Strict-Transport-Security")).toBeNull();
     expect(res.headers.get("Content-Security-Policy")).toBeNull();
     expect(res.headers.get("X-Frame-Options")).toBeNull();
-    expect(res.headers.get("Cross-Origin-Opener-Policy")).toBeNull();
+    expect(res.headers.get("Cross-Origin-Embedder-Policy")).toBeNull();
+    expect(res.headers.get("Cross-Origin-Resource-Policy")).toBeNull();
   });
 
   it("DIVERGES from Django: it overwrites values the handler already set, and collapses duplicates", async () => {
-    // django/middleware/security.py uses response.headers.setdefault() for both
-    // headers, so a Django view that sets its own Referrer-Policy keeps it.
-    // This port uses c.res.headers.set(), which clobbers. No route in
-    // workers/site sets either header today, so the divergence is currently
-    // invisible -- pinned here so that whoever first needs a per-route
-    // Referrer-Policy (an outbound-link page, say) discovers from a failing
-    // test that this middleware will eat it, rather than from production.
+    // django/middleware/security.py uses setdefault() for all three headers
+    // (`response.headers.setdefault` for the first two, `response.setdefault`
+    // for COOP -- same semantics), so a Django view that sets its own
+    // Referrer-Policy keeps it. This port uses c.res.headers.set(), which
+    // clobbers. No route in workers/site sets any of the three today, so the
+    // divergence is currently invisible -- pinned here so that whoever first
+    // needs a per-route Referrer-Policy (an outbound-link page, say) discovers
+    // from a failing test that this middleware will eat it, rather than from
+    // production.
+    //
+    // COOP is the case where this will bite first and hardest. The one thing
+    // COOP: same-origin does is sever window.opener, so the first route that
+    // ever needs a popup-based flow -- an OAuth popup, a payment window -- will
+    // set `Cross-Origin-Opener-Policy: same-origin-allow-popups` on its own
+    // response and find it silently overwritten here, with a broken popup and
+    // no error anywhere as the only symptom. Django would have honoured it.
     const res = await mounted((app) =>
       app.get("/", (c) => {
         // Appended twice on purpose: two Referrer-Policy lines is the state a
@@ -222,13 +305,19 @@ describe("securityHeaders", () => {
         c.header("Referrer-Policy", "no-referrer", { append: true });
         c.header("Referrer-Policy", "unsafe-url", { append: true });
         c.header("X-Content-Type-Options", "off");
+        c.header("Cross-Origin-Opener-Policy", "same-origin-allow-popups");
         return c.text("careful page");
       }),
     ).request("https://x/", {}, env);
 
     expect(res.headers.get("Referrer-Policy")).toBe("same-origin"); // Django would say "no-referrer"
     expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff"); // Django would say "off"
+    // Django would say "same-origin-allow-popups"
+    expect(res.headers.get("Cross-Origin-Opener-Policy")).toBe("same-origin");
     expect([...res.headers].filter(([k]) => k === "referrer-policy")).toEqual([["referrer-policy", "same-origin"]]);
+    expect([...res.headers].filter(([k]) => k === "cross-origin-opener-policy")).toEqual([
+      ["cross-origin-opener-policy", "same-origin"],
+    ]);
   });
 
   it("wins over any middleware registered after it", async () => {
@@ -237,7 +326,7 @@ describe("securityHeaders", () => {
     // out. That is what lets cacheTag, runtimeIdentity, slugRedirect,
     // resolveLanguage, geoJsonPreload, pageCacheControl and noStore all be
     // registered below it (index.ts:114-144) without any of them being able to
-    // strip or weaken these two headers on their way past.
+    // strip or weaken these three headers on their way past.
     //
     // This is also the test that kills a `next()` without `await`: an unawaited
     // next() lets the later middleware's post-response code run after the set
@@ -247,6 +336,7 @@ describe("securityHeaders", () => {
     app.use("*", async (c, next) => {
       await next();
       c.res.headers.set("X-Content-Type-Options", "weakened-by-a-later-middleware");
+      c.res.headers.set("Cross-Origin-Opener-Policy", "unsafe-none");
       c.res.headers.delete("Referrer-Policy");
     });
     app.get("/", (c) => c.text("x"));
@@ -254,6 +344,7 @@ describe("securityHeaders", () => {
     const res = await app.request("https://x/", {}, env);
     expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
     expect(res.headers.get("Referrer-Policy")).toBe("same-origin");
+    expect(res.headers.get("Cross-Origin-Opener-Policy")).toBe("same-origin"); // not "unsafe-none"
   });
 
   it("does not collapse multiple Set-Cookie headers", async () => {
@@ -276,6 +367,7 @@ describe("securityHeaders", () => {
     expect(res.headers.getSetCookie()).toEqual(["gfsession=a; Path=/; HttpOnly", "gfold=; Max-Age=0; Path=/"]);
     expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
     expect(res.headers.get("Referrer-Policy")).toBe("same-origin");
+    expect(res.headers.get("Cross-Origin-Opener-Policy")).toBe("same-origin");
   });
 
   it("leaves status, body and content-type exactly as the handler left them", async () => {
@@ -301,7 +393,7 @@ describe("securityHeaders", () => {
     // reader could reasonably expect the parent's `use("*")` not to reach
     // inside one. It does -- which is why the sub-apps deliberately do NOT
     // mount securityHeaders themselves, and why this must keep working or the
-    // entire JSON API loses both headers at once.
+    // entire JSON API loses all three headers at once.
     const api = new Hono<AppEnv>();
     api.get("/foodbanks/", (c) => c.json({ foodbanks: [] }));
     api.notFound((c) => c.json({ error: "not found" }, 404));
@@ -314,6 +406,7 @@ describe("securityHeaders", () => {
       const res = await app.request(`https://x${path}`, {}, env);
       expect([path, res.headers.get("X-Content-Type-Options")]).toEqual([path, "nosniff"]);
       expect([path, res.headers.get("Referrer-Policy")]).toEqual([path, "same-origin"]);
+      expect([path, res.headers.get("Cross-Origin-Opener-Policy")]).toEqual([path, "same-origin"]);
     }
   });
 
@@ -331,8 +424,10 @@ describe("securityHeaders", () => {
     const res = await app.request("https://x/", {}, env);
     expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
     expect(res.headers.get("Referrer-Policy")).toBe("same-origin");
+    expect(res.headers.get("Cross-Origin-Opener-Policy")).toBe("same-origin");
     expect([...res.headers].filter(([k]) => k === "x-content-type-options")).toHaveLength(1);
     expect([...res.headers].filter(([k]) => k === "referrer-policy")).toHaveLength(1);
+    expect([...res.headers].filter(([k]) => k === "cross-origin-opener-policy")).toHaveLength(1);
   });
 
   it("reaches index.ts's own onError 500 page, not just Hono's default one", async () => {
@@ -356,6 +451,7 @@ describe("securityHeaders", () => {
     expect(await res.text()).toBe("<p>Sorry, something went wrong</p>"); // the real 500 page, not Hono's
     expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
     expect(res.headers.get("Referrer-Policy")).toBe("same-origin");
+    expect(res.headers.get("Cross-Origin-Opener-Policy")).toBe("same-origin");
   });
 
   it("only covers routes registered BELOW it -- the index.ts mount position is load-bearing", async () => {
@@ -375,7 +471,9 @@ describe("securityHeaders", () => {
     const late = await app.request("https://x/registered-after", {}, env);
 
     expect(early.headers.get("X-Content-Type-Options")).toBeNull(); // NOT protected
+    expect(early.headers.get("Cross-Origin-Opener-Policy")).toBeNull();
     expect(late.headers.get("X-Content-Type-Options")).toBe("nosniff");
+    expect(late.headers.get("Cross-Origin-Opener-Policy")).toBe("same-origin");
   });
 
   it("BUG PINNED: an immutable-headers Response turns the whole request into a bare 500", async () => {
@@ -383,7 +481,8 @@ describe("securityHeaders", () => {
     // handler returned has an immutable headers guard -- true of anything
     // returned straight from fetch(), from caches.default.match(), or from
     // Response.redirect(). Hono catches the throw and serves its own 500, so
-    // the caller loses the real response AND both security headers.
+    // the caller loses the real response AND all three security headers: the
+    // FIRST set call throws, so none of the later ones runs either.
     // Response.redirect() is used here because it is immutable by
     // specification, with no network and no Workers runtime involved.
     //
@@ -411,6 +510,7 @@ describe("securityHeaders", () => {
     expect(res.headers.get("Location")).toBe("https://example.org/"); // leaked onto the 500
     expect(res.headers.get("X-Content-Type-Options")).toBeNull();
     expect(res.headers.get("Referrer-Policy")).toBeNull();
+    expect(res.headers.get("Cross-Origin-Opener-Policy")).toBeNull();
   });
 
   it("...but the deployed chain defuses that bug by accident, via resolveLanguage", async () => {
@@ -420,7 +520,7 @@ describe("securityHeaders", () => {
     // (resolveLanguage.ts). c.header on a finalized context replaces c.res with
     // a mutable clone -- so by the time securityHeaders runs, the immutable
     // response is gone and the set calls succeed. The redirect survives WITH
-    // both headers.
+    // all three headers.
     //
     // A stand-in middleware is used rather than importing resolveLanguage,
     // because this file must not fail when that module's internals change --
@@ -443,5 +543,6 @@ describe("securityHeaders", () => {
     expect(res.headers.get("Location")).toBe("https://example.org/");
     expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
     expect(res.headers.get("Referrer-Policy")).toBe("same-origin");
+    expect(res.headers.get("Cross-Origin-Opener-Policy")).toBe("same-origin");
   });
 });

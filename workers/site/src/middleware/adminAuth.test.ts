@@ -33,7 +33,8 @@ import type { AdminSessionData } from "../lib/adminAuth";
 //   2. The bounce back. Django stashes request.get_full_path() in the Django
 //      session and redirects to auth:sign_in (gfauth/urls.py -- path '', so
 //      `/auth/`); there is no session to stash anything in at this point in
-//      the Worker, so the path rides in ?next= instead, as the module's own
+//      the Worker, so the full path -- query string included, same as
+//      get_full_path() -- rides in ?next= instead, as the module's own
 //      comment explains. Both of this file's recorded production incidents
 //      -- the Sign Out button that visibly did nothing, and the /admin/ pages
 //      Cloudflare served to anonymous visitors -- were about precisely where
@@ -403,19 +404,208 @@ describe("requireAdminAuth", () => {
     expect(await nextAsSignInPageSeesIt(res)).toBe("//evil.example/admin/");
   });
 
-  it("DROPS the query string, where Django's get_full_path() kept it", async () => {
-    // Documents current behaviour; see the suspected-bug note in this work's
-    // report. middleware.py stores request.get_full_path(), which is path AND
-    // query string, so Django returned the admin to the exact URL they asked
-    // for. This uses c.req.path, which is the path alone -- so signing in from
-    // /admin/items/?page=4&sort=calories lands back on page 1, unsorted. Not
-    // a security hole (the drop can only ever narrow the target), which is why
-    // it is pinned rather than fixed here.
-    const { res } = await run({ path: "/admin/items/?page=4&sort=calories" });
-    expect(nextParam(res)).toBe("/admin/items/");
-    // Nothing of the dropped query leaks into the redirect by another route
-    // either -- no stray `&sort=` riding along outside the `next` value.
-    expect(res.headers.get("Location")).toBe("/auth/?next=%2Fadmin%2Fitems%2F");
+  it("carries the query string too, as Django's get_full_path() did", async () => {
+    // middleware.py stores request.get_full_path() -- path AND query string --
+    // so Django returned the admin to the exact URL they asked for. This used
+    // to capture c.req.path alone, and the query was simply lost: signing in
+    // from /admin/items/?page=4&sort=calories landed back on page 1 in the
+    // default order (items.ts:25 parsePage defaults to 1, items.ts:37 sort to
+    // "name"). Nineteen admin routes read query params; the one that stung was
+    // /admin/need/new/?foodbank=<slug>, which came back as a blank form with
+    // the food bank to be re-picked by hand.
+    //
+    // The expected value is Django's, run rather than remembered -- under
+    // Django 5.2.6, the version installed for the reference checkout at
+    // /Users/jasoncartwright/Sites/foodcharity, and re-run in the 2026-09-08
+    // review of this change:
+    //   RequestFactory().get("/admin/items/", QUERY_STRING="page=4&sort=calories")
+    //     .get_full_path()  ==  "/admin/items/?page=4&sort=calories"
+    const full = "/admin/items/?page=4&sort=calories";
+    const { res } = await run({ path: full });
+    expect(nextParam(res)).toBe(full);
+    expect(await nextAsSignInPageSeesIt(res)).toBe(full);
+    // Written out rather than recomputed with encodeURIComponent, for the same
+    // reason as the hostile-path test above: the "?", "&" and "="s MUST arrive
+    // escaped. Unescaped, the `next` value would end at the "?" and "sort" would
+    // become a sibling query param of the sign-in URL.
+    expect(res.headers.get("Location")).toBe("/auth/?next=%2Fadmin%2Fitems%2F%3Fpage%3D4%26sort%3Dcalories");
+    // Which is to say: still exactly one `next`, even though the value now
+    // legitimately contains an encoded "&" and two encoded "="s.
+    expect(new URL(res.headers.get("Location") ?? "", "https://www.givefood.org.uk").searchParams.getAll("next")).toHaveLength(1);
+  });
+
+  it("adds no `?` when there was no query, so path-only URLs are untouched", async () => {
+    // The guard on the obvious wrong shape, `${c.req.path}?${search}`: every
+    // path-only admin URL -- which is most of them -- would gain a trailing
+    // "?" it never had. Django appends nothing when QUERY_STRING is empty
+    // (get_full_path()'s `if self.META.get("QUERY_STRING", "")`), and neither
+    // does URL.search, which reports "" for a bare "?" as well as for none at
+    // all. Both inputs must therefore give the byte-identical Location this
+    // file has pinned all along.
+    for (const path of ["/admin/items/", "/admin/items/?"]) {
+      const { res } = await run({ path });
+      expect(nextParam(res)).toBe("/admin/items/");
+      expect(res.headers.get("Location")).toBe("/auth/?next=%2Fadmin%2Fitems%2F");
+    }
+    // A query that is only punctuation is still a query, and is kept verbatim
+    // -- "no query" means the empty string, not "nothing useful in it".
+    for (const [path, seen] of [
+      ["/admin/items/?&", "/admin/items/?&"],
+      ["/admin/items/?=", "/admin/items/?="],
+    ] as const) {
+      const { res } = await run({ path });
+      expect(nextParam(res)).toBe(seen);
+    }
+  });
+
+  it("passes the query through raw, escaping it a second time on the way out", async () => {
+    // The asymmetry that makes this one line easy to get wrong, and the reason
+    // the fix is `c.req.path + search` rather than `pathname + search`.
+    //
+    // Hono DECODES c.req.path (decodeURI, once the path contains a "%"), so
+    // the path arrives here as characters. URL.search does the opposite: it
+    // hands back the query exactly as it was received, still percent-escaped.
+    // encodeURIComponent then escapes those "%"s a SECOND time -- %C3%A8 goes
+    // out as %25C3%25A8 -- which is precisely what makes the single decode at
+    // /auth/ return the original query byte for byte instead of a decoded
+    // lookalike. Django does the same thing: get_full_path() appends
+    // iri_to_uri(QUERY_STRING), whose safe set contains "%", so an
+    // already-escaped query passes through untouched. Checked by running
+    // Django 5.2.6, not by reasoning about it:
+    //   QUERY_STRING="q=caff%C3%A8"        ->  "/admin/search/?q=caff%C3%A8"
+    //   QUERY_STRING="q=50%25"             ->  "/admin/search/?q=50%25"
+    //   QUERY_STRING="q=a+b"               ->  "/admin/search/?q=a+b"
+    //   QUERY_STRING="q=fish%20%26%20chips" -> "/admin/search/?q=fish%20%26%20chips"
+    //
+    // Each case kills a different wrong implementation:
+    //   %C3%A8  a decodeURIComponent(search) "to match how the path is
+    //           handled" would send the admin back to ?q=caffè -- a different
+    //           search, and one whose raw non-ASCII cannot sit in a header.
+    //   %26     decoded, it would split one search term into two query params.
+    //   %25     decoded once too often it stops being a valid escape at all.
+    //   +       must reach /auth/ as a literal "+", not as the space that both
+    //           URLSearchParams and Hono's query parser read a bare "+" as.
+    const cases: [path: string, location: string, seen: string][] = [
+      ["/admin/search/?q=caff%C3%A8", "/auth/?next=%2Fadmin%2Fsearch%2F%3Fq%3Dcaff%25C3%25A8", "/admin/search/?q=caff%C3%A8"],
+      ["/admin/search/?q=fish%20%26%20chips", "/auth/?next=%2Fadmin%2Fsearch%2F%3Fq%3Dfish%2520%2526%2520chips", "/admin/search/?q=fish%20%26%20chips"],
+      ["/admin/search/?q=50%25", "/auth/?next=%2Fadmin%2Fsearch%2F%3Fq%3D50%2525", "/admin/search/?q=50%25"],
+      ["/admin/search/?q=a+b", "/auth/?next=%2Fadmin%2Fsearch%2F%3Fq%3Da%2Bb", "/admin/search/?q=a+b"],
+    ];
+    for (const [path, location, seen] of cases) {
+      const { res } = await run({ path });
+      expect(res.headers.get("Location")).toBe(location);
+      expect(nextParam(res)).toBe(seen);
+      expect(await nextAsSignInPageSeesIt(res)).toBe(seen);
+    }
+  });
+
+  it("escapes a query character the request line did not, so it cannot split the header", async () => {
+    // The query's percent-encode set is narrower than the path's: the URL
+    // parser escapes a raw space, `"`, `<` and `>` before the Worker sees
+    // them, and leaves `&`, `=`, `+` and `%` alone. Worth an assertion rather
+    // than an assumption, because a raw space surviving into a Location header
+    // would truncate it at the space -- and the truncated value is a real,
+    // different admin page, not an error.
+    const { res } = await run({ path: '/admin/search/?q=fish & chips&tag=a"b' });
+    const location = res.headers.get("Location") ?? "";
+    expect(location).toBe("/auth/?next=%2Fadmin%2Fsearch%2F%3Fq%3Dfish%2520%26%2520chips%26tag%3Da%2522b");
+    expect(location).not.toMatch(/[\s"<>]/);
+    // What comes back out is the request URL as the URL parser normalised it,
+    // which is what the admin's browser actually sent -- so re-issuing it
+    // after sign-in reaches the same page.
+    expect(nextParam(res)).toBe('/admin/search/?q=fish%20&%20chips&tag=a%22b');
+  });
+
+  it("still decodes the path while leaving the query escaped", async () => {
+    // The two halves are handled differently ON PURPOSE, and this is the test
+    // that fails if the fix is written as `new URL(c.req.url).pathname +
+    // search`: pathname keeps the path escaped, so caff%C3%A8 would no longer
+    // reach /auth/ in the decoded form the "+/%/space/non-ASCII" test above
+    // has pinned since this file was written. Asserting both halves of ONE
+    // request is what makes the distinction impossible to satisfy by accident.
+    //
+    // AND THE ONE PLACE PARITY STOPS, so nothing in this file reads as
+    // byte-for-byte Django. get_full_path() is escape_uri_path(path) + "?" +
+    // iri_to_uri(qs), and escape_uri_path RE-ESCAPES: run under Django 5.2.6,
+    // this exact request gives Django "/admin/foodbank/caff%C3%A8/?q=caff%C3%A8"
+    // where the port gives "/admin/foodbank/caffè/?q=caff%C3%A8". Only the
+    // query half was ever wrong, and the decoded path predates this change and
+    // is deliberately left alone -- `pathname + search` is the mutant this
+    // test kills. It costs nothing where it lands: the whole flow was walked
+    // for both "caffè" and a CJK slug during the review of this change, and
+    // the receiver's final Location came out valid either way (the CJK one
+    // re-escaped to %E6%97%A5%E6%9C%AC, the Latin-1 one left as characters).
+    const { res } = await run({ path: "/admin/foodbank/caff%C3%A8/?q=caff%C3%A8" });
+    expect(res.headers.get("Location")).toBe("/auth/?next=%2Fadmin%2Ffoodbank%2Fcaff%C3%A8%2F%3Fq%3Dcaff%25C3%25A8");
+    expect(nextParam(res)).toBe("/admin/foodbank/caffè/?q=caff%C3%A8");
+    // %25 is the exception on both sides -- decodeURI leaves it alone in the
+    // path, and nothing touches it in the query -- so here the two halves DO
+    // agree, and both come out double-escaped. Same output, different route to
+    // it, which is why the caffè case above is the load-bearing one.
+    const percent = await run({ path: "/admin/foodbank/50%25-off/?d=50%25" });
+    expect(percent.res.headers.get("Location")).toBe("/auth/?next=%2Fadmin%2Ffoodbank%2F50%2525-off%2F%3Fd%3D50%2525");
+    expect(nextParam(percent.res)).toBe("/admin/foodbank/50%25-off/?d=50%25");
+  });
+
+  it("cannot be made to smuggle a second `next` through the query string", async () => {
+    // The query is attacker-supplied in a way the path is not: an admin can be
+    // sent any link at all, and putting `?next=` in the BLOCKED URL is the
+    // obvious thing to try. It must land inside the escaped value, never
+    // beside it. Both Hono's query parser and URLSearchParams.get return the
+    // FIRST occurrence of a repeated key (checked against this repo's Hono),
+    // so a `next` smuggled in ahead of ours is the one /auth/ would honour.
+    // safeNextPath still refuses "//evil.example/", but it accepts any
+    // single-slash path, so an injected /admin/settings/ would go through --
+    // which is why the assertion here is the COUNT, not the value.
+    for (const hostile of ["/admin/items/?next=//evil.example/&sort=calories", "/admin/items/?next=/admin/settings/"]) {
+      const { res } = await run({ path: hostile });
+      const location = res.headers.get("Location") ?? "";
+      expect(new URL(location, "https://www.givefood.org.uk").searchParams.getAll("next")).toHaveLength(1);
+      expect(nextParam(res)).toBe(hostile);
+      expect(await nextAsSignInPageSeesIt(res)).toBe(hostile);
+      // Still relative, still this site, whatever was in the query.
+      expect(location.startsWith("/auth/?next=")).toBe(true);
+      expect(new URL(location, "https://evil.example").origin).toBe("https://evil.example");
+    }
+    expect((await run({ path: "/admin/items/?next=//evil.example/&sort=calories" })).res.headers.get("Location")).toBe(
+      "/auth/?next=%2Fadmin%2Fitems%2F%3Fnext%3D%2F%2Fevil.example%2F%26sort%3Dcalories",
+    );
+  });
+
+  it("leaves a fragment behind, as the browser already would have", async () => {
+    // A "#" opens the fragment, and a real browser never sends one to the
+    // server -- but c.req.url is a string, and an implementation that reached
+    // for it directly (c.req.url.slice(origin.length), or a split on "?")
+    // would carry one along. Carrying it would be worse than dropping it:
+    // encodeURIComponent escapes "#" to %23, so /auth/'s eventual redirect
+    // would send a literal "#" in the URL rather than a fragment -- a URL that
+    // matches no admin route. URL.search stops at the "#", which is the
+    // behaviour Django's QUERY_STRING has too.
+    const { res } = await run({ path: "/admin/items/?page=4#sort=calories&x=1" });
+    expect(nextParam(res)).toBe("/admin/items/?page=4");
+    expect(res.headers.get("Location")).toBe("/auth/?next=%2Fadmin%2Fitems%2F%3Fpage%3D4");
+    expect(res.headers.get("Location")).not.toContain("%23");
+    // A "#" that arrives ESCAPED is data, not a delimiter, and does survive --
+    // /admin/search/?q=%23trussell is a search for a hashtag.
+    const escaped = await run({ path: "/admin/search/?q=%23trussell" });
+    expect(escaped.res.headers.get("Location")).toBe("/auth/?next=%2Fadmin%2Fsearch%2F%3Fq%3D%2523trussell");
+    expect(nextParam(escaped.res)).toBe("/admin/search/?q=%23trussell");
+    // And a fragment on a path with no query is still just gone; appending
+    // `.search` did not turn one into the other.
+    const noQuery = await run({ path: "/admin/items/#/admin/settings/" });
+    expect(noQuery.res.headers.get("Location")).toBe("/auth/?next=%2Fadmin%2Fitems%2F");
+  });
+
+  it("does not truncate a very long query either", async () => {
+    // The companion to the long-path test above. A ?q= built from a pasted
+    // list, or a stats range with a dozen filters, must come back whole: a
+    // truncated query is a DIFFERENT query that still parses, so the admin
+    // would be returned to a plausible-looking page with some of their
+    // filters silently missing.
+    const long = `/admin/search/?q=${"a".repeat(8000)}&page=4`;
+    const { res } = await run({ path: long });
+    expect(nextParam(res)).toBe(long);
+    expect(await nextAsSignInPageSeesIt(res)).toBe(long);
   });
 
   it("refuses a session cookie KV no longer holds", async () => {

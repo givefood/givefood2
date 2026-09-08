@@ -1320,6 +1320,64 @@ describe("signing out, then visiting the admin again", () => {
     expect((await readOAuthCookie(started)).next).toBe("/admin/foodbank/salisbury/");
   });
 
+  // ISSUE #31, END TO END -- the assertion the fix for it actually rests on.
+  // requireAdminAuth was changed to capture c.req.path PLUS the query string,
+  // the way Django's middleware.py stored request.get_full_path(), and
+  // middleware/adminAuth.test.ts pins that first hop thoroughly. But it is one
+  // hop of six, and the maintainer only gets their page back if the query
+  // survives all of them: the gate's encodeURIComponent, Hono's query parser
+  // at /auth/, sign_in.njk's `| urlencode`, safeNextPath, the signed
+  // __Host-oauth cookie, and finally the receiver's own redirect. A `?` or an
+  // `&` lost at any one of them puts the admin back on a defaulted page with
+  // every middleware test still green -- so this walks the issue's own
+  // reproduction, with the real gate, the real templates and a real signed
+  // cookie, and asserts the WHOLE URL comes back.
+  //
+  // Written after the fix, from the issue's steps: before it, the gate emitted
+  // "/auth/?next=%2Fadmin%2Fitems%2F" and this landed on /admin/items/ -- page
+  // 1, default sort. MUTATION-TESTED, 2026-09-08, in a copy of the tree
+  // outside the repo. It is the ONLY test in the suite that catches a break in
+  // a hop after the first: safeNextPath given `|| value.includes("?")` leaves
+  // all 38 middleware tests green and fails only here. Dropping the query at
+  // the gate again fails it at the first assertion, and so does
+  // `c.req.path + "?" + search` and dropping the encodeURIComponent.
+  it("returns the admin to the exact URL they asked for, query string and all", async () => {
+    // The real middleware, on a route that really reads ?page= and ?sort=.
+    const gated = new Hono<AppEnv>();
+    gated.use("*", requireAdminAuth);
+    gated.get("/admin/items/", (c) => c.text("the items page"));
+    const gatedRequest = async (path: string, cookie?: string): Promise<Response> =>
+      await gated.fetch(new Request(`${ORIGIN}${path}`, { headers: cookie ? { Host: HOST, Cookie: cookie } : { Host: HOST } }), env, execCtx);
+
+    const blocked = await gatedRequest("/admin/items/?page=4&sort=-calories");
+
+    expect(blocked.status).toBe(302);
+    expect(blocked.headers.get("Location")).toBe("/auth/?next=%2Fadmin%2Fitems%2F%3Fpage%3D4%26sort%3D-calories");
+
+    // The sign-in page's own button, read out of the rendered HTML rather than
+    // reconstructed -- `| urlencode` has to escape the "?" and "&" again or
+    // "sort" becomes a sibling param of /auth/start/'s own query.
+    const html = await (await request(blocked.headers.get("Location")!)).text();
+    expect(html).toContain('href="/auth/start/?next=%2Fadmin%2Fitems%2F%3Fpage%3D4%26sort%3D-calories"');
+
+    // The click, then Google, then back.
+    const started = await request("/auth/start/?next=%2Fadmin%2Fitems%2F%3Fpage%3D4%26sort%3D-calories");
+    const flow = await readOAuthCookie(started);
+    expect(flow.next).toBe("/admin/items/?page=4&sort=-calories"); // survived safeNextPath and the HMAC'd cookie
+
+    const idToken = await signIdToken();
+    tokenResponse = () => new Response(JSON.stringify({ id_token: idToken, access_token: "ya29.test" }), { status: 200 });
+    const done = await receiver({ code: "4/0AeanS0-test-authorization-code", state: flow.state }, cookieHeaderFrom(started, OAUTH_COOKIE));
+
+    expect(done.status).toBe(302);
+    expect(done.headers.get("Location")).toBe("/admin/items/?page=4&sort=-calories");
+
+    // And the session it just minted really opens that URL, so the redirect is
+    // not merely well-formed -- it is a page the admin can now see.
+    const landed = await gatedRequest("/admin/items/?page=4&sort=-calories", cookieHeaderFrom(done, SESSION_COOKIE));
+    expect(landed.status).toBe(200);
+  });
+
   // The four /auth/ routes are registered on the ROOT app, outside adminApp
   // and therefore outside requireAdminAuth. If they were ever moved under the
   // gate the site would be unrecoverable: the gate would redirect to a page

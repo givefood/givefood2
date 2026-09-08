@@ -9,7 +9,7 @@ import { cacheTag } from "./middleware/cacheTag";
 import { runtimeIdentity } from "./middleware/runtimeIdentity";
 import { securityHeaders } from "./middleware/securityHeaders";
 import { slugRedirect } from "./middleware/slugRedirect";
-import { resolveLanguage } from "./middleware/resolveLanguage";
+import { PREFIXES, resolveLanguage } from "./middleware/resolveLanguage";
 import { geoJsonPreload } from "./middleware/geoJsonPreload";
 import { mediaApp } from "./routes/media";
 import { staticMediaApp } from "./routes/staticMedia";
@@ -141,7 +141,30 @@ app.use("/auth/*", noStore);
 // Same root cause, public routes: two GET endpoints that mutate and one that
 // echoes a visitor's own email address. See middleware/noStore.ts.
 app.use("/needs/at/*/updates/*", noStore);
+// AND THE SAME URLs WITH A LANGUAGE PREFIX (issue #32). The updates routes
+// are registered under /cy/, /ga/ and /gd/ too (see the LOCALES loop below),
+// and Hono matches app.use() against the path AS IT ARRIVES -- resolveLanguage
+// is a middleware, so it runs long after the router has already picked the
+// handlers and cannot strip the prefix in time. Without these mounts the
+// prefixed forms did not merely go unstamped: pageCacheControl is mounted on
+// "*" and only skips a response that ALREADY carries Cache-Control, so it
+// filled the gap and marked a mutating GET `public, s-maxage=86400` -- the
+// exact opposite of what the mount above exists to say, on the same handler,
+// differing by three characters of URL.
+//
+// Derived from resolveLanguage's own PREFIXES, not a literal ["cy","ga","gd"],
+// because that is the same set the route registrations below are built from
+// (via LOCALES): hardcoding here would let a fourth language silently create a
+// fourth uncovered URL, which is precisely the drift this bug was an instance
+// of. Django agrees, for what it is worth -- gfwfbn/urls/i18n.py:26 puts
+// `updates` inside i18n_patterns and gfwfbn/views.py:1100 gives it no
+// @cache_page at all, so the prefixed forms were never cacheable there either.
+for (const locale of PREFIXES) {
+  app.use(`/${locale}/needs/at/*/updates/*`, noStore);
+}
 app.use("/write/to/*/email/done/*", noStore);
+// No prefixed sibling for /write/to/: those routes are registered outside the
+// LOCALES loop (see below), so there is no /cy/write/to/... URL to cover.
 
 // EVERY PUBLIC PAGE THAT RENDERS A CSRF TOKEN. These templates embed a
 // csrf_token in a form (public/register_foodbank.njk, write/constituency.njk,
