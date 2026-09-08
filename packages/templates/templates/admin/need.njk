@@ -113,18 +113,43 @@
         <td>{% if need.notified %}<span style="color:green">&check;</span>{% else %}<span style="color:red">&times;</span>{% endif %}</td>
         <td>Notify</td>
         <td>
-          {# gfadmin/views.py:1993-2006's Notify fires four channels, and
-             all four are built. The confirmation names them, because they
-             are not undoable and the reviewer should know the shape of what
-             they are about to send. The mobile count is deliberately absent
-             from it: Firebase addresses a TOPIC, so the real audience is
-             every app install subscribed to this food bank, which the
-             mobilesubscriber count only approximates. #}
+          {# gfadmin/views.py:1993-2006's Notify fires four channels, and all
+             four are built.
+
+             NO CONFIRMATION, github #37, and this is a RETURN to Django
+             rather than a departure from it: need.html:124 has none either.
+             The port had added one naming the per-channel counts, on the
+             reasoning that the send is not undoable. That reasoning was
+             sound and the modal was still the wrong place for it -- the
+             counts are already on this page, per channel, in the "Food Bank
+             Subs" row above, which the reviewer has been looking at while
+             deciding. A dialog that repeats what is already on screen stops
+             being read after the second time, and this is a button its
+             owner presses many times a week.
+
+             THE DOUBLE-SUBMIT GUARD IS NOT OPTIONAL NOW THE CONFIRM IS
+             GONE. adminNeedNotify() is deliberately NOT idempotent -- it
+             does not check `notified` before sending, because re-notifying
+             is a legitimate thing to do -- so a double press really does
+             enqueue all four channels twice and kick off a second article
+             crawl. The confirm was the only thing standing between a
+             stray double-click and a second send to 5,855 mailboxes.
+             `onclick="this.form.submit();this.disabled = true;"` is
+             admin/form.html:14's guard, carried on every other submit
+             button in this port, and it is what need.html:124 uses on this
+             one. It disables the button, not the action: the redirect
+             reloads the page, so a deliberate second Notify is one press
+             away.
+
+             (The mobile count never appeared in the old confirmation and
+             does not need to appear anywhere else: Firebase addresses a
+             TOPIC, so the real audience is every app install subscribed to
+             this food bank, which the mobilesubscriber count only
+             approximates.) #}
           {% if need.published %}
-            <form method="post" action="/admin/need/{{ need.need_id }}/notify/" class="is-pulled-right"
-                  onsubmit="return confirm('Notify about this need? {{ subscriber_counts.email }} by email, {{ subscriber_counts.webpush }} by web push, {{ subscriber_counts.whatsapp }} by WhatsApp, plus the mobile apps.')">
+            <form method="post" action="/admin/need/{{ need.need_id }}/notify/" class="is-pulled-right">
               <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-              <button type="submit" class="button is-link is-small is-light">
+              <button type="submit" class="button is-link is-small is-light" onclick="this.form.submit();this.disabled = true;">
                 Notify
               </button>
             </form>

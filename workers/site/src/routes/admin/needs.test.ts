@@ -434,7 +434,11 @@ beforeEach(() => {
   seedNeed({ id: 18, needId: ORPHAN, foodbankId: null, changeText: "Beans", created: "2026-03-02 00:00:00.000000" });
   seedNeed({ id: 19, needId: PUBLISHED, foodbankId: 1, changeText: "Tea\nCoffee", published: true, created: "2026-03-03 00:00:00.000000" });
 
-  // Subscriber rows for the Notify confirmation counts. Each channel gets at
+  // Subscriber rows for the per-channel counts in the "Food Bank Subs" row.
+  // (They used to feed the Notify button's confirm() dialog as well; github
+  // #37 removed that, and the row on the page is now the only place a
+  // reviewer sees the audience -- so these counts matter MORE than before,
+  // not less.) Each channel gets at
   // least one row that MUST be excluded -- an unconfirmed email address and a
   // subscriber belonging to the other food bank -- because a count query with
   // its predicate dropped passes every test that only seeds matching rows.
@@ -683,9 +687,11 @@ describe("adminNeedDetail", () => {
     // 2 of 3 Salisbury email rows are confirmed; the third address and every
     // Amesbury row are excluded.
     expect(context.subscriber_counts).toEqual({ email: 2, webpush: 3, mobile: 1, whatsapp: 2 });
-    // The single number the Notify button's confirm() dialog shows. Summed in
-    // the handler, so a channel dropped from the sum would show the admin a
-    // smaller audience than the one about to be messaged.
+    // The single total beside "Food Bank Subs". Summed in the handler, so a
+    // channel dropped from the sum would show the admin a smaller audience
+    // than the one about to be messaged -- and since github #37 took away the
+    // confirm() dialog, this row is the ONLY place that audience is shown
+    // before the send.
     expect(context.subscriber_count).toBe(8);
   });
 
