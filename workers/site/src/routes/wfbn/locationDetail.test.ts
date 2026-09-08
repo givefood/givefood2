@@ -1145,8 +1145,16 @@ describe("wfbnFoodbankLocation -- the response envelope and D1 traffic", () => {
   // that middleware. Django's own resolve() strips the prefix and DOES send
   // the header on Welsh pages. Recorded in middleware/geoJsonPreload.test.ts
   // too; asserted here because this is one of the pages it costs.
-  it("sends no preload hint on a locale-prefixed location page (suspect, pinned)", async () => {
-    expect((await get("/cy/needs/at/salisbury/amesbury/")).headers.get("Link")).toBeNull();
+  // github #30: this asserted null, "(suspect, pinned)". The location detail
+  // page is the one that reaches the middleware through the catch-all
+  // `/needs/at/:slug/:locslug/` route, registered LAST -- so it is the route
+  // most likely to be missed by a fix written against the tidier literals,
+  // and the reason it is asserted here rather than only in the middleware's
+  // own suite.
+  it("preloads the parent food bank's geojson on a locale-prefixed location page", async () => {
+    expect((await get("/cy/needs/at/salisbury/amesbury/")).headers.get("Link")).toBe(
+      "</cy/needs/at/salisbury/geo.json>; rel=preload; as=fetch; crossorigin=anonymous",
+    );
   });
 });
 

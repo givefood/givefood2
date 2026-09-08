@@ -434,14 +434,20 @@ describe("wfbnFoodbankNearby -- the response envelope", () => {
   // routePath against the unprefixed literal -- a real divergence from Django,
   // already pinned in middleware/geoJsonPreload.test.ts and asserted here
   // because this is one of the pages it costs.
-  it("preloads the whole-country geojson in English and, divergently, nothing in Welsh", async () => {
+  // github #30: the Welsh assertion used to be null, "divergently". This is
+  // also the page whose preload is NOT its own slug's file -- the prefix has
+  // to land on the whole-country geo.json, which is the largest response the
+  // site serves and so the one the hint is worth most on.
+  it("preloads the whole-country geojson in English and, now, in Welsh with the prefix", async () => {
     expect((await get("/needs/at/salisbury/nearby/")).headers.get("Link")).toBe(
       "</needs/geo.json>; rel=preload; as=fetch; crossorigin=anonymous",
     );
     expect((await get("/needs/at/salisbury/")).headers.get("Link")).toBe(
       "</needs/at/salisbury/geo.json>; rel=preload; as=fetch; crossorigin=anonymous",
     );
-    expect((await get("/cy/needs/at/salisbury/nearby/")).headers.get("Link")).toBeNull();
+    expect((await get("/cy/needs/at/salisbury/nearby/")).headers.get("Link")).toBe(
+      "</cy/needs/geo.json>; rel=preload; as=fetch; crossorigin=anonymous",
+    );
   });
 
   // ONE D1 SESSION, SIX STATEMENTS, AND THE SHAPE OF THEM.

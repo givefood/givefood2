@@ -1,4 +1,5 @@
 import type { MiddlewareHandler } from "hono";
+import type { AppEnv } from "../types";
 
 // Port of givefood/middleware.py's GeoJSONPreload. Runs after routing (it
 // wraps `next()`), and reads Hono's matched route template via
@@ -7,14 +8,34 @@ import type { MiddlewareHandler } from "hono";
 // is built out; this middleware is inert (adds no header) for any route it
 // does not recognise, which is the same fail-open behaviour as the Django
 // original's try/except around resolve().
-export const geoJsonPreload: MiddlewareHandler = async (c, next) => {
+export const geoJsonPreload: MiddlewareHandler<AppEnv> = async (c, next) => {
   await next();
 
   if (c.res.status !== 200 || !(c.res.headers.get("Content-Type") ?? "").includes("text/html")) {
     return;
   }
 
-  const routePath = c.req.routePath;
+  // THE LOCALE PREFIX IS STRIPPED BEFORE MATCHING AND PUT BACK AFTER (github
+  // #30). index.ts registers every page twice -- once bare and once per
+  // locale, `app.get("/" + locale + "/needs/at/:slug/", ...)` -- so a Welsh
+  // request matches the route template "/cy/needs/at/:slug/", which equalled
+  // none of the literals below. Every /cy/, /ga/ and /gd/ page therefore lost
+  // the preload on all six map pages, worst on /cy/needs/ where the payload
+  // is the ~8,800-feature all-food-banks geo.json. Django loses nothing:
+  // LocaleMiddleware sits outside GeoJSONPreload, so `resolve()` has already
+  // stripped the i18n prefix by the time the header is built, and `reverse()`
+  // puts it back.
+  //
+  // TAKEN FROM `lang`, NOT FROM A SECOND LIST OF LOCALES. resolveLanguage
+  // (registered immediately before this middleware) has already decided the
+  // language from the same @givefood/templates LOCALES that index.ts's
+  // registration loop uses; reading its answer means a fifth language needs
+  // no edit here. Defaulting to "en" covers a caller that mounts this
+  // middleware without resolveLanguage in front of it -- which the test suite
+  // does, and which must keep behaving like an unprefixed request.
+  const lang = c.get("lang") ?? "en";
+  const prefix = lang === "en" ? "" : `/${lang}`;
+  const routePath = prefix && c.req.routePath.startsWith(`${prefix}/`) ? c.req.routePath.slice(prefix.length) : c.req.routePath;
   let geojsonUrl: string | null = null;
 
   if (routePath === "/needs/") {
@@ -43,6 +64,11 @@ export const geoJsonPreload: MiddlewareHandler = async (c, next) => {
   }
 
   if (geojsonUrl) {
-    c.res.headers.set("Link", `<${geojsonUrl}>; rel=preload; as=fetch; crossorigin=anonymous`);
+    // Prefixed back on, matching what the PAGE actually fetches: routes/wfbn's
+    // handlers build map_config.geojson with urlForLocale(), so a Welsh page
+    // requests /cy/needs/at/x/geo.json. Preloading the unprefixed URL would be
+    // worse than preloading nothing -- a wasted request that also warms a
+    // cache entry the page never reads.
+    c.res.headers.set("Link", `<${prefix}${geojsonUrl}>; rel=preload; as=fetch; crossorigin=anonymous`);
   }
 };

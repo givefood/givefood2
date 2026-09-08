@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { Handler, MiddlewareHandler } from "hono";
 import { describe, expect, it } from "vitest";
 import { geoJsonPreload } from "./geoJsonPreload";
+import { resolveLanguage } from "./resolveLanguage";
 
 // Port of givefood/middleware.py's GeoJSONPreload. The middleware has no
 // return value and no inputs of its own -- everything it does is decided by
@@ -51,6 +52,32 @@ function siteApp() {
   // the behaviour of all of cy/ga/gd.
   app.get("/cy/needs/", html);
   app.get("/cy/needs/at/:slug/", html);
+  return app;
+}
+
+// THE REAL MIDDLEWARE ORDER, which siteApp() above deliberately does not have.
+// index.ts:117-118 registers resolveLanguage and then geoJsonPreload, and
+// since github #30 the second reads the first's answer to strip the locale
+// prefix off the route template. A test app without resolveLanguage sees no
+// `lang` at all and falls back to "en" -- correct, and covered below, but it
+// cannot show the locale behaviour, so every locale assertion has to run
+// through this app instead.
+function localeSiteApp() {
+  const app = new Hono();
+  app.use("*", resolveLanguage);
+  app.use("*", geoJsonPreload);
+  for (const locale of ["cy", "ga", "gd"]) {
+    app.get(`/${locale}/needs/`, html);
+    app.get(`/${locale}/needs/at/:slug/`, html);
+    app.get(`/${locale}/needs/at/:slug/nearby/`, html);
+    app.get(`/${locale}/needs/at/:slug/locations/`, html);
+    app.get(`/${locale}/needs/at/:slug/donationpoints/`, html);
+    app.get(`/${locale}/needs/in/constituency/:slug/`, html);
+    // Registered last, exactly as index.ts does it.
+    app.get(`/${locale}/needs/at/:slug/:locslug/`, html);
+  }
+  app.get("/needs/", html);
+  app.get("/needs/at/:slug/", html);
   return app;
 }
 
@@ -164,22 +191,53 @@ describe("geoJsonPreload", () => {
     expect(await link("/needs/at/sid-valley/geo.json", app)).toBeNull();
   });
 
-  it("never fires on a locale-prefixed page -- a real divergence from Django", async () => {
-    // DOCUMENTS CURRENT BEHAVIOUR, NOT DESIRED BEHAVIOUR. Django's
-    // /needs/ include sits inside i18n_patterns (givefood/urls.py:47), and
-    // resolve('/cy/needs/at/x/') strips the prefix and returns url_name
-    // 'foodbank' -- so the Django site DOES send this header on Welsh, Irish
-    // and Gaelic pages. index.ts registers the locale variants as separate
-    // routes ("/cy/needs/at/:slug/"), whose routePath does not equal any
-    // literal in the middleware, so the port sends nothing. Reported as a
-    // suspected bug rather than fixed here.
-    const app = siteApp();
-    expect(await link("/cy/needs/", app)).toBeNull();
-    expect(await link("/cy/needs/at/sid-valley/", app)).toBeNull();
-    // The nearby page too, so a partial fix that only re-listed the two
-    // simplest locale routes cannot pass this test while leaving the rest of
-    // the i18n_patterns loop (index.ts:276-301) unported.
-    expect(await link("/cy/needs/at/sid-valley/nearby/", siteApp())).toBeNull();
+  // github #30. This block used to assert nulls, labelled "DOCUMENTS CURRENT
+  // BEHAVIOUR, NOT DESIRED BEHAVIOUR ... reported as a suspected bug rather
+  // than fixed here". Django's /needs/ include sits inside i18n_patterns, and
+  // LocaleMiddleware runs OUTSIDE GeoJSONPreload, so resolve('/cy/needs/at/x/')
+  // has already had the prefix stripped and reverse() puts it back -- the live
+  // site sends this header on Welsh, Irish and Gaelic pages and the port sent
+  // nothing on any of them.
+  it.each([["cy"], ["ga"], ["gd"]])("preloads on %s pages, with the prefix on the URL", async (locale) => {
+    const app = localeSiteApp();
+
+    // All three locales, not just Welsh: the fix reads the resolved language
+    // rather than matching one literal per page per locale, and asserting one
+    // locale would pass for an implementation that special-cased it.
+    expect(await link(`/${locale}/needs/`, app)).toBe(`</${locale}/needs/geo.json>${PARAMS}`);
+    expect(await link(`/${locale}/needs/at/sid-valley/`, app)).toBe(`</${locale}/needs/at/sid-valley/geo.json>${PARAMS}`);
+    expect(await link(`/${locale}/needs/at/sid-valley/locations/`, app)).toBe(`</${locale}/needs/at/sid-valley/geo.json>${PARAMS}`);
+    expect(await link(`/${locale}/needs/at/sid-valley/donationpoints/`, app)).toBe(`</${locale}/needs/at/sid-valley/geo.json>${PARAMS}`);
+    expect(await link(`/${locale}/needs/at/sid-valley/sidmouth/`, app)).toBe(`</${locale}/needs/at/sid-valley/geo.json>${PARAMS}`);
+    // The constituency page, whose own literal github #29 fixed -- the two
+    // fixes have to compose, and this is the only assertion that says so.
+    expect(await link(`/${locale}/needs/in/constituency/bath/`, app)).toBe(`</${locale}/needs/in/constituency/bath/geo.json>${PARAMS}`);
+  });
+
+  it("preloads the ALL-food-banks geo.json on a locale nearby page, prefixed", async () => {
+    // The one page whose preload is not its own slug's file. Pinned
+    // separately because a fix that pasted the prefix onto the page URL
+    // rather than onto the geojson URL would still look right on every other
+    // route.
+    expect(await link("/cy/needs/at/sid-valley/nearby/", localeSiteApp())).toBe(`</cy/needs/geo.json>${PARAMS}`);
+  });
+
+  it("leaves the English pages unprefixed", async () => {
+    // prefix_default_language=False: English has no prefix in Django either,
+    // so the fix must not invent one.
+    const app = localeSiteApp();
+    expect(await link("/needs/", app)).toBe(`</needs/geo.json>${PARAMS}`);
+    expect(await link("/needs/at/sid-valley/", app)).toBe(`</needs/at/sid-valley/geo.json>${PARAMS}`);
+  });
+
+  it("treats a request with no resolveLanguage in front of it as English", async () => {
+    // The fallback that keeps every other test in this file honest: mounted
+    // alone, the middleware sees no `lang` and must behave exactly as it did
+    // before #30 rather than throwing on the undefined.
+    const app = new Hono();
+    app.use("*", geoJsonPreload);
+    app.get("/needs/at/:slug/", html);
+    expect(await link("/needs/at/sid-valley/", app)).toBe(`</needs/at/sid-valley/geo.json>${PARAMS}`);
   });
 
   // github #29. This pair used to assert the opposite of what it asserts now,

@@ -499,11 +499,21 @@ describe("wfbnFoodbank -- the response envelope", () => {
   // routePath against the unprefixed literal -- a real divergence from
   // Django, already pinned in middleware/geoJsonPreload.test.ts and asserted
   // here because this is the page it costs.
-  it("preloads the food bank's geojson in English and, divergently, not in Welsh", async () => {
+  // github #30: the Welsh half used to assert null, "divergently". Django
+  // sends this header on /cy/ pages -- LocaleMiddleware runs outside
+  // GeoJSONPreload, so resolve() has already stripped the prefix -- and the
+  // port sent nothing on any of cy/ga/gd. Through the REAL router here, which
+  // is what geoJsonPreload.test.ts's hand-built apps cannot be.
+  it("preloads the food bank's geojson in English and, now, in Welsh with the prefix", async () => {
     expect((await get("/needs/at/salisbury/")).headers.get("Link")).toBe(
       "</needs/at/salisbury/geo.json>; rel=preload; as=fetch; crossorigin=anonymous",
     );
-    expect((await get("/cy/needs/at/salisbury/")).headers.get("Link")).toBeNull();
+    // The PREFIXED url, matching what the Welsh page actually fetches:
+    // map_config.geojson is built with urlForLocale(), so preloading the
+    // unprefixed file would warm a cache entry the page never reads.
+    expect((await get("/cy/needs/at/salisbury/")).headers.get("Link")).toBe(
+      "</cy/needs/at/salisbury/geo.json>; rel=preload; as=fetch; crossorigin=anonymous",
+    );
   });
 
   // ONE D1 SESSION, THREE STATEMENTS, AND -- SINCE github #52 -- ONE WAIT.

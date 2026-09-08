@@ -530,12 +530,14 @@ describe("wfbnFoodbankLocations -- the response envelope", () => {
   // and geoJsonPreload compares routePath against the unprefixed literal. A
   // real divergence, already pinned in middleware/geoJsonPreload.test.ts and
   // asserted here because these are two of the four pages it costs.
-  it("preloads the food bank's geojson in English and, divergently, not in Welsh", async () => {
+  // github #30: both Welsh assertions used to be null, "divergently".
+  it("preloads the food bank's geojson in English and, now, in Welsh with the prefix", async () => {
     const expected = "</needs/at/salisbury/geo.json>; rel=preload; as=fetch; crossorigin=anonymous";
+    const expectedCy = "</cy/needs/at/salisbury/geo.json>; rel=preload; as=fetch; crossorigin=anonymous";
     expect((await get("/needs/at/salisbury/locations/")).headers.get("Link")).toBe(expected);
     expect((await get("/needs/at/salisbury/donationpoints/")).headers.get("Link")).toBe(expected);
-    expect((await get("/cy/needs/at/salisbury/locations/")).headers.get("Link")).toBeNull();
-    expect((await get("/cy/needs/at/salisbury/donationpoints/")).headers.get("Link")).toBeNull();
+    expect((await get("/cy/needs/at/salisbury/locations/")).headers.get("Link")).toBe(expectedCy);
+    expect((await get("/cy/needs/at/salisbury/donationpoints/")).headers.get("Link")).toBe(expectedCy);
   });
 
   // ONE D1 SESSION, THREE STATEMENTS, TWO ROUND TRIPS, AND THE SHAPE OF THEM.
