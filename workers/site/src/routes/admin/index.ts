@@ -145,8 +145,10 @@ adminApp.get("/foodbank/:slug/edit/:form/", adminFoodbankPartialEdit);
 adminApp.post("/foodbank/:slug/edit/:form/", adminFoodbankPartialEdit);
 
 // WP 6.8: enqueue-and-poll check flow.
+// GET ONLY since github #38. The POST used to enqueue the check job; the
+// check now runs during the GET, so "re-run" is just loading the page again
+// and the template's Re-run control is a link.
 adminApp.get("/foodbank/:slug/check/", adminFoodbankCheck);
-adminApp.post("/foodbank/:slug/check/", adminFoodbankCheck);
 adminApp.post("/foodbank/:slug/use-ai/:field/", adminFoodbankUseAiDetail);
 
 adminApp.get("/foodbank/:slug/location/new/", adminFoodbankLocationForm);

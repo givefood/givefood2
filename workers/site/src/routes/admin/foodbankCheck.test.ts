@@ -176,6 +176,13 @@ CREATE UNIQUE INDEX foodbank_slug_uniq ON foodbank(slug);
 -- so a hand-copied CREATE TABLE here would have been wrong on the day it was
 -- pasted -- which is the drift schema.testkit.ts exists to stop.
 ${schemaFor("foodbankchange", "foodbankchange_full")}
+-- github #38: the check itself now runs inside this request, so this fixture
+-- needs everything runFoodbankCheck touches -- the two _full views (the
+-- narrowed location read and the donation points) and the crawlitem table it
+-- records a row in per fetched page. Same reasoning as the note above: taken
+-- from the migrations, never transcribed. No backticks in here: this is
+-- inside a template literal and one would end it.
+${schemaFor("foodbanklocation", "foodbanklocation_full", "foodbankdonationpoint", "foodbankdonationpoint_full", "crawlitem")}
 `;
 
 type Bindable = null | number | bigint | string | Uint8Array;
@@ -292,14 +299,103 @@ let db: DatabaseSync;
 let env: AppEnv["Bindings"];
 let queueSend: ReturnType<typeof vi.fn>;
 
+// github #38: the check runs inside the request now, so this suite has to
+// stand in for five food bank websites and for Gemini. Everything else stays
+// real -- the prompt is really built, the comparison really runs, and the
+// crawlitem rows are really written.
+//
+// The AI reply is deliberately NOT a copy of what we hold: the phone number
+// differs from the seeded one, so detailChanges has something true in it and
+// a comparison that silently stopped running would show up as a false.
+const AI_REPLY = {
+  details: {
+    name: "Salisbury Foodbank",
+    address: "Unit 1\r\nBemerton Heath",
+    postcode: "SP2 9DY",
+    phone_number: "01722 000111",
+    contact_email: "info@salisbury.invalid",
+    charity_number: "1130237",
+    facebook_page: "",
+    bankuet_slug: "",
+    rss_url: "",
+    news_url: "",
+    donation_points_url: "",
+    locations_url: "",
+    contacts_url: "",
+  },
+  locations: [],
+  donation_points: [],
+};
+
+let geminiCalls: string[];
+let pageFetches: string[];
+let geminiStatus: number;
+
+const GEMINI_HOST = "generativelanguage.googleapis.com";
+
+// HTMLRewriter is a workerd global and this suite runs in node
+// (vitest.config.mts pins `environment: "node"` and explains why).
+//
+// DELIBERATELY THE CRUDEST POSSIBLE DOUBLE: strip the tags, keep the text.
+// This suite's subject is the ROUTE -- that navigating runs a check, that the
+// result reaches the template, that a failure renders instead of 500ing --
+// and the scraper is a collaborator it has to be able to call, not the thing
+// under test. What the real selectors are, that the element handler actually
+// calls remove(), and that the text handler accumulates rather than assigns
+// are all asserted against a far more careful stand-in in
+// packages/ai/src/foodbankCheck.test.ts, which is where that code lives.
+// Duplicating that double here would be a second, weaker copy of an oracle
+// that already exists.
+class CrudeHTMLRewriter {
+  private handlers: { text(chunk: { text: string }): void }[] = [];
+  on(_selector: string, handler: unknown): this {
+    if (handler && typeof handler === "object" && "text" in handler) this.handlers.push(handler as { text(chunk: { text: string }): void });
+    return this;
+  }
+  transform(res: Response): { text(): Promise<string> } {
+    const handlers = this.handlers;
+    return {
+      async text(): Promise<string> {
+        const html = await res.text();
+        const body = /<body\b[^>]*>([\s\S]*?)<\/body\s*>/i.exec(html)?.[1] ?? html;
+        const stripped = body.replace(/<script\b[\s\S]*?<\/script\s*>/gi, "").replace(/<[^>]*>/g, "");
+        for (const handler of handlers) handler.text({ text: stripped });
+        return stripped;
+      },
+    };
+  }
+}
+
+function stubFetch(): void {
+  vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    if (url.includes(GEMINI_HOST)) {
+      geminiCalls.push(String((init as { body?: string } | undefined)?.body ?? ""));
+      if (geminiStatus !== 200) return new Response("upstream said no", { status: geminiStatus });
+      return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify(AI_REPLY) }] } }] }), { status: 200 });
+    }
+    pageFetches.push(url);
+    // Real HTML, because fetchPageBodyText runs a real HTMLRewriter over it --
+    // including the script/style stripping, which a bare text body would not
+    // exercise.
+    return new Response(`<html><body><script>ignored()</script><p>Ring us on 01722 000111</p></body></html>`, {
+      status: 200,
+      headers: { "Content-Type": "text/html" },
+    });
+  });
+}
+
+const ctx = (): ExecutionContext => execCtx;
+
 function seedFoodbank(row: { id: number; name: string; slug: string; edited: string | null }): void {
   db.prepare(
     `INSERT INTO foodbank
        (id, uuid, name, slug, address, postcode, country, lat_lng, contact_email, phone_number,
-        url, shopping_list_url, charity_just_foodbank, address_is_administrative, is_closed,
+        url, shopping_list_url, locations_url, contacts_url, donation_points_url,
+        charity_just_foodbank, address_is_administrative, is_closed,
         no_locations, days_between_needs, created, modified, edited)
      VALUES (?, ?, ?, ?, ?, 'SP2 9DY', 'England', '51.0688,-1.7945', ?, '01722349556',
-             ?, ?, 0, 0, 0, 0, 0, ?, ?, ?)`,
+             ?, ?, ?, ?, ?, 0, 0, 0, 0, 0, ?, ?, ?)`,
   ).run(
     row.id,
     `uuid${row.id}`.padEnd(32, "0"),
@@ -307,8 +403,11 @@ function seedFoodbank(row: { id: number; name: string; slug: string; edited: str
     row.slug,
     "Unit 1\r\nBemerton Heath",
     `info@${row.slug}.example`,
-    `https://${row.slug}.example/`,
-    `https://${row.slug}.example/list/`,
+    `https://${row.slug}.invalid/`,
+    `https://${row.slug}.invalid/list/`,
+    `https://${row.slug}.invalid/where/`,
+    `https://${row.slug}.invalid/contacts/`,
+    `https://${row.slug}.invalid/donate/`,
     T.sep01,
     T.sep06,
     row.edited,
@@ -373,8 +472,8 @@ function buildApp(opts: { auth?: boolean } = {}): Hono<AppEnv> {
       await next();
     });
   }
+  // GET only, matching routes/admin/index.ts since github #38.
   app.get("/admin/foodbank/:slug/check/", adminFoodbankCheck);
-  app.post("/admin/foodbank/:slug/check/", adminFoodbankCheck);
   app.get("/admin/job/:id/", adminJobStatus);
   // Labelled rather than left to become an unhandled rejection, so a
   // regression reads as "expected 302, got 500: ..." instead of a crash.
@@ -449,6 +548,11 @@ beforeEach(() => {
   seedFoodbank({ id: 2, name: "Oxford Foodbank", slug: "oxford", edited: null });
 
   queueSend = vi.fn(async (_message: unknown) => {});
+  geminiCalls = [];
+  pageFetches = [];
+  geminiStatus = 200;
+  stubFetch();
+  vi.stubGlobal("HTMLRewriter", CrudeHTMLRewriter);
   env = {
     DB: { withSession: () => d1Session(db) },
     // Never reached unless a request carries an admin session cookie, which
@@ -458,6 +562,7 @@ beforeEach(() => {
     CSRF_SECRET,
     GMAP_STATIC_KEY: "",
     GMAP_GEOCODE_KEY: "",
+    GEMINI_API_KEY: "test-gemini-key-not-a-real-one",
   } as unknown as AppEnv["Bindings"];
 
   app = buildApp();
@@ -465,317 +570,151 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
 // ===========================================================================
-// POST -- the one write this page has
+// GET -- the check runs during the request (github #38)
 // ===========================================================================
-describe("POST /admin/foodbank/:slug/check/ -- enqueuing a check", () => {
-  // THE ISSUE-#34 ASSERTION. A 302 to `?job=<uuid>` looks identical whether
-  // the INSERT stored a row or stored nothing, because the page it lands on
-  // renders "queued" for a missing job exactly as readily as it renders the
-  // Run Check button. So the row is read back out of SQLite, column by
-  // column, and the redirect is checked to point at THAT id.
-  it("writes a queued admin_job and sends the admin to it", async () => {
-    const res = await post("/admin/foodbank/salisbury/check/");
+describe("GET /admin/foodbank/:slug/check/ -- running the check inline", () => {
+  it("runs the check on plain navigation, with no button press and no job row", async () => {
+    const res = await get("/admin/foodbank/salisbury/check/");
 
-    expect(res.status).toBe(302);
-    const location = res.headers.get("Location");
-    expect(location).toMatch(/^\/admin\/foodbank\/salisbury\/check\/\?job=[0-9a-f-]{36}$/);
-
-    const rows = jobRows();
-    expect(rows).toHaveLength(1);
-    const row = rows[0]!;
-    expect(location).toBe(`/admin/foodbank/salisbury/check/?job=${row.id}`);
-    expect(row.kind).toBe("check");
-    expect(row.target).toBe("salisbury");
-    expect(row.status).toBe("queued");
-    // Nothing has run yet: a result or a finished time on a freshly enqueued
-    // job would make getAdminJobCounts (adminJobs.ts:86-97) count it as
-    // finished before the consumer has touched it.
-    expect(row.result).toBeNull();
-    expect(row.error).toBeNull();
-    expect(row.finished).toBeNull();
+    expect(res.status).toBe(200);
+    // The whole point of #38: landing on the page IS the check.
+    expect(geminiCalls).toHaveLength(1);
+    // And it is a real check, not a stub -- the five candidate pages were
+    // fetched and the prompt was built out of what came back.
+    expect(pageFetches.sort()).toEqual(["https://salisbury.invalid/", "https://salisbury.invalid/contacts/", "https://salisbury.invalid/donate/", "https://salisbury.invalid/list/", "https://salisbury.invalid/where/"]);
   });
 
-  // pyNow(), never toISOString(). getLatestAdminJob's `ORDER BY created DESC`
-  // is a TEXT sort, and 'T' (0x54) sorts after ' ' (0x20), so a single
-  // ISO-formatted row would win that comparison against every Django-format
-  // row on the same day regardless of the actual time -- the exact failure
-  // packages/models/src/pyDatetime.ts's header records happening twice in
-  // production. Asserted here because this handler is one of the write sites.
-  it("stamps `created` in Django's format, not ISO", async () => {
-    await post("/admin/foodbank/salisbury/check/");
+  it("writes no admin_job row and sends no queue message", async () => {
+    // The two halves of the old architecture, asserted gone rather than
+    // assumed gone. A leftover insert would be invisible on the page and
+    // would keep growing a table nothing reads any more.
+    await get("/admin/foodbank/salisbury/check/");
 
-    expect(jobRows()[0]!.created).toBe(NOW_PY);
-    expect(jobRows()[0]!.created).not.toContain("T");
+    expect(db.prepare("SELECT COUNT(*) AS n FROM admin_job").get()).toEqual({ n: 0 });
+    expect(queueSend).not.toHaveBeenCalled();
   });
 
-  // THE CROSS-WORKER CONTRACT. workers/jobs/src/queues/jobs.ts:37-38
-  // switches on `type` and destructures `jobId`/`foodbankSlug`; a message
-  // with the right values under the wrong names is accepted by the queue,
-  // dispatched to nothing, and the job sits at "queued" forever with the
-  // page spinning. Nothing on this side would notice.
-  it("sends the queue message workers/jobs actually destructures", async () => {
-    await post("/admin/foodbank/salisbury/check/");
+  it("hands the template this request's own result", async () => {
+    await get("/admin/foodbank/salisbury/check/");
 
-    expect(queueSend).toHaveBeenCalledTimes(1);
-    expect(queueSend.mock.calls[0]![0]).toEqual({
-      type: "foodbank-check",
-      jobId: jobRows()[0]!.id,
-      foodbankSlug: "salisbury",
-    });
-  });
-
-  // The round trip the admin actually experiences: press the button, follow
-  // the redirect, and find the job the button created. This is what proves
-  // the id in the URL, the id in the row and the id the page reads are one
-  // value rather than three that happen to be generated near each other.
-  it("lands on a page showing the job it just created", async () => {
-    const res = await post("/admin/foodbank/salisbury/check/");
-    const followed = await get(res.headers.get("Location")!);
-
-    expect(followed.status).toBe(200);
+    const ctx = lastRender().context;
     expect(lastRender().template).toBe("admin/foodbank_check.njk");
-    expect(renderedJob()?.id).toBe(jobRows()[0]!.id);
-    expect(renderedJob()?.status).toBe("queued");
-    // Still "queued", so no result is handed to the template -- the done
-    // branch of foodbank_check.njk:57 is the only one that reads it.
-    expect(lastRender().context.result).toBeNull();
+    expect(ctx.check_error).toBeNull();
+    const result = ctx.result as { aiResponse: { details: Record<string, string> }; fetchedPages: unknown[]; detailChanges: Record<string, boolean> };
+    expect(result.aiResponse.details.phone_number).toBe("01722 000111");
+    // Five candidate pages, all of which answered.
+    expect(result.fetchedPages).toHaveLength(5);
+    // The comparison actually ran: we hold no phone number for Salisbury and
+    // the model found one, so that row must be flagged as changed.
+    expect(result.detailChanges.phone_number).toBe(true);
   });
 
-  // Re-run is a first-class action (foodbank_check.njk:61-64's Re-run button
-  // and :52-55's Retry both POST here), so a second press must create a
-  // second job rather than resurrect or overwrite the first. Both rows are
-  // stamped at the same frozen instant on purpose: `ORDER BY created DESC
-  // LIMIT 1` cannot break that tie, which is precisely why the redirect
-  // carries `?job=` instead of relying on "latest".
-  it("creates a second, distinct job on a re-run rather than reusing the first", async () => {
-    const first = await post("/admin/foodbank/salisbury/check/");
-    const second = await post("/admin/foodbank/salisbury/check/");
+  it("records a crawlitem row per fetched page, in one batch", async () => {
+    await get("/admin/foodbank/salisbury/check/");
 
-    const rows = jobRows();
-    expect(rows).toHaveLength(2);
-    expect(new Set(rows.map((r) => r.id)).size).toBe(2);
-    expect(first.headers.get("Location")).not.toBe(second.headers.get("Location"));
-    expect(queueSend).toHaveBeenCalledTimes(2);
-
-    // Each `?job=` resolves to its own row, tie or no tie.
-    for (const row of rows) {
-      await get(`/admin/foodbank/salisbury/check/?job=${row.id}`);
-      expect(renderedJob()?.id).toBe(row.id);
-    }
+    const items = db.prepare("SELECT crawl_type, url, foodbank_id FROM crawlitem ORDER BY url").all() as { crawl_type: string; url: string; foodbank_id: number }[];
+    expect(items).toHaveLength(5);
+    expect(items.every((i) => i.crawl_type === "check" && i.foodbank_id === 1)).toBe(true);
+    // No crawl_set: Django never groups these, and the port must not either.
+    expect(db.prepare("SELECT COUNT(*) AS n FROM crawlitem WHERE crawl_set_id IS NOT NULL").get()).toEqual({ n: 0 });
   });
 
-  // get_object_or_404, before anything else -- and deliberately before the
-  // CSRF check, which is why this sends a token that would otherwise be
-  // rejected. Pinned because the ORDER is the observable part: a 403 here
-  // would mean the CSRF check had moved above the lookup.
-  it("404s an unknown food bank without writing or enqueuing anything", async () => {
-    const res = await post("/admin/foodbank/nowhere/check/", { token: "not-the-token" });
+  it("still renders a usable page when the check fails, rather than 500ing", async () => {
+    // A food bank whose site is down, or a Gemini outage. Inline work means
+    // the exception reaches the response, and the header block this page
+    // renders above the result -- Edit, Touch, Last edit -- is exactly what a
+    // reviewer can still act on when the check itself cannot run.
+    geminiStatus = 400;
+
+    const res = await get("/admin/foodbank/salisbury/check/");
+
+    expect(res.status).toBe(200);
+    const ctx = lastRender().context;
+    expect(ctx.result).toBeNull();
+    expect(ctx.check_error).toContain("Gemini API error: 400");
+    // The header context is still there, so the template's own branches can
+    // render Edit/Touch beside the error.
+    expect((ctx.foodbank as { slug: string }).slug).toBe("salisbury");
+    // Present and non-empty, not pinned word for word -- lib/timesince.ts owns
+    // the wording (and joins with a non-breaking space, which makes an
+    // eyeballed literal here a trap).
+    expect(ctx.foodbank_edited_timesince).toBeTruthy();
+  });
+
+  it("404s an unknown food bank without calling Gemini", async () => {
+    // The lookup is first for a reason now: a typo in the URL must not cost
+    // a paid AI call.
+    const res = await get("/admin/foodbank/nope/check/");
 
     expect(res.status).toBe(404);
-    expect(jobRows()).toHaveLength(0);
-    expect(queueSend).not.toHaveBeenCalled();
+    expect(geminiCalls).toHaveLength(0);
+    expect(pageFetches).toHaveLength(0);
   });
 
-  // THE PATH IS THE ONLY INPUT. Issue #34 was a value that reached the write
-  // from the wrong place; the mirror-image failure is a value reaching it from
-  // one place too many. Every identifier this write uses comes from the route
-  // pattern, so a query param or a body field of the same name must be inert
-  // -- and inertness is invisible unless something sends one. This POST sends
-  // `slug` and `target` twice over, in the query string and in the body, both
-  // naming a food bank that exists (so a handler that read either would write
-  // a perfectly valid row for the WRONG food bank, redirect to it, and queue a
-  // scrape of it, with nothing anywhere to raise).
-  //
-  // Mutants killed: `const slug = c.req.query("slug") ?? c.req.param("slug")!`
-  // and `target: typeof body.target === "string" ? body.target : slug`. Both
-  // survived every other test in this file.
-  it("takes the food bank from the path alone, ignoring a ?slug= or a body field that disagrees", async () => {
-    const res = await post("/admin/foodbank/salisbury/check/?slug=oxford&job=whatever", {
-      extra: { slug: "oxford", target: "oxford", foodbankSlug: "oxford" },
-    });
+  it("no longer answers POST", async () => {
+    // The POST enqueued the job. With the work inline there is nothing for it
+    // to do, and the template's Re-run control is a link -- so the route is
+    // GET-only and a stale bookmark or a resubmitted form gets a 404 rather
+    // than silently doing nothing.
+    const res = await app.fetch(new Request("https://example.invalid/admin/foodbank/salisbury/check/", { method: "POST" }), env, ctx());
 
-    expect(res.status).toBe(302);
-    const rows = jobRows();
-    expect(rows).toHaveLength(1);
-    expect(rows[0]!.target).toBe("salisbury");
-    expect(res.headers.get("Location")).toBe(`/admin/foodbank/salisbury/check/?job=${rows[0]!.id}`);
-    expect(queueSend.mock.calls[0]![0]).toEqual({ type: "foodbank-check", jobId: rows[0]!.id, foodbankSlug: "salisbury" });
-  });
-
-  // SUSPECT (reported, not fixed): the row is inserted BEFORE the queue send,
-  // and a failed send leaves it behind at "queued" forever. That is not a
-  // cosmetic leak -- foodbank_check.njk:38 gates the Run Check button on
-  // `not job`, and getLatestAdminJob happily returns this orphan, so the page
-  // shows a spinner polling every 2s and offers the reviewer no way to try
-  // again. Pinned as it stands: a 500, and the row still there.
-  it("leaves the job row behind when the queue send fails", async () => {
-    queueSend.mockRejectedValueOnce(new Error("queue unavailable"));
-
-    const res = await post("/admin/foodbank/salisbury/check/");
-
-    expect(res.status).toBe(500);
-    expect(jobRows()).toHaveLength(1);
-    expect(jobRows()[0]!.status).toBe("queued");
-
-    // And this is what the reviewer then sees: a job, so no Run Check form.
-    await get("/admin/foodbank/salisbury/check/");
-    expect(renderedJob()).not.toBeNull();
-    expect(renderedJob()?.status).toBe("queued");
+    expect(res.status).toBe(404);
+    expect(geminiCalls).toHaveLength(0);
   });
 });
 
 // ===========================================================================
-// CSRF -- WP 4.6's signed double-submit, on the one mutating route here
+// GET ?debug=
 // ===========================================================================
-describe("POST -- CSRF", () => {
-  // Every refusal below asserts the same two things as well as the status:
-  // NO ROW and NO QUEUE MESSAGE. "403" on its own would still pass if the
-  // insert had already happened above the check.
-  function assertNothingHappened(): void {
-    expect(jobRows()).toHaveLength(0);
-    expect(queueSend).not.toHaveBeenCalled();
-  }
+describe("GET ?debug=", () => {
+  // Django's two debug-only views each re-ran the whole scrape to dump the
+  // prompt or the raw JSON. Folded onto this page (PLAN.md S9), they now read
+  // the result THIS request computed -- which is what Django's did, and what
+  // the job-backed version could not do.
+  it("serves the prompt this request built, as text/plain", async () => {
+    const res = await get("/admin/foodbank/salisbury/check/?debug=prompt");
 
-  it("refuses a POST with no csrf_token field", async () => {
-    const res = await post("/admin/foodbank/salisbury/check/", { token: null });
-
-    expect(res.status).toBe(403);
-    expect(await res.text()).toBe("Forbidden");
-    assertNothingHappened();
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/plain");
+    const body = await res.text();
+    // The prompt is built from the pages that were just fetched, so it must
+    // carry what they said -- not merely be non-empty.
+    expect(body).toContain("Salisbury Foodbank");
+    expect(body).toContain("Ring us on 01722 000111");
   });
 
-  it("refuses a token that does not match the cookie", async () => {
-    const res = await post("/admin/foodbank/salisbury/check/", { token: "c".repeat(64) });
+  it("serves the model's own JSON, not the whole result envelope", async () => {
+    const res = await get("/admin/foodbank/salisbury/check/?debug=json");
 
-    expect(res.status).toBe(403);
-    assertNothingHappened();
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    // aiResponse, unwrapped: `prompt` and `fetchedPages` are ours, not the
+    // model's, and serving the envelope here would be a different endpoint.
+    expect(Object.keys(body).sort()).toEqual(["details", "donation_points", "locations"]);
+    expect(body).not.toHaveProperty("prompt");
   });
 
-  it("refuses a token with no cookie at all", async () => {
-    const res = await post("/admin/foodbank/salisbury/check/", { cookie: null });
+  it("renders the page for any other ?debug= value", async () => {
+    const res = await get("/admin/foodbank/salisbury/check/?debug=banana");
 
-    expect(res.status).toBe(403);
-    assertNothingHappened();
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/html");
   });
 
-  // An unsigned cookie an attacker could plant from a sibling subdomain: the
-  // raw halves match, so a plain double-submit would accept it. Only the HMAC
-  // rejects it.
-  it("refuses a cookie whose signature does not verify", async () => {
-    const res = await post("/admin/foodbank/salisbury/check/", { cookie: `__Host-csrf=${CSRF_RAW}.${"0".repeat(64)}` });
+  it("renders the error page, not a debug dump, when the check failed", async () => {
+    // There is no result to dump. Falling through to the render is what keeps
+    // ?debug=prompt from 500ing on a null.
+    geminiStatus = 400;
 
-    expect(res.status).toBe(403);
-    assertNothingHappened();
-  });
+    const res = await get("/admin/foodbank/salisbury/check/?debug=prompt");
 
-  // The cross-site half. A queued check is five scrapes and a Gemini call
-  // billed to this account, so a cross-origin form POST that got through
-  // would be a cost amplifier as well as an unwanted write.
-  it("refuses a cross-origin POST that carries a valid token", async () => {
-    const res = await post("/admin/foodbank/salisbury/check/", { origin: "https://evil.example" });
-
-    expect(res.status).toBe(403);
-    assertNothingHappened();
-  });
-
-  it("refuses a cross-site POST by Sec-Fetch-Site alone", async () => {
-    const res = await post("/admin/foodbank/salisbury/check/", { origin: null, secFetchSite: "cross-site" });
-
-    expect(res.status).toBe(403);
-    assertNothingHappened();
-  });
-
-  // THE TOKEN COMES OUT OF THE FORM BODY, never the URL. The handler reads
-  // `body.csrf_token` after parseBody(); widening that to
-  // `c.req.query("csrf_token") ?? body.csrf_token` -- the shape a "make it work
-  // for the fetch() call too" edit takes -- survived every other CSRF test
-  // here, because they all put the token where the real form does. A token in
-  // a query string is a token in the access log, the Referer header and the
-  // browser's history, which is the whole reason it is a hidden field.
-  it("ignores a csrf_token in the query string when the body carries none", async () => {
-    const res = await post(`/admin/foodbank/salisbury/check/?csrf_token=${CSRF_RAW}`, { token: null });
-
-    expect(res.status).toBe(403);
-    assertNothingHappened();
-  });
-
-  // FAIL CLOSED WITH NO SECRET, at this route rather than in the abstract.
-  // lib/csrf.test.ts already proves verifyCsrf() returns false when
-  // CSRF_SECRET is unset; what this asserts is the consequence here, which is
-  // the part a deployment actually meets: issueCsrfToken renders an EMPTY
-  // hidden field (csrf.ts:44-48), and the POST of that empty field is refused
-  // with no row and no queue message. The mutant is `if (!secret) return true`
-  // -- an unset binding on a fresh environment silently accepting every
-  // cross-site POST on the one route here that costs money to run.
-  it("refuses every submission, and renders an empty token, when CSRF_SECRET is unset", async () => {
-    // issueCsrfToken and verifyCsrf both log their refusal by design; silenced
-    // so the run stays readable, and asserted only as "it said something",
-    // since the wording belongs to lib/csrf.ts and not to this test.
-    const log = vi.spyOn(console, "log").mockImplementation(() => {});
-    env = { ...env, CSRF_SECRET: undefined } as unknown as AppEnv["Bindings"];
-
-    const rendered = await get("/admin/foodbank/salisbury/check/");
-    expect(lastRender().context.csrf_token).toBe("");
-    expect(rendered.headers.get("Set-Cookie")).toBeNull();
-
-    const res = await post("/admin/foodbank/salisbury/check/", { token: "" });
-
-    expect(res.status).toBe(403);
-    assertNothingHappened();
-    expect(log).toHaveBeenCalled();
-    log.mockRestore();
-  });
-
-  // THE TWO-TAB FLOW, through this route. issueCsrfToken REUSES a still-valid
-  // cookie instead of minting per render, and csrf.ts:52-63 records why: while
-  // it minted unconditionally, each render replaced the cookie, so only the
-  // most recently rendered admin page could submit -- open a second food bank,
-  // go back to the first, press Run Check, get a 403 and lose the page.
-  //
-  // The single-render test below cannot see that regression, because one
-  // render's token and cookie always agree with each other. This one renders
-  // TWICE, keeps tab 1's hidden field, and submits it against the cookie jar
-  // as it stands after tab 2 -- which is exactly what the browser does. Mutant
-  // killed: disabling the reuse branch in issueCsrfToken.
-  it("still accepts tab one's token after a second tab has rendered the page", async () => {
-    const first = await get("/admin/foodbank/salisbury/check/");
-    const tabOneToken = lastRender().context.csrf_token as string;
-    const cookie = first.headers.get("Set-Cookie")!.split(";")[0]!;
-
-    const second = await get("/admin/foodbank/oxford/check/", { Cookie: cookie });
-    expect(lastRender().context.csrf_token).toBe(tabOneToken);
-    // The jar keeps whatever the second render set, or the first cookie if it
-    // set nothing -- which is the behaviour under test, so it is read rather
-    // than assumed either way.
-    const jar = second.headers.get("Set-Cookie")?.split(";")[0] ?? cookie;
-
-    const res = await post("/admin/foodbank/salisbury/check/", { token: tabOneToken, cookie: jar });
-
-    expect(res.status).toBe(302);
-    expect(jobRows()).toHaveLength(1);
-    expect(jobRows()[0]!.target).toBe("salisbury");
-  });
-
-  // THE END-TO-END CLAIM, and the one the individual refusals cannot make:
-  // the token this page RENDERS is the token this page ACCEPTS. issueCsrfToken
-  // mints a raw value into the context and a signed cookie onto the response
-  // (lib/csrf.ts:95-99); if those two ever drifted apart, every button on the
-  // check page would 403 while all six tests above still passed.
-  it("accepts the token the page's own render issued", async () => {
-    const rendered = await get("/admin/foodbank/salisbury/check/");
-    const token = lastRender().context.csrf_token as string;
-    const cookie = rendered.headers.get("Set-Cookie")!.split(";")[0]!;
-
-    expect(token).toMatch(/^[0-9a-f]{64}$/);
-    expect(cookie).toContain(token);
-
-    const res = await post("/admin/foodbank/salisbury/check/", { token, cookie });
-
-    expect(res.status).toBe(302);
-    expect(jobRows()).toHaveLength(1);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/html");
+    expect(lastRender().context.check_error).toContain("Gemini API error: 400");
   });
 });
 
@@ -819,424 +758,6 @@ describe("auth", () => {
 
     expect(res.status).toBe(302);
     expect(res.headers.get("Location")).toBe("/auth/?next=%2Fadmin%2Fjob%2Fjob-queued%2F");
-  });
-});
-
-// ===========================================================================
-// GET -- which job the page decides to show
-// ===========================================================================
-describe("GET -- choosing the job", () => {
-  it("404s an unknown food bank", async () => {
-    const res = await get("/admin/foodbank/nowhere/check/");
-
-    expect(res.status).toBe(404);
-    expect(mocks.render).not.toHaveBeenCalled();
-  });
-
-  // No job yet: `job` is null, which is the ONLY state in which
-  // foodbank_check.njk:38 offers the Run Check button. If this ever came back
-  // non-null the page would open on a spinner for a check nobody started.
-  it("hands the template a null job when this food bank has never been checked", async () => {
-    seedJob({ id: "someone-elses", target: "oxford" });
-
-    const res = await get("/admin/foodbank/salisbury/check/");
-
-    expect(res.status).toBe(200);
-    expect(renderedJob()).toBeNull();
-    expect(lastRender().context.result).toBeNull();
-  });
-
-  // THE FILTER TEST. getLatestAdminJob's WHERE has two predicates and its
-  // ORDER BY one column; every row here exists to fail if one of the three
-  // goes missing. Seeding only the row that should win would pass with no
-  // WHERE clause at all.
-  it("falls back to the newest check for THIS food bank, excluding every other row", async () => {
-    seedJob({ id: "older-salisbury", created: T.sep06 });
-    seedJob({ id: "newest-salisbury", created: T.sep07early });
-    // Newer, but another food bank -- kills a dropped `target = ?`.
-    seedJob({ id: "newer-oxford", target: "oxford", created: T.sep07late });
-    // Newer, same target, different kind -- kills a dropped `kind = ?`.
-    // order-lines targets an order id, but a `kind`-blind query would not
-    // care, and this is the shape that reaches this table in production.
-    seedJob({ id: "newer-other-kind", kind: "order-lines", created: T.sep07late });
-
-    await get("/admin/foodbank/salisbury/check/");
-
-    expect(renderedJob()?.id).toBe("newest-salisbury");
-  });
-
-  // `?job=` is what the POST redirect and the poll's HX-Redirect both carry,
-  // so it has to beat "latest" -- otherwise pressing Re-run twice would leave
-  // the first tab silently watching the second job.
-  it("prefers an explicit ?job= over the newest one", async () => {
-    seedJob({ id: "older", created: T.sep06 });
-    seedJob({ id: "newest", created: T.sep07late });
-
-    await get("/admin/foodbank/salisbury/check/?job=older");
-
-    expect(renderedJob()?.id).toBe("older");
-  });
-
-  // A stale bookmark, or a job deleted out from under a tab. `getAdminJob`
-  // answers null and the page falls back to the Run Check form rather than
-  // quietly substituting a DIFFERENT job's result under the requested id --
-  // which is what a `?? getLatestAdminJob(...)` here would do.
-  it("shows no job at all for an unknown ?job=, rather than falling back to the latest", async () => {
-    seedJob({ id: "real-job", result: CHECK_RESULT });
-
-    await get("/admin/foodbank/salisbury/check/?job=no-such-job");
-
-    expect(renderedJob()).toBeNull();
-    expect(lastRender().context.result).toBeNull();
-  });
-
-  // `?job=` with nothing after it is falsy, so it takes the latest branch --
-  // not a lookup for the empty string. Pinned because it is the difference
-  // between a link with a lost query value showing the newest check and
-  // showing the Run Check button.
-  it("treats an empty ?job= as absent", async () => {
-    seedJob({ id: "latest", result: CHECK_RESULT });
-
-    await get("/admin/foodbank/salisbury/check/?job=");
-
-    expect(renderedJob()?.id).toBe("latest");
-  });
-
-  // SUSPECT (reported, not fixed): getAdminJob is looked up by id ALONE, so a
-  // job belonging to another food bank renders in full under this food bank's
-  // heading. This is not merely confusing to read. foodbank_check.njk:120-124
-  // builds every "Use" button as
-  //   POST /admin/foodbank/{{ foodbank.slug }}/use-ai/<field>/  value=<found>
-  // where `foodbank` comes from the URL and the value comes from the job --
-  // so one click on this page writes Oxford's phone number onto Salisbury,
-  // and useAi.ts (which validates the field name and the value's format, but
-  // never the job) accepts it. Pinned as it stands.
-  it("renders another food bank's job when its id is passed as ?job=", async () => {
-    seedJob({ id: "oxford-job", target: "oxford", result: OXFORD_RESULT });
-
-    const res = await get("/admin/foodbank/salisbury/check/?job=oxford-job");
-
-    expect(res.status).toBe(200);
-    expect(renderedJob()?.target).toBe("oxford");
-    expect((lastRender().context.foodbank as { slug: string }).slug).toBe("salisbury");
-    const result = lastRender().context.result as typeof OXFORD_RESULT;
-    expect(result.aiResponse.details.phone_number).toBe("01865 000000");
-  });
-
-  // GET IS A READ. Django's foodbank_check did five fetches and a Gemini call
-  // in the GET (views.py:1138-1156); the whole point of WP 6.8's redesign is
-  // that this one only ever reads admin_job. A snapshot of the entire table
-  // either side of every GET shape this route has is the assertion that says
-  // so -- including the debug ones, which are the branches most likely to
-  // acquire a "mark it seen" write later.
-  it("never writes, on any GET shape", async () => {
-    seedJob({ id: "done-job", result: CHECK_RESULT, finished: T.sep06 });
-    seedJob({ id: "queued-job", status: "queued", created: T.sep05 });
-    const before = JSON.stringify(jobRows());
-
-    await get("/admin/foodbank/salisbury/check/");
-    await get("/admin/foodbank/salisbury/check/?job=done-job");
-    await get("/admin/foodbank/salisbury/check/?job=done-job&debug=prompt");
-    await get("/admin/foodbank/salisbury/check/?job=done-job&debug=json");
-    await get("/admin/foodbank/salisbury/check/?job=no-such-job");
-    await get("/admin/job/queued-job/");
-    await get("/admin/job/done-job/");
-
-    expect(JSON.stringify(jobRows())).toBe(before);
-    expect(queueSend).not.toHaveBeenCalled();
-  });
-});
-
-// ===========================================================================
-// GET -- what the template is handed
-// ===========================================================================
-describe("GET -- the render context", () => {
-  it("renders the check template at 200 with the food bank from the URL", async () => {
-    const res = await get("/admin/foodbank/salisbury/check/");
-
-    expect(res.status).toBe(200);
-    expect(res.headers.get("Content-Type")).toContain("text/html");
-    expect(lastRender().template).toBe("admin/foodbank_check.njk");
-    expect((lastRender().context.foodbank as { name: string; slug: string }).name).toBe("Salisbury Foodbank");
-    expect((lastRender().context.foodbank as { slug: string }).slug).toBe("salisbury");
-    // `section` is what admin/page.njk marks as the current nav item, and it
-    // is the only thing in this context nothing else here would notice going
-    // wrong: `adminPageContext(c, "dashboard")` renders a page that is
-    // correct in every particular except that the admin is told they are
-    // somewhere else. Every other check route passes "foodbanks" too.
-    expect(lastRender().context.section).toBe("foodbanks");
-  });
-
-  // The stored JSON is parsed exactly once, here, and handed over whole --
-  // foodbank_check.njk reads seven different top-level keys off it
-  // (detailChanges, ourLocations, foundLocations, ourDonationPoints,
-  // foundDonationPoints, fetchedPages, aiResponse), so a handler that passed
-  // the raw string, or only the aiResponse, would render an empty comparison
-  // table with no error anywhere.
-  it("parses the stored result and hands the whole payload over on a done job", async () => {
-    seedJob({ id: "done-job", result: CHECK_RESULT, finished: T.sep06 });
-
-    await get("/admin/foodbank/salisbury/check/?job=done-job");
-
-    expect(lastRender().context.result).toEqual(CHECK_RESULT);
-  });
-
-  // The three not-done states all render the SAME page with `result` null;
-  // the template picks its branch from job.status. A `result` that survived
-  // into the failed branch would be a stale payload from an earlier run
-  // displayed beside a failure banner.
-  //
-  // The fixture stores a payload on a job that is NOT done, which the
-  // consumer would never write (markAdminJobDone sets status and result in
-  // one statement). That is the point: with an empty result column the
-  // assertion holds even for a status-blind handler, because JSON.parse of a
-  // NULL column answers null. Only a row carrying a payload can tell the two
-  // apart.
-  it.each(["queued", "running", "failed"] as const)("hands over a null result for a %s job", async (status) => {
-    seedJob({ id: "job-x", status, result: CHECK_RESULT, error: status === "failed" ? "Gemini timed out" : null });
-
-    await get("/admin/foodbank/salisbury/check/?job=job-x");
-
-    expect(renderedJob()?.status).toBe(status);
-    expect(lastRender().context.result).toBeNull();
-  });
-
-  it("passes a failed job's error through for the banner", async () => {
-    seedJob({ id: "failed-job", status: "failed", error: "Gemini timed out", finished: T.sep06 });
-
-    await get("/admin/foodbank/salisbury/check/?job=failed-job");
-
-    expect(renderedJob()?.error).toBe("Gemini timed out");
-  });
-
-  // gfadmin/views.py:1321-1326's ALLOWED_FIELDS, in order. This list is not
-  // decoration: it is the <dt> order down both halves of the comparison
-  // table, the key set of the job's detailChanges, and the `<field>` segment
-  // of the /use-ai/<field>/ URL each Use button posts to. useAi.ts holds its
-  // own copy of the same ten and rejects anything else with a 400, so a name
-  // that drifted here would render a button that always fails.
-  const DJANGO_ALLOWED_FIELDS = [
-    "phone_number",
-    "contact_email",
-    "charity_number",
-    "facebook_page",
-    "bankuet_slug",
-    "rss_url",
-    "news_url",
-    "donation_points_url",
-    "locations_url",
-    "contacts_url",
-  ];
-
-  it("hands over Django's ten use-ai fields, in Django's order", async () => {
-    await get("/admin/foodbank/salisbury/check/");
-
-    expect(lastRender().context.use_ai_fields).toEqual(DJANGO_ALLOWED_FIELDS);
-  });
-
-  // check.html:48-67's hardcoded <dt> labels, as a parallel map. A missing
-  // key renders an empty <dt> rather than raising -- nunjucks is configured
-  // throwOnUndefined:false (packages/templates/src/env.ts) -- so "every field
-  // has a label" has to be asserted rather than assumed.
-  //
-  // Asserted as the WHOLE map, not as "every key is present and truthy" plus
-  // a spot check. That weaker pair survived two mutants worth having: a single
-  // relabelled field (`phone_number: "Telephone"`), and a swapped PAIR
-  // (rss_url labelled "News URL" and news_url "RSS URL"). The swap is the one
-  // that matters -- both labels stay truthy, both keys stay present, and the
-  // reviewer is shown the AI's proposed news URL under the heading "RSS URL"
-  // with a Use button that writes it to the other column.
-  it("labels every one of those fields, with Django's exact label text", async () => {
-    await get("/admin/foodbank/salisbury/check/");
-
-    const labels = lastRender().context.use_ai_labels as Record<string, string>;
-    expect(Object.keys(labels)).toEqual(DJANGO_ALLOWED_FIELDS);
-    expect(labels).toEqual({
-      phone_number: "Phone",
-      contact_email: "Email",
-      charity_number: "Charity",
-      facebook_page: "Facebook",
-      bankuet_slug: "Bankuet",
-      rss_url: "RSS URL",
-      news_url: "News URL",
-      donation_points_url: "Donation Points URL",
-      locations_url: "Locations URL",
-      contacts_url: "Contacts URL",
-    });
-  });
-
-  // AN ARRAY, NOT A SET -- and the handler's own comment says why: nunjucks'
-  // `in` operator falls back to JS `key in obj` for anything that is not an
-  // array or a string, and `"rss_url" in new Set([...])` is false. The
-  // template's new-window links (check.html:59-67) are gated on exactly that
-  // test, so a Set here would silently drop every one of them. Instanceof is
-  // the assertion because a Set would satisfy any membership check written
-  // with `.includes`-style reasoning.
-  it("hands the url fields over as a real array, which is what nunjucks' `in` needs", async () => {
-    await get("/admin/foodbank/salisbury/check/");
-
-    const urlFields = lastRender().context.url_fields;
-    expect(Array.isArray(urlFields)).toBe(true);
-    expect(urlFields).toEqual(["rss_url", "news_url", "donation_points_url", "locations_url", "contacts_url"]);
-    // Every URL field must also be a use-ai field, or the template loops over
-    // a name that has no row to attach the link to.
-    for (const field of urlFields as string[]) expect(DJANGO_ALLOWED_FIELDS).toContain(field);
-  });
-
-  // The preview tab strip. The keys are workers/jobs' internal page names
-  // (adminJobs/foodbankCheck.ts:118-128) and the values are Django's display
-  // names (views.py:935-993); the handler's comment records that renaming
-  // them job-side would orphan every stored result, so the mapping is the
-  // seam and this is where it is pinned. A missing key renders the raw slug
-  // ("shopping_list") in the tab, which is what it used to do.
-  it("maps every fetched page name to its Django display label", async () => {
-    await get("/admin/foodbank/salisbury/check/");
-
-    expect(lastRender().context.page_labels).toEqual({
-      homepage: "Home",
-      shopping_list: "Shopping List",
-      locations: "Locations",
-      contacts: "Contacts",
-      donation_points: "Donation Points",
-    });
-  });
-
-  // check.html:19's `Last edit: {{ foodbank.edited|timesince }} ago`, computed
-  // in the handler because there is no nunjucks timesince filter. Django's
-  // timesince puts a non-breaking space inside each unit (avoid_wrapping) and
-  // joins the two units with ", " -- asserted with the literal U+00A0 so a
-  // "tidy-up" to a plain space is visible here rather than as a wrapped line
-  // in the admin.
-  it("computes the last-edit interval the way Django's timesince filter did", async () => {
-    await get("/admin/foodbank/salisbury/check/");
-
-    // Seeded 2026-09-05 07:15:00, frozen now 2026-09-07 09:20:00.
-    expect(lastRender().context.foodbank_edited_timesince).toBe("2 days, 2 hours");
-  });
-
-  // A food bank that has never been edited. Django renders the whole "Last
-  // edit" paragraph only when there is one (foodbank_check.njk:23 gates on
-  // this value), and timesince(null) would be an epoch-relative nonsense
-  // string rather than nothing at all.
-  it("hands over null rather than an interval when the food bank was never edited", async () => {
-    await get("/admin/foodbank/oxford/check/");
-
-    expect(lastRender().context.foodbank_edited_timesince).toBeNull();
-  });
-});
-
-// ===========================================================================
-// ?debug= -- Django's two re-scraping debug views, folded onto this page
-// ===========================================================================
-describe("GET ?debug=", () => {
-  beforeEach(() => {
-    seedJob({ id: "done-job", result: CHECK_RESULT, finished: T.sep06 });
-  });
-
-  // gfadmin/views.py:1218-1222 foodbank_check_prompt returned the prompt as
-  // text/plain. The port serves the STORED prompt instead of rebuilding it,
-  // which is the whole saving -- Django re-ran the five scrapes to print a
-  // string it had already computed. The render assertion is what proves the
-  // short-circuit: the page is not rendered first and then discarded.
-  it("serves the stored prompt as plain text, without rendering the page", async () => {
-    const res = await get("/admin/foodbank/salisbury/check/?job=done-job&debug=prompt");
-
-    expect(res.status).toBe(200);
-    expect(res.headers.get("Content-Type")).toContain("text/plain");
-    expect(await res.text()).toBe(CHECK_RESULT.prompt);
-    expect(mocks.render).not.toHaveBeenCalled();
-  });
-
-  // views.py:1225-1238 foodbank_check_result returned the AI's response, not
-  // the port's whole result envelope. `prompt` is many kilobytes of scraped
-  // page text; emitting the envelope would bury the JSON the debug view
-  // exists to show under it.
-  it("serves the AI response as JSON -- the response, not the envelope", async () => {
-    const res = await get("/admin/foodbank/salisbury/check/?job=done-job&debug=json");
-
-    expect(res.status).toBe(200);
-    expect(res.headers.get("Content-Type")).toContain("application/json");
-    const body = (await res.json()) as Record<string, unknown>;
-    expect(body).toEqual(CHECK_RESULT.aiResponse);
-    expect(body.prompt).toBeUndefined();
-    expect(body.detailChanges).toBeUndefined();
-  });
-
-  // The two debug links are rendered only inside the done branch
-  // (foodbank_check.njk:59-60), but a URL survives a re-run in a bookmark or
-  // a back button. Falling through to the page is what keeps that from
-  // becoming a JSON.parse of a null result.
-  //
-  // The unfinished job is seeded WITH a payload, for the same reason as the
-  // null-result test above: a debug branch that had lost its `status ===
-  // "done"` guard would serve this prompt as text/plain, and only a row that
-  // has one can catch that.
-  it.each(["queued", "running", "failed"] as const)("ignores ?debug= while the job is %s and renders the page", async (status) => {
-    seedJob({ id: "not-done", status, result: CHECK_RESULT, created: T.sep07late });
-
-    const res = await get(`/admin/foodbank/salisbury/check/?job=not-done&debug=prompt`);
-
-    expect(res.status).toBe(200);
-    expect(res.headers.get("Content-Type")).toContain("text/html");
-    expect(lastRender().template).toBe("admin/foodbank_check.njk");
-  });
-
-  // `?debug=` sits BELOW the job lookup, not inside the `?job=` branch, so it
-  // reads whatever job the page would have shown -- including the one the
-  // fallback picked. That is the shape a hand-typed debug URL takes (the
-  // rendered links carry `?job=`, but nobody types those), and every other
-  // test in this block supplies an explicit id, so `if (jobId && job && ...)`
-  // survived all of them.
-  //
-  // The two done checks are seeded with DIFFERENT payloads, and the newer
-  // oxford row keeps the fallback's own filters honest: if this served the
-  // older result, or another food bank's, the difference is a value in the
-  // body rather than a shape.
-  it("serves ?debug= against the fallback job when no ?job= is given", async () => {
-    seedJob({ id: "older-done", result: OXFORD_RESULT, created: T.sep05, finished: T.sep05 });
-    seedJob({ id: "newest-done", result: CHECK_RESULT, created: T.sep07early, finished: T.sep07early });
-    seedJob({ id: "newer-oxford", target: "oxford", result: OXFORD_RESULT, created: T.sep07late, finished: T.sep07late });
-
-    const res = await get("/admin/foodbank/salisbury/check/?debug=json");
-
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual(CHECK_RESULT.aiResponse);
-  });
-
-  it("ignores ?debug= when there is no job to read", async () => {
-    const res = await get("/admin/foodbank/salisbury/check/?job=no-such-job&debug=json");
-
-    expect(res.status).toBe(200);
-    expect(res.headers.get("Content-Type")).toContain("text/html");
-    expect(renderedJob()).toBeNull();
-  });
-
-  // Only the two names Django had. An unrecognised value renders the page
-  // rather than 400ing or serving the prompt by default -- pinned so that a
-  // future `?debug=pages` is a deliberate addition and not something that has
-  // already been silently answering.
-  it("renders the page for a debug value it does not recognise", async () => {
-    const res = await get("/admin/foodbank/salisbury/check/?job=done-job&debug=everything");
-
-    expect(res.status).toBe(200);
-    expect(lastRender().template).toBe("admin/foodbank_check.njk");
-    expect(lastRender().context.result).toEqual(CHECK_RESULT);
-  });
-
-  // The debug branch reads `result.prompt` off whatever JSON the job stored,
-  // and getAdminJob is not scoped by kind -- so the id of a done order-lines
-  // job (orderForm.ts:375, the other producer of rows in this table) reaches
-  // it and finds no such key. Pinned as it behaves today: a 200 with an empty
-  // body rather than a 500 or a 404. Harmless, and worth knowing it is the
-  // outcome, because the same unscoped lookup is what makes the cross-food-
-  // bank case above dangerous.
-  it("answers a foreign job's ?debug=prompt with an empty 200", async () => {
-    seedJob({ id: "order-job", kind: "order-lines", target: "gf-1234", result: { lines: [{ item: "Beans" }] }, created: T.sep07late });
-
-    const res = await get("/admin/foodbank/salisbury/check/?job=order-job&debug=prompt");
-
-    expect(res.status).toBe(200);
-    expect(await res.text()).toBe("");
   });
 });
 
@@ -1310,20 +831,25 @@ describe("GET /admin/job/:id/", () => {
   });
 
   // THE ROUND TRIP, end to end through the real router: poll, follow the
-  // header the poll returned, and land on the result. A redirect target that
-  // dropped `?job=` would still 200 here -- and would show whatever the
-  // LATEST check happened to be, which for a re-run tab is the wrong one.
-  it("sends the poll to a URL that really does render that job's result", async () => {
-    seedJob({ id: "older", result: OXFORD_RESULT, created: T.sep05 });
+  // header the poll returned, and land on a page that renders.
+  //
+  // WHAT IT NO LONGER PROVES, github #38. This used to assert that the page
+  // rendered THAT job's stored result, which is how a dropped `?job=` (the
+  // re-run tab showing the wrong check) was caught. The check page does not
+  // read admin_job at all any more -- it runs the check during the request --
+  // so following the redirect simply runs a fresh check, and `?job=` is inert.
+  // The redirect target is still asserted literally in the two tests above;
+  // this one is now only about the two halves fitting together.
+  it("sends the poll to a URL that really does answer", async () => {
     seedJob({ id: "done-job", result: CHECK_RESULT, created: T.sep06, finished: T.sep06 });
-    seedJob({ id: "newer", status: "queued", created: T.sep07late });
 
     const poll = await get("/admin/job/done-job/");
     const followed = await get(poll.headers.get("HX-Redirect")!);
 
     expect(followed.status).toBe(200);
-    expect(renderedJob()?.id).toBe("done-job");
-    expect(lastRender().context.result).toEqual(CHECK_RESULT);
+    // A fresh check, not the stored one: the page computed its own answer.
+    expect(geminiCalls).toHaveLength(1);
+    expect(lastRender().context.result).not.toBeNull();
   });
 
   // SUSPECT (reported, not fixed): every kind that is not "check" is sent to

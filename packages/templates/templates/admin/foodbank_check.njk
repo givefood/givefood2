@@ -10,10 +10,11 @@
 {# check.html:13-31 -- the page header is a nested `columns`: links and
    "Last edit" on the left, a right-aligned Edit / Touch / Next button stack
    on the right. Django nests it inside the results page's own left column;
-   it sits above the job branches here so it also renders while a check is
-   queued, running or failed (the port's results `columns` only exists in
-   the done branch). Touch is how a reviewer marks a checked food bank as
-   reviewed, so check -> touch -> next needs all three here. #}
+   it sits above the result branches here so it also renders when the check
+   FAILED (the port's results `columns` only exists in the success branch) --
+   a food bank whose own site is down is exactly when a reviewer still wants
+   Edit and Touch. Touch is how they mark one as reviewed, so
+   check -> touch -> next needs all three here. #}
 <div class="columns">
   <div class="column">
     <ul>
@@ -35,33 +36,24 @@
   </div>
 </div>
 
-{% if not job %}
-  <form method="post" action="/admin/foodbank/{{ foodbank.slug }}/check/">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <button type="submit" class="button is-link is-light">Run Check</button>
-  </form>
+{# github #38: the check runs during THIS request, so there are two states
+   here, not four. The "Run Check" button, the every-2s poll and the queued/
+   running shells are gone with the admin_job row they were watching.
 
-{% elif job.status == "queued" or job.status == "running" %}
-  <div id="job-status" hx-get="/admin/job/{{ job.id }}/" hx-trigger="every 2s" hx-swap="outerHTML">
-    <div class="loading"><span class="loader"></span></div>
-    <p>{{ job.status }}&hellip;</p>
-  </div>
-
-{% elif job.status == "failed" %}
-  <div class="notification is-danger is-light">{{ job.error }}</div>
-  <form method="post" action="/admin/foodbank/{{ foodbank.slug }}/check/">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <button type="submit" class="button is-link is-light">Retry</button>
-  </form>
+   RE-RUN IS A PLAIN LINK, and it has to be. The page runs a check on every
+   GET, so re-running is just loading the page again -- a form POST would be
+   a second route doing nothing the link does not. It carries no query string
+   deliberately: `?debug=` is sticky otherwise, and a reviewer who pressed
+   Prompt once would keep landing on a text dump instead of the page. #}
+{% if check_error %}
+  <div class="notification is-danger is-light">{{ check_error }}</div>
+  <p><a href="/admin/foodbank/{{ foodbank.slug }}/check/" class="button is-link is-light">Retry</a></p>
 
 {% else %}
   <p>
-    <a href="?job={{ job.id }}&amp;debug=prompt">Prompt</a> &middot;
-    <a href="?job={{ job.id }}&amp;debug=json">Raw JSON</a> &middot;
-    <form method="post" action="/admin/foodbank/{{ foodbank.slug }}/check/" style="display:inline">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <button type="submit" class="button is-small is-light">Re-run</button>
-    </form>
+    <a href="?debug=prompt">Prompt</a> &middot;
+    <a href="?debug=json">Raw JSON</a> &middot;
+    <a href="/admin/foodbank/{{ foodbank.slug }}/check/" class="button is-small is-light">Re-run</a>
   </p>
 
   <div class="columns">
@@ -96,9 +88,9 @@
               {% endfor %}
               {# check.html:68-71 -- Ours-side only and unpaired: the AI
                  response has no delivery_address to compare against. It
-                 matters more here than in Django, because the check job no
+                 matters more here than in Django, because the check no
                  longer suppresses "new location" flags on the delivery
-                 postcode (workers/jobs/src/adminJobs/foodbankCheck.ts:170),
+                 postcode (packages/ai/src/foodbankCheck.ts),
                  so the reviewer needs it to recognise a false flag. #}
               {% if foodbank.delivery_address %}
               <dt>Delivery address</dt>

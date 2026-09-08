@@ -1,7 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MIGRATIONS_SQL } from "@givefood/db/src/schema.testkit";
-import type { Env } from "../../worker-configuration";
-import { handleFoodbankCheckJob, type FoodbankCheckResult } from "./foodbankCheck";
+// The two bindings runFoodbankCheck is handed, spelled out here rather than
+// imported: this package is not a Worker and has no worker-configuration.d.ts
+// of its own. Both Workers' Env satisfy it structurally, which is the point --
+// the function takes a Session and a key, not an Env.
+interface Env {
+  DB: { withSession(mode: string): Session };
+  GEMINI_API_KEY: string;
+}
+import type { Session } from "@givefood/db";
+import { runFoodbankCheck, type FoodbankCheckResult } from "./foodbankCheck";
 import { CHECK_USE_AI_FIELDS, FOODBANK_CHECK_RESPONSE_SCHEMA, type FoodbankCheckAiResponse } from "./checkPrompt";
 // @ts-ignore -- this Worker's tsconfig lists only @cloudflare/workers-types, so
 // node:sqlite has no declarations here. It is real under vitest's node
@@ -328,6 +336,8 @@ let pageReplies: Map<string, Reply[]>;
 let geminiReplies: Reply[];
 /** Snapshot hook: run on every page fetch, used to observe the row mid-flight. */
 let onPageFetch: ((url: string) => void) | null;
+// The completion half of onPageFetch -- see the concurrency test.
+let onPageDone: ((url: string) => void) | null;
 let logs: string[];
 
 function html(bodyInner: string): string {
@@ -355,6 +365,13 @@ function stubFetch(): void {
     if (!queue || queue.length === 0) throw new Error(`unmodelled fetch: ${url}`);
     const reply = queue.length === 1 ? queue[0]! : queue.shift()!;
     if (reply instanceof Error) throw reply;
+    // A real microtask before answering, so "issued" and "done" cannot
+    // collapse into the same turn and a sequential loop is distinguishable
+    // from a concurrent one.
+    if (!url.startsWith(GEMINI_URL_PREFIX)) {
+      await Promise.resolve();
+      onPageDone?.(url);
+    }
     // An empty modelled body becomes a NULL body, not "": undici refuses to
     // construct a Response with any body at all for the null-body statuses
     // (204, 205, 304), and the 204 case below is the one that separates the
@@ -555,11 +572,27 @@ const tick = (): Promise<void> => new Promise<void>((resolve) => setImmediate(re
  * The conditional advance keeps every timestamp in the happy-path tests frozen
  * at NOW, which is what makes the exact `created`/`finished` assertions possible.
  */
-async function runJob(jobId: string = JOB, slug = "salisbury"): Promise<void> {
+let lastResult: FoodbankCheckResult | null = null;
+let lastError: string | null = null;
+
+async function runJob(_jobId: string = JOB, slug = "salisbury"): Promise<void> {
+  lastResult = null;
+  lastError = null;
   let settled = false;
-  const promise = handleFoodbankCheckJob(env, jobId, slug).finally(() => {
-    settled = true;
-  });
+  // github #38: the check is a plain function over a D1 session now -- no job
+  // row, no queue. The outcome that used to be written onto admin_job is
+  // captured here instead, so every assertion below still reads the same two
+  // things it always did: what the check produced, or why it could not.
+  const promise = runFoodbankCheck(env.DB.withSession("first-unconstrained"), slug, env.GEMINI_API_KEY)
+    .then((r) => {
+      lastResult = r;
+    })
+    .catch((e: unknown) => {
+      lastError = e instanceof Error ? e.message : String(e);
+    })
+    .finally(() => {
+      settled = true;
+    });
   for (let guard = 0; guard < 200 && !settled; guard++) {
     await tick();
     if (!settled && vi.getTimerCount() > 0) await vi.advanceTimersByTimeAsync(61_000);
@@ -578,15 +611,31 @@ interface JobRow {
   finished: string | null;
 }
 
+// THE ADMIN_JOB ROW IS GONE (github #38) AND THIS IS ITS SHAPE, KEPT.
+// runFoodbankCheck resolves with the result or rejects with an error, which is
+// the same two outcomes markAdminJobDone/markAdminJobFailed used to record --
+// so the ~90 assertions below still say what they said, about the check rather
+// than about the bookkeeping that used to carry it. `created`/`finished` were
+// columns of that row and have no equivalent; the tests that asserted them
+// went with it.
 function jobRow(id: string = JOB): JobRow | undefined {
-  return db.prepare("SELECT * FROM admin_job WHERE id = ?").get(id) as unknown as JobRow | undefined;
+  if (lastResult === null && lastError === null) return undefined;
+  return {
+    id,
+    kind: "check",
+    target: "salisbury",
+    status: lastError === null ? "done" : "failed",
+    result: lastResult === null ? null : JSON.stringify(lastResult),
+    error: lastError,
+    created: "2026-09-05 19:28:08.853000",
+    finished: "2026-09-05 19:28:08.853000",
+  };
 }
 
-/** The payload markAdminJobDone stringified onto the row, parsed back. */
-function storedResult(id: string = JOB): FoodbankCheckResult {
-  const row = jobRow(id);
-  if (!row?.result) throw new Error(`job ${id} has no stored result (status ${row?.status ?? "missing"}, error ${row?.error ?? "none"})`);
-  return JSON.parse(row.result) as FoodbankCheckResult;
+/** What the check resolved with, parsed back through JSON as the row did. */
+function storedResult(_id: string = JOB): FoodbankCheckResult {
+  if (lastResult === null) throw new Error(`the check produced no result (error: ${lastError ?? "none"})`);
+  return JSON.parse(JSON.stringify(lastResult)) as FoodbankCheckResult;
 }
 
 interface CrawlItemRow {
@@ -615,6 +664,7 @@ beforeEach(() => {
   pageReplies = new Map();
   geminiReplies = [];
   onPageFetch = null;
+  onPageDone = null;
   logs = [];
   rewriterSelectors = [];
   rewriterRemovals = [];
@@ -667,20 +717,12 @@ describe("the admin_job row", () => {
     expect(row.created).toBe(DJANGO_NOW);
   });
 
-  // markAdminJobRunning is the FIRST statement, before the food bank lookup and
-  // before five scrapes plus a Gemini call that together take tens of seconds.
-  // foodbank_check.njk:44-48 prints the status word LITERALLY inside its
-  // spinner, so if this moved below the work the admin would be told "queued"
-  // -- nothing has picked this up yet -- for the entire run, and the two states
-  // a stuck job can be in would become indistinguishable from the page.
-  it("marks the job running before it touches the network", async () => {
-    const seen: string[] = [];
-    onPageFetch = () => void seen.push(jobRow()!.status);
-
-    await runJob();
-
-    expect(seen).toEqual(["running", "running", "running", "running", "running"]);
-  });
+  // "marks the job running before it touches the network" STOOD HERE, and it
+  // is gone with the thing it described. markAdminJobRunning existed so
+  // foodbank_check.njk's spinner could print "running" rather than "queued"
+  // while five scrapes and a Gemini call ran. github #38 deleted the spinner:
+  // the check runs inside the request and the page renders the answer, so
+  // there is no intermediate state left to report and no row to report it on.
 
   // ONE session, opened "first-unconstrained", for the whole run -- the mode
   // every consumer in workers/jobs opens (notify/needEmail.ts:60,
@@ -746,22 +788,13 @@ describe("the admin_job row", () => {
     expect(jobRow()!.error).toBe("sqlite exploded");
   });
 
-  // SUSPECT (reported, not fixed). markAdminJobRunning/Done are plain UPDATEs
-  // matched on id, so a message naming a job id that is not in the table -- a
-  // row deleted, or a hand-crafted queue message -- runs the ENTIRE scrape and
-  // pays for the Gemini call, then writes the result to nowhere and returns
-  // successfully. Nothing raises, nothing is logged, and the queue acks. Pinned
-  // as it stands.
-  it("does the whole run and spends the Gemini call even when the job id does not exist", async () => {
-    await runJob("no-such-job");
-
-    expect(jobRow("no-such-job")).toBeUndefined();
-    expect(pageCalls()).toHaveLength(5);
-    expect(geminiCalls()).toHaveLength(1);
-    // The crawl bookkeeping IS written, so the only trace of the wasted run is
-    // five crawlitem rows with no job to explain them.
-    expect(crawlItems()).toHaveLength(5);
-  });
+  // A SUSPECTED BUG THAT github #38 DELETED RATHER THAN FIXED, recorded
+  // because "it stopped failing" and "it stopped existing" are different
+  // things. markAdminJobRunning/Done were plain UPDATEs matched on id, so a
+  // queue message naming a job id that was not in the table ran the entire
+  // scrape, paid for the Gemini call, wrote the result to nowhere and returned
+  // successfully -- nothing raised, nothing logged, the queue acked. There is
+  // no job id on this path at all now, so the hole is closed by construction.
 
   // Cloudflare Queues is at-least-once, so the same tick can arrive twice.
   // markAdminJobDone overwrites cleanly -- but nothing else does: the second
@@ -1140,14 +1173,22 @@ describe("fetching one page", () => {
   // out: the signal is created by node's internal timer, not the global
   // setTimeout this suite fakes, so a real 20s wall-clock wait is the only
   // other way to observe it.
-  it("bounds each page fetch at 20s and the Gemini call at 120s", async () => {
+  //
+  // 25s FOR GEMINI, NOT ai.py's 120 (github #38). This call used to run on a
+  // queue, where 120s cost nobody anything; it now runs inside the admin's
+  // request, and Cloudflare's edge gives up on a response at around 100s --
+  // so a 120s per-attempt budget could spend the whole allowance and still
+  // hand back nothing. runFoodbankCheck passes 25s, which leaves room for the
+  // retry (2s sleep, second attempt) inside the edge's limit. geminiJsonCall
+  // still DEFAULTS to 120s for the queue caller that can afford it.
+  it("bounds each page fetch at 20s and the request-scoped Gemini call at 25s", async () => {
     const timeout = vi.spyOn(AbortSignal, "timeout");
     pageReplies.set(HOME, [{ status: 403, body: "" }, { status: 200, body: html("x") }]);
 
     await runJob();
 
     // Two page attempts (the 403 and its retry) plus the one Gemini call.
-    expect(timeout.mock.calls.map((call) => call[0])).toEqual([20_000, 20_000, 120_000]);
+    expect(timeout.mock.calls.map((call) => call[0])).toEqual([20_000, 20_000, 25_000]);
     expect(pageCalls()[0]).toHaveProperty("signal");
     expect(pageCalls()[0]!.signal).toBeInstanceOf(AbortSignal);
   });
@@ -1206,9 +1247,32 @@ describe("crawl bookkeeping", () => {
       expect(item.finish).toMatch(PY_DATETIME);
       expect(item.start < item.finish!).toBe(true);
     }
-    // The first row's pair, spelled out: two seconds apart and in that order.
+    // The first page begins at NOW. The pair two seconds apart that this test
+    // used to name is gone with the sequential loop -- see the concurrency
+    // test below for what replaced it.
     expect(items[0]!.start).toBe(DJANGO_NOW);
-    expect(items[0]!.finish).toBe("2026-09-05 19:28:10.853000");
+  });
+
+  // THE FETCHES RUN CONCURRENTLY (github #38), and this is the assertion that
+  // says so rather than merely benefiting from it. The five pages used to be
+  // fetched one after another, each followed by its own awaited INSERT; a
+  // reviewer now waits for the slowest page rather than for the sum of five.
+  //
+  // Proved by ordering, not by timing: the stub records an "issued" event as
+  // each fetch is called and a "done" event as each resolves, and every one of
+  // the five must be issued before the first resolves. A sequential loop
+  // interleaves them (issue, done, issue, done, ...) and fails here. Timing
+  // assertions would be flaky and would also pass on a loop that merely got
+  // faster.
+  it("issues all five page fetches before any of them comes back", async () => {
+    const events: string[] = [];
+    onPageFetch = (url) => void events.push(`issued ${url}`);
+    onPageDone = (url) => void events.push(`done ${url}`);
+
+    await runJob();
+
+    expect(events.filter((e) => e.startsWith("issued"))).toHaveLength(5);
+    expect(events.slice(0, 5).every((e) => e.startsWith("issued"))).toBe(true);
   });
 
   // The row belongs to the food bank the message named, resolved through the

@@ -379,14 +379,13 @@ describe("the identifying field, per job type", () => {
     );
   });
 
-  // routes/admin/foodbankCheck.ts:94 sends `{ type, jobId, foodbankSlug }`.
-  // The slug does NOT survive: it is not one of the five fields describe()
-  // knows. So a dead-lettered AI check is identified only by a uuid that
-  // exists in the admin_job table, and finding out WHICH food bank it was
-  // needs a database lookup. Asserted as-is because it is what the code
-  // does; reported as a suspect, because foodbankSlug is right there in the
-  // body and the whole purpose of the line is to say what failed.
-  it("foodbank-check: the jobId, and not the food bank slug beside it", async () => {
+  // NO PRODUCER SENDS THIS ANY MORE -- github #38 took the food bank check
+  // off the queue entirely. The case is kept because describe() is generic
+  // over `type` and this is the clearest demonstration of what it drops: the
+  // slug does NOT survive, because it is not one of the five fields describe()
+  // knows, so a dead-lettered message is identified by its uuid alone. The
+  // same loss applies to order-lines below, which IS still produced.
+  it("an unknown type keeps its jobId and drops the field beside it", async () => {
     const line = await lineFor({ type: "foodbank-check", jobId: "7a1f0c2e-0b3d-4a11-9f52-2c9b1d0e4a77", foodbankSlug: "salisbury" });
 
     expect(line).toBe("jobs-dlq: gave up on foodbank-check jobId=7a1f0c2e-0b3d-4a11-9f52-2c9b1d0e4a77");

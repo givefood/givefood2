@@ -12,7 +12,7 @@ import {
   markAdminJobFailed,
   type NewOrderLine,
 } from "@givefood/db";
-import { geminiJsonCall } from "../lib/gemini";
+import { geminiJsonCall } from "@givefood/ai";
 
 // The second half of givefood/models/orders.py:71-215 Order.save(). The
 // admin's order form (workers/site/src/routes/admin/orderForm.ts) writes the

@@ -36,6 +36,7 @@ export interface Env {
   // `version_metadata` binding -- see wrangler.jsonc.
   CF_VERSION_METADATA: { id: string; tag: string; timestamp: string };
 
+  GEMINI_API_KEY: string;
   GOOGLE_OAUTH_CLIENT_SECRET: string;
   SESSION_HMAC_KEY: string;
   SUBSCRIBER_SALT: string;

@@ -856,154 +856,19 @@ describe("translate-need", () => {
 });
 
 // ===========================================================================
-// foodbank-check
+// foodbank-check -- REMOVED, github #38
 // ===========================================================================
 //
-// WP 6.8. jobs.ts's own comment is the claim under test: "handleFoodbankCheckJob
-// catches its own errors and records them on the admin_job row rather than
-// throwing -- a failed AI check is a result the polling page shows, not
-// something Cloudflare Queues should retry (a retry would just re-run the same
-// paid Gemini call against the same failure)."
-
-describe("foodbank-check", () => {
-  const CHECK_AI_RESPONSE = {
-    details: {
-      name: "Salisbury Foodbank",
-      address: "1 High Street",
-      postcode: "SP1 1AA",
-      country: "England",
-      phone_number: "01722320266",
-      contact_email: "none",
-      charity_number: "",
-      facebook_page: "",
-      bankuet_slug: "",
-      rss_url: "",
-      news_url: "",
-      donation_points_url: "",
-      locations_url: "",
-      contacts_url: "",
-    },
-    locations: [],
-    donation_points: [],
-  };
-
-  beforeEach(() => {
-    // shopping_list_url on facebook.com is skipped by the handler's own
-    // candidate list, and locations/contacts/donation_points URLs are NULL, so
-    // exactly ONE page is fetched. It answers 404, which returns before
-    // HTMLRewriter is constructed -- see this file's header.
-    seedFoodbank({
-      id: SALISBURY,
-      slug: "salisbury",
-      name: "Salisbury Foodbank",
-      url: SALISBURY_HOMEPAGE,
-      shoppingListUrl: "https://www.facebook.com/salisburyfoodbank",
-      phoneNumber: "01722 320266",
-    });
-    seedAdminJob({ id: "job-check-a", kind: "check", target: "salisbury" });
-    seedAdminJob({ id: "job-check-b", kind: "check", target: "dundee" });
-    reply(SALISBURY_HOMEPAGE, { status: 404, body: "not found" });
-    reply(GEMINI_FLASH_25, geminiReply(CHECK_AI_RESPONSE));
-  });
-
-  // The happy path, read back off the admin_job row the polling page renders.
-  // The crawlitem assertion is the one that proves the SLUG routed: the URL in
-  // it comes from the food bank row that slug found.
-  it("routes to the check handler, records the crawl and marks the named job done", async () => {
-    const message = await runOne({ type: "foodbank-check", jobId: "job-check-a", foodbankSlug: "salisbury" });
-
-    expect(adminJob("job-check-a")).toMatchObject({ status: "done", error: null, finished: DJANGO_NOW });
-    // The OTHER job row is untouched. An UPDATE that lost its WHERE, or a
-    // handler handed the wrong id, would move both and nobody would notice.
-    expect(adminJob("job-check-b")).toMatchObject({ status: "queued", finished: null });
-
-    expect(rows("SELECT crawl_set_id, crawl_type, start, finish, foodbank_id, url FROM crawlitem")).toEqual([
-      { crawl_set_id: null, crawl_type: "check", start: DJANGO_NOW, finish: DJANGO_NOW, foodbank_id: SALISBURY, url: SALISBURY_HOMEPAGE },
-    ]);
-
-    const result = JSON.parse(String(adminJob("job-check-a")!.result)) as {
-      fetchedPages: { name: string; url: string; found: boolean }[];
-      detailChanges: Record<string, boolean>;
-      aiResponse: { details: Record<string, string> };
-    };
-    expect(result.fetchedPages).toEqual([{ name: "homepage", url: SALISBURY_HOMEPAGE, found: false, proxyField: "url" }]);
-    // The real comparison ran: phone_number is the one field Django strips
-    // spaces from before comparing, so "01722 320266" held vs "01722320266"
-    // found is NOT a change (gfadmin/views.py:1195).
-    expect(result.detailChanges.phone_number).toBe(false);
-    // ...and the AI's literal "none" was normalised to "" in place, so the
-    // check page can never offer to write the string "none" into a field.
-    expect(result.aiResponse.details.contact_email).toBe("");
-
-    expect(message.ack).toHaveBeenCalledTimes(1);
-    expect(new URL(fetchCalls[1]!.url).searchParams.get("key")).toBe("gemini-key");
-  });
-
-  // THE CENTRAL CLAIM. A failed check ACKS: the failure is recorded on the row
-  // the admin is watching, and the message does not come back to run the same
-  // paid gemini-2.5-flash call three more times. The error text carries the
-  // slug, which also proves jobId and foodbankSlug did not get transposed on
-  // the way into the two positional arguments.
-  it("acks a failed check and records the failure on the job row instead of retrying", async () => {
-    const message = await runOne({ type: "foodbank-check", jobId: "job-check-a", foodbankSlug: "no-such-foodbank" });
-
-    expect(adminJob("job-check-a")).toMatchObject({ status: "failed", error: "no such foodbank: no-such-foodbank", finished: DJANGO_NOW });
-    expect(message.ack).toHaveBeenCalledTimes(1);
-    expect(message.retry).not.toHaveBeenCalled();
-    // No Gemini call was made at all, so there is nothing a retry could win.
-    expect(fetchCalls).toEqual([]);
-  });
-
-  // The same contract when the model itself is the thing that failed -- which
-  // is the case the comment is actually about. A rejected key is recorded on
-  // the job row and acked, so the admin sees "API key not valid" instead of a
-  // check that never finishes.
-  //
-  // THE SIXTY-SECOND SLEEP IS PART OF WHAT IS BEING PINNED. lib/gemini.ts's
-  // retry loop catches EVERY error, not just the 5xx ai.py:59-65 was written
-  // for, so even a 400 costs `await new Promise(setTimeout, 60_000)` and a
-  // second identical call before it gives up -- one minute of a queue consumer
-  // held open per failed check. setTimeout is faked here (and only here)
-  // because that is the only way to observe the second attempt without the
-  // suite actually waiting a minute.
-  it("acks and records a Gemini rejection rather than paying for it three more times", async () => {
-    vi.useFakeTimers({ toFake: ["Date", "setTimeout"] });
-    vi.setSystemTime(NOW);
-    reply(GEMINI_FLASH_25, { status: 400, body: "API key not valid" });
-
-    const fake = batchOf({ type: "foodbank-check", jobId: "job-check-a", foodbankSlug: "salisbury" });
-    const pending = handleJobsQueue(fake.batch, env);
-    await vi.advanceTimersByTimeAsync(61_000);
-    await pending;
-
-    expect(adminJob("job-check-a")).toMatchObject({ status: "failed" });
-    expect(String(adminJob("job-check-a")!.error)).toContain("Gemini API error: 400");
-    // TWO calls, not one: the loop treats a 400 as retryable.
-    expect(fetchCalls.filter((c) => routeKey(c.url) === GEMINI_FLASH_25)).toHaveLength(2);
-    expect(fake.messages[0]!.ack).toHaveBeenCalledTimes(1);
-    expect(fake.messages[0]!.retry).not.toHaveBeenCalled();
-  });
-
-  // THE ONE HOLE IN THAT CLAIM, pinned rather than fixed. markAdminJobRunning
-  // is called OUTSIDE handleFoodbankCheckJob's try block (foodbankCheck.ts:99
-  // vs the `try` at :101), so a D1 failure on that first statement escapes the
-  // handler, reaches this router's catch, and DOES retry -- with the job row
-  // left on "queued" and the admin's page still spinning.
-  //
-  // orderLines.ts puts the identical call INSIDE its try (orderLines.ts:101-102)
-  // and therefore never throws. The asymmetry is what makes this look
-  // accidental. Reported, not corrected: retrying a D1 blip is arguably right,
-  // and the comment claiming the handler never throws is what is wrong.
-  it("SUSPECT: retries when D1 fails before the job is marked running, contradicting the module comment", async () => {
-    failIf = (sql) => (/UPDATE admin_job SET status = 'running'/.test(sql) ? new Error("D1_ERROR: Network connection lost") : null);
-
-    const message = await runOne({ type: "foodbank-check", jobId: "job-check-a", foodbankSlug: "salisbury" });
-
-    expect(message.retry).toHaveBeenCalledTimes(1);
-    expect(message.ack).not.toHaveBeenCalled();
-    expect(adminJob("job-check-a")).toMatchObject({ status: "queued", error: null });
-  });
-});
+// This queue message no longer exists. The food bank check runs inline in
+// workers/site's admin route (packages/ai's runFoodbankCheck), because ~30 s
+// of its measured 37-40 s was this very queue's `max_batch_timeout: 30`
+// waiting for a batch that an admin pressing Check once never fills.
+//
+// The describe block that stood here tested jobs.ts's "self-recording"
+// contract for it -- that a failed check acks and writes the failure onto the
+// admin_job row rather than retrying into another paid Gemini call. That
+// contract still holds for order-lines and is tested below; the food bank
+// check no longer has a job row to record onto.
 
 // ===========================================================================
 // order-lines
@@ -1414,23 +1279,26 @@ describe("batch semantics", () => {
   // publish fans out four notifications and a translate, while media misses
   // arrive from the site -- and it is the case a switch statement with a
   // missing `break` (or a `return` in the wrong place) would break.
-  it("routes a mixed batch to five different subsystems in one pass", async () => {
+  // Four subsystems, not five: github #38 removed "foodbank-check" from this
+  // switch. The unknown-type message stays last and still retries -- it is
+  // what proves the dispatcher does not silently swallow a type it does not
+  // know, which matters more now that a type has actually been deleted from
+  // it.
+  it("routes a mixed batch to four different subsystems in one pass", async () => {
     seedNeed({ id: NEED_ID, foodbankId: SALISBURY, changeText: "Beans" });
-    seedAdminJob({ id: "job-mixed", kind: "check", target: "nowhere" });
+    seedAdminJob({ id: "job-mixed", kind: "order-lines", target: null });
     reply(GOOGLE_TRANSLATE, { status: 200, body: JSON.stringify({ data: { translations: [{ translatedText: "Ffa" }] } }) });
 
     const fake = await run(
       { type: "media-backfill", key: "media/needs/at/salisbury/map.png" },
       { type: "translate-need", needId: NEED_ID, language: "cy" },
-      { type: "foodbank-check", jobId: "job-mixed", foodbankSlug: "nowhere" },
       { type: "notify-need-firebase", needId: NEED_ID },
       { type: "unknown-thing" },
     );
 
     expect(media.has("media/needs/at/salisbury/map.png")).toBe(true);
     expect(rows("SELECT language FROM foodbankchangetranslation")).toEqual([{ language: "cy" }]);
-    expect(adminJob("job-mixed")).toMatchObject({ status: "failed", error: "no such foodbank: nowhere" });
     expect(warns).toContain("notify-need-firebase: FIREBASE_SERVICE_ACCOUNT not set, skipping");
-    expect(fake.messages.map((m) => (m.ack.mock.calls.length ? "ack" : "retry"))).toEqual(["ack", "ack", "ack", "ack", "retry"]);
+    expect(fake.messages.map((m) => (m.ack.mock.calls.length ? "ack" : "retry"))).toEqual(["ack", "ack", "ack", "retry"]);
   });
 });

@@ -18,6 +18,25 @@ importers:
         specifier: ^4.129.0
         version: 4.129.0(@cloudflare/workers-types@5.20260905.1)
 
+  packages/ai:
+    dependencies:
+      '@givefood/db':
+        specifier: workspace:*
+        version: link:../db
+      '@givefood/models':
+        specifier: workspace:*
+        version: link:../models
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: ^5.20260905.1
+        version: 5.20260905.1
+      '@types/node':
+        specifier: ^26.4.1
+        version: 26.4.1
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+
   packages/db:
     dependencies:
       '@givefood/models':
@@ -101,6 +120,9 @@ importers:
       '@cloudflare/puppeteer':
         specifier: ^1.4.0
         version: 1.4.0(supports-color@10.2.2)
+      '@givefood/ai':
+        specifier: workspace:*
+        version: link:../../packages/ai
       '@givefood/db':
         specifier: workspace:*
         version: link:../../packages/db
@@ -132,6 +154,9 @@ importers:
       '@cloudflare/puppeteer':
         specifier: ^1.4.0
         version: 1.4.0(supports-color@10.2.2)
+      '@givefood/ai':
+        specifier: workspace:*
+        version: link:../../packages/ai
       '@givefood/db':
         specifier: workspace:*
         version: link:../../packages/db
