@@ -356,7 +356,25 @@ export async function getPlacesPage(session: Session, sort: PlaceListSort, direc
   const [countRow, result] = await Promise.all([
     session.prepare("SELECT COUNT(*) AS n FROM place").first<{ n: number }>(),
     session
-      .prepare(`SELECT id, name, lat_lng, county, population FROM place ORDER BY ${sort} ${direction === "desc" ? "DESC" : "ASC"} LIMIT ? OFFSET ?`)
+      // `, id ASC` PINS AN ORDER THIS QUERY ALREADY HAD BY ACCIDENT. None of
+      // the three sort keys is unique across 253,584 rows -- `county` has a
+      // few hundred distinct values and `population` is NULL in bulk -- so
+      // ties decide which rows land on which page, and nothing here decided
+      // them. The engine did: with no index to use, `SCAN place` walks the
+      // table in rowid order, and `id INTEGER PRIMARY KEY` IS the rowid, so
+      // the sorter has been emitting ties in `id ASC` all along. Writing it
+      // down changes no output today (verified over 42 page/sort/direction
+      // combinations on a tie-heavy fixture) and stops the engine choosing
+      // for us tomorrow: 0025_place_prefix_cover.sql adds an index that
+      // covers all five of these columns, which moves this query onto an
+      // index scan whose tie order is the index's, not the rowid's. Without
+      // this clause that migration silently reorders 26 of 36
+      // page/sort/direction combinations. Same fix, same reason, as
+      // getOrderItemsPage (orderItemAdmin.ts:160).
+      //
+      // `sort`/`direction` are interpolated, never bound -- both come from
+      // the PLACE_LIST_SORTS allowlist above via the route.
+      .prepare(`SELECT id, name, lat_lng, county, population FROM place ORDER BY ${sort} ${direction === "desc" ? "DESC" : "ASC"}, id ASC LIMIT ? OFFSET ?`)
       .bind(pageSize, offset)
       .all<PlaceListRow>(),
   ]);

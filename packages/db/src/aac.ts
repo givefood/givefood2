@@ -44,12 +44,30 @@ function ftsPhrase(q: string): string {
   return `"${q.replace(/"/g, '""')}"`;
 }
 
+// `, id ASC` IS THE TIE-BREAK THIS ORDERING ALWAYS HAD AND NEVER SAID.
+// Django's own `order_by` (views.py:1522-1580) ends at `name`, and on a
+// 253,584-row gazetteer that is not a total order: duplicate place names are
+// ordinary ("Newton", "Whitchurch", "Newport"), and `population` is NULL for
+// a large share of rows, so `population IS NULL, population DESC, name ASC`
+// leaves genuine ties -- rows equal on every key the sort can see. Something
+// still has to order them, and until 0025_place_prefix_cover.sql that
+// something was the access path: the scan walked place_name_upper_idx and
+// fetched by rowid, so ties came out in `id` order. The covering index this
+// query now uses is ordered (name_upper, population, name, lat_lng, county,
+// rowid), so ties would come out in lat_lng order instead -- verified, on a
+// fixture of thirty identically-named, identically-populated rows, at both
+// LIMIT 10 and LIMIT 400. Naming `id` freezes the answer at what the table
+// has been returning all along (also verified: identical rows, before and
+// after, on the pre-migration schema) and makes it independent of whichever
+// index the planner picks next. `id INTEGER PRIMARY KEY` is the rowid and is
+// therefore in every index, so this costs no lookup and the plan stays
+// `SEARCH place USING COVERING INDEX place_prefix_cover`.
 async function searchPlacePrefix(session: Session, upperQuery: string, limit: number): Promise<AacResult[]> {
   const result = await session
     .prepare(
       "SELECT name, lat_lng, county FROM place " +
         "WHERE name_upper >= ?1 AND name_upper < ?2 " +
-        "ORDER BY population IS NULL, population DESC, name ASC " +
+        "ORDER BY population IS NULL, population DESC, name ASC, id ASC " +
         "LIMIT ?3",
     )
     .bind(upperQuery, incrementLastChar(upperQuery), limit)
@@ -60,12 +78,23 @@ async function searchPlacePrefix(session: Session, upperQuery: string, limit: nu
 // Only called when query.length >= 3 -- below that there's nothing for the
 // trigram tokenizer to match on (§4.8.6). NOT LIKE excludes pass-1's own
 // prefix hits so the two passes never duplicate a result.
+//
+// `, p.id ASC` for the same reason as searchPlacePrefix above, and NOT
+// because this query needs it today. 0025_place_prefix_cover.sql does not
+// touch this plan -- the FTS match drives it and `place` is still reached by
+// rowid, so the index cannot be chosen here and the rows are measurably
+// unmoved by it. But the tie is the same tie, the two passes are
+// concatenated into one list, and pinning half of an ordering is worse than
+// pinning none of it: the half that was left implicit is the one that moves
+// unnoticed. Adding it changes nothing measurable now (verified: byte-
+// identical results with and without, at LIMIT 10 and LIMIT 400) -- rowid is
+// already the order this join produces.
 async function searchPlaceSubstring(session: Session, upperQuery: string, limit: number): Promise<AacResult[]> {
   const result = await session
     .prepare(
       "SELECT p.name, p.lat_lng, p.county FROM place_fts f JOIN place p ON p.id = f.rowid " +
         "WHERE f.name_upper MATCH ?1 AND p.name_upper NOT LIKE ?2 " +
-        "ORDER BY p.population IS NULL, p.population DESC, p.name ASC " +
+        "ORDER BY p.population IS NULL, p.population DESC, p.name ASC, p.id ASC " +
         "LIMIT ?3",
     )
     .bind(ftsPhrase(upperQuery), `${upperQuery}%`, limit)

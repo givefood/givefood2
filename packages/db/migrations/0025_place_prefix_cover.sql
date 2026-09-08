@@ -1,0 +1,85 @@
+-- ================== 0025_place_prefix_cover.sql ==========================
+-- Ticket #50. A COVERING index for /aac/'s prefix pass, so the query stops
+-- doing one table lookup per matching row to fetch three columns.
+--
+-- searchPlacePrefix() in packages/db/src/aac.ts runs
+--   SELECT name, lat_lng, county FROM place
+--    WHERE name_upper >= ?1 AND name_upper < ?2
+--    ORDER BY population IS NULL, population DESC, name ASC
+--    LIMIT ?3
+-- at LIMIT 10 for /aac/ and LIMIT 400 for /aac/next/ (DEEP_LIMIT), and the
+-- only index it has to work with is place_name_upper_idx -- name_upper
+-- alone, from 0009_aac.sql:20. So the range scan finds the rows in the
+-- index and then visits the TABLE once per row for name/lat_lng/county and
+-- once more for population to sort by. That second half is essentially the
+-- whole cost. Decomposed on the 'LO' range (12,620 matching rows of
+-- place's 253,584), measured against production D1:
+--
+--   index-only count(*)                  1.5 ms   scan alone
+--   count(county) -- lookups, no sort   29.7 ms   +28 ms, the lookups
+--   covering index + the same sort      2.6-3.8 ms
+--   the query as it stands today       24-38 ms warm
+--
+-- This index is those three sort/filter/output columns carried in the
+-- index itself, so the table is never opened: 24-38 ms -> ~3 ms on the
+-- worst prefix, 12-18 ms -> ~2 ms on a typical one. Live and interleaved
+-- on cache MISSes, /aac/?q=lo measured a 21 ms median improvement.
+--
+-- THIS SAVES NO ROWS AND NO MONEY, and the ticket that proposed it said
+-- the opposite before verification corrected it. rows_read stays at 25,241
+-- for 'LO' -- verified by running a covering query over the identical
+-- range. Table lookups contribute ZERO to D1's rows_read; the doubling
+-- (12,620 matches -> 25,241 rows) is the temp b-tree sorter reading its
+-- rows back, and this index does not remove that sort. `population` is the
+-- second index column but the scan is a `name_upper` RANGE, so rows still
+-- emerge in name_upper order and still have to be sorted. Expect
+-- `USE TEMP B-TREE FOR ORDER BY` to remain in the plan; it costs ~2-3 ms
+-- and it is not what this is for. D1 bills rows read, so the bill does not
+-- move. What moves is TTFB on the site's single most latency-sensitive
+-- control, and the cold-page-cache tail behind it (one first-touch read of
+-- the 'LO' range measured 602 ms; an index-only scan touches far fewer
+-- pages).
+--
+-- Both /aac/ routes are edge-cached -- 24 h for /aac/, a week for
+-- /aac/next/ -- so this is paid once per (query-string, colo) per TTL and
+-- not once per keystroke. The aggregate saving is small, order 30-50
+-- seconds of D1 time a day. The per-user saving on a missed keystroke is
+-- the point.
+--
+-- COLUMN ORDER IS name_upper FIRST AND THE REST ARE PAYLOAD. Only the
+-- leading column does any work -- it is what the range scan seeks on.
+-- population/name/lat_lng/county are here solely so the row never has to
+-- be fetched, and their order among themselves changes nothing; they are
+-- written in the order the query's ORDER BY and SELECT name them so the
+-- index reads as a description of the statement it serves.
+--
+-- place_name_upper_idx STAYS. The obvious follow-up -- "the new index has
+-- name_upper as its leading column, so the old one is redundant" -- may
+-- well be true, and is deliberately not decided here: the old index is
+-- ~20 MB smaller, it is the cheap fallback if the planner ever mis-costs
+-- this one, and searchPlaceSubstring() (aac.ts:63-74) joins `place` on a
+-- path this migration was not asked to audit. Dropping it is a separate
+-- change with its own evidence.
+--
+-- IT ALSO REPLANS /admin/places/, WHICH THE TICKET DID NOT MENTION.
+-- getPlacesPage() (adminLists.ts) has no WHERE clause and projects
+-- id/name/lat_lng/county/population -- every one of which this index
+-- carries (`id` is the rowid, so it is in every index) -- so all six of
+-- its sort/direction combinations move from `SCAN place` to
+-- `SCAN place USING COVERING INDEX place_prefix_cover`. Same rows, but
+-- rows tied on the sort key arrived in rowid order from a table scan and
+-- arrive in index order from an index scan: on a fixture with heavy ties,
+-- 26 of 36 page/sort/direction combinations came back reordered. That is a
+-- silent output change on a paginated page, so getPlacesPage's ORDER BY
+-- gained an explicit `, id ASC` tiebreak in the same commit -- which is
+-- what a table scan was already producing, so it moves nothing today and
+-- makes the ordering total and index-independent from here on.
+-- placePrefixCover.test.ts holds both halves of that.
+--
+-- Cost of carrying it: roughly 20 MB against a 437 MB database (+4.6%),
+-- from 253,584 rows at ~80 B/entry (measured average widths: name_upper
+-- 13.1, name 13.1, lat_lng 24.9, county 12.1). D1 bills storage. Write
+-- amplification is nil -- `place` is a static gazetteer written only by an
+-- import job.
+
+CREATE INDEX place_prefix_cover ON place(name_upper, population, name, lat_lng, county);
