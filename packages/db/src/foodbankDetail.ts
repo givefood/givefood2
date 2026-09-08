@@ -1,5 +1,11 @@
 import { sortByName, type Session } from "./types";
-import { LOCATION_COLUMNS_NARROW, mapLocationRowNarrow, type FoodbankLocationRowNarrow } from "./locations";
+import {
+  LOCATION_COLUMNS_NARROW,
+  mapLocationRow,
+  mapLocationRowNarrow,
+  type FoodbankLocationRow,
+  type FoodbankLocationRowNarrow,
+} from "./locations";
 import { mapDonationPointRow, type DonationPointRow } from "./donationpoints";
 import { foodbanksByIdsStatement, mapFoodbanksByIds, type FoodbankWithLatestNeed } from "./foodbank";
 
@@ -68,5 +74,57 @@ export async function getLocationsDonationPointsAndNearbyFoodbanks(
     locations: sortByName(locationsResult.results.map((r) => mapLocationRowNarrow(r as Record<string, unknown>))),
     donationPoints: sortByName(donationPointsResult.results.map((r) => mapDonationPointRow(r as Record<string, unknown>))),
     nearbyFoodbanks: nearbyIds.length > 0 ? await mapFoodbanksByIds(session, results[2]!.results, nearbyIds) : [],
+  };
+}
+
+// THE SAME PAIR, WITHOUT THE NEIGHBOURS AND WITHOUT THE PROJECTION -- for
+// gfwfbn `foodbank_donationpoints` (routes/wfbn/locations.ts, github #52),
+// which fetched these two lists as two sequential awaits and is the only
+// caller that needs neither the ranked neighbours nor a narrowed location row.
+//
+// WHY NOT REUSE THE FUNCTION ABOVE. Two of its three pieces are wrong for this
+// caller and both would cost rather than save. `nearbyIds` is the detail
+// endpoint's ranked candidate set, computed by a query this page never makes;
+// passing [] would suppress the statement but the signature would still be
+// lying about what the page knows. And the LOCATION PROJECTION is the load-
+// bearing difference: `has_service_area` on this page is derived from
+// `boundary_geojson` on these very rows (see the caller), which
+// LOCATION_COLUMNS_NARROW deliberately leaves in D1. Narrowing here and
+// deriving from the result would not fail -- `undefined !== null` is true --
+// it would silently report a service area for all 1,023 food banks. The row
+// TYPE is what stops that: FoodbankLocationRowNarrow is an
+// `Omit<..., "boundary_geojson">`, so swapping this function's projection for
+// the other one is a compile error at the caller, not a live wrong answer.
+//
+// So the two statements are, byte for byte, the ones getLocationsByFoodbankId
+// and getDonationPointsByFoodbankId send -- same views, same `WHERE
+// foodbank_id = ?` with no is_closed filter, same mappers, same JS name sort
+// (Django's `.order_by("name")` on both model methods,
+// givefood/models/foodbank.py:546 and :552). ONLY THE TRANSPORT CHANGES:
+// `session.batch()` puts them on one round trip instead of two, the same fix
+// and for the same measured reason as the function above. Its equivalence to
+// the unbatched pair is asserted row-for-row in the test file rather than
+// argued here.
+//
+// The blob those location rows still carry is the price of deriving the flag
+// without a third round trip, and it is a real one for the seven production
+// food banks that have a boundary at all (up to a few hundred kB). Trading it
+// for a `(boundary_geojson IS NOT NULL AND boundary_geojson != '') AS
+// has_boundary` flag column -- as getAllOpenLocationsFlagged already does --
+// is the right next move for BOTH of that route's handlers, but it changes the
+// row shape the templates see and github #52 parks it as its own change.
+export async function getLocationsAndDonationPointsByFoodbankId(
+  session: Session,
+  foodbankId: number,
+): Promise<{ locations: FoodbankLocationRow[]; donationPoints: DonationPointRow[] }> {
+  const results = await session.batch([
+    session.prepare("SELECT * FROM foodbanklocation_full WHERE foodbank_id = ?").bind(foodbankId),
+    session.prepare("SELECT * FROM foodbankdonationpoint_full WHERE foodbank_id = ?").bind(foodbankId),
+  ]);
+  // batch() always returns one result per input statement, in the same order
+  // -- see the sibling function's note on why these `!`s are safe.
+  return {
+    locations: sortByName(results[0]!.results.map((r) => mapLocationRow(r as Record<string, unknown>))),
+    donationPoints: sortByName(results[1]!.results.map((r) => mapDonationPointRow(r as Record<string, unknown>))),
   };
 }
