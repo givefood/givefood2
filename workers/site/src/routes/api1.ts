@@ -3,7 +3,7 @@ import {
   getAllFoodbanks,
   getFoodbankBySlug,
   getFoodbanksByIds,
-  getLocationsByFoodbankId,
+  getLocationsByFoodbankIdNarrow,
   getNeedByUuid,
   getOpenFoodbankCoordinates,
   getPublishedNeeds,
@@ -244,7 +244,17 @@ api1App.get("/foodbank/:slug/", async (c) => {
   const foodbank = await getFoodbankBySlug(session, slug);
   if (!foodbank) return c.notFound();
 
-  const locations = await getLocationsByFoodbankId(session, foodbank.id);
+  // NARROW, not the unprojected `SELECT *` (github #52's closing observation,
+  // third instalment). The serialiser below names TEN fields and
+  // boundary_geojson is not one of them, so the blob was crossing the wire to
+  // be dropped on the floor -- and a v1 field cannot appear by accident here,
+  // because these keys are written out one by one. The plain narrow row, not
+  // the flagged one: this endpoint does not publish a service-area flag either,
+  // so `has_boundary` would be just as unread. Measured on canterbury, the
+  // largest of the 7 production food banks that own a boundary at all:
+  // 2,319,826 -> 19,532 bytes for this statement, -99.2%, same query plan,
+  // rows_read unchanged at 43.
+  const locations = await getLocationsByFoodbankIdNarrow(session, foodbank.id);
   const locationsList = locations.map((location) => ({
     name: location.name,
     address: location.address,

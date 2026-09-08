@@ -991,6 +991,34 @@ describe("adminFoodbankDetail -- the locations column", () => {
       place_has_photo: null, // tri-state: NULL is not false
     });
   });
+
+  // THE LAST READER OF boundary_geojson, and the whole reason
+  // getLocationsByFoodbankId is still an unprojected `SELECT *` after github
+  // #52's third instalment moved /md/needs/at/<slug>/locations/ and
+  // /api/1/foodbank/<slug>/ onto getLocationsByFoodbankIdNarrow. This page did
+  // NOT move, and this is what would happen if a later tidy-up moved it:
+  // foodbank_detail.njk:248 is `{% if loc.boundary_geojson %}<dt>Is Service
+  // Area</dt>`, so a narrowed query hands the template `undefined`, which is
+  // falsy, and the row simply stops appearing. No error, no blank cell -- the
+  // admin is quietly told that no location has a service area, on a page whose
+  // entire job is to show what the record holds.
+  //
+  // Asserted on the VALUE, not on truthiness, and with a second row storing
+  // NULL so that "the key is present and carries what D1 holds" is what passes
+  // rather than "some boundary-ish thing is there".
+  it("hands the template the raw boundary_geojson its Is Service Area row reads", async () => {
+    const POLYGON = '{"type":"Polygon","coordinates":[[[0,0],[0,1],[1,1],[0,0]]]}';
+    seedLocation(10, SALISBURY, "Bemerton Heath", { boundary_geojson: POLYGON });
+    seedLocation(11, SALISBURY, "Wilton", { boundary_geojson: null });
+
+    await request("/admin/foodbank/salisbury/");
+
+    const locations = renderContext<Record<string, unknown>[]>("locations");
+    expect(locations.map((l) => l.name)).toEqual(["Bemerton Heath", "Wilton"]);
+    expect(locations.map((l) => l.boundary_geojson)).toEqual([POLYGON, null]);
+    expect(locations[0]).toHaveProperty("boundary_geojson");
+    expect(locations[1]).toHaveProperty("boundary_geojson");
+  });
 });
 
 describe("adminFoodbankDetail -- the latest need panel", () => {

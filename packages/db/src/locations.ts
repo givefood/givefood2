@@ -206,9 +206,8 @@ export async function getAllOpenLocationsFlagged(session: Session): Promise<Food
 // still has a caller that genuinely READS the column: admin/foodbankDetail.ts
 // renders `{% if loc.boundary_geojson %}` (admin/foodbank_detail.njk:248).
 // Narrowing in place would change that page too; this leaves it exactly as it
-// was. The other three callers -- api1.ts, ./md/locations.ts and workers/jobs'
-// foodbankCheck.ts -- pull the blob and never emit it either; moving those is a
-// separate change.
+// was. See getLocationsByFoodbankIdNarrow below for the plain-projection
+// sibling, and for the full remaining-caller census.
 //
 // WHAT IT COSTS THE PAGE, measured read-only against production D1 on
 // canterbury (foodbank_id 5712046691713024, 21 locations, all 21 with a
@@ -232,6 +231,65 @@ export async function getLocationsByFoodbankIdFlagged(
     .bind(foodbankId)
     .all();
   return sortByName(result.results.map((r) => mapLocationRowFlagged(r as Record<string, unknown>)));
+}
+
+// getLocationsByFoodbankId, minus the blob and WITHOUT the flag -- the third
+// instalment of github #52's closing observation. Two callers pulled the
+// boundary blob and then never emitted it, and neither asks whether there IS
+// one either, so `has_boundary` would be a field nothing reads:
+//
+//   * wfbn/md/locations.ts's mdFoodbankLocations (GET
+//     /md/needs/at/<slug>/locations/) renders wfbn/foodbank/md/locations.njk,
+//     which prints name/address/postcode/slug and does not mention boundary at
+//     all. (Its HTML twin DOES ask -- that is what the Flagged sibling above is
+//     for -- because wfbn/foodbank/locations.njk suppresses a place photo on a
+//     location with a service area. The markdown mirror has no photos and no
+//     map.)
+//   * api1.ts's GET /api/1/foodbank/<slug>/ maps every row to a fixed 10-field
+//     object (name, address, postcode, latt_long, phone,
+//     parliamentary_constituency, mp, mp_party, ward, district). The blob is
+//     not among them, and a v1 API field cannot be added by accident -- the
+//     serialiser names its keys.
+//
+// WHY A THIRD SIBLING RATHER THAN NARROWING THE FIRST. getLocationsByFoodbankId
+// keeps ONE reader of the column, and it is a real one: admin/foodbankDetail.ts
+// renders `{% if loc.boundary_geojson %}` as the admin's "Is Service Area" row
+// (admin/foodbank_detail.njk:248). Narrowing the shared function in place would
+// blank that row silently -- `undefined` is falsy, so the page would still
+// render, just always saying "no". Its other surviving caller,
+// workers/jobs' foodbankCheck.ts, reads only name/slug/address/postcode (all
+// four are in LOCATION_COLUMNS_NARROW) and would be safe to move; it is a
+// background job rather than a request path, so it is left alone here rather
+// than swept in unmeasured.
+//
+// WHAT IT COSTS THE PAGE, measured read-only against production D1 on
+// canterbury (foodbank_id 5712046691713024, 21 locations, all 21 with a
+// boundary -- the largest of the only 7 food banks that have one at all):
+// 2,319,826 -> 19,532 bytes of result payload, -99.2%, and a median
+// sql_duration of 18.4 ms (13.0-23.5) -> 4.5 ms (3.1-7.7) over 7 interleaved
+// runs of each. rows_read is UNCHANGED at 43 -- D1 bills rows read, so this is
+// wire bytes and latency, not money. EXPLAIN QUERY PLAN is identical on both
+// (`SEARCH l USING INDEX loc_foodbank_slug_idx (foodbank_id=?)` then the
+// LEFT-JOIN probe of the parent), so nothing about the access path moved.
+//
+// SAME EVERYTHING ELSE, as with the Flagged sibling: same `foodbanklocation_full`
+// view, same `WHERE foodbank_id = ?` with deliberately NO is_closed filter
+// (Django's `Foodbank.locations()` is `FoodbankLocation.objects.filter(foodbank
+// = self).order_by("name")`, givefood/models/foodbank.py:546 -- a food bank's
+// list legitimately includes closed locations), same JS name sort via
+// sortByName rather than an ORDER BY, and mapLocationRowNarrow so that
+// BOOLEAN_COLUMNS still get coerced. Skipping that mapper would hand back raw
+// 0/1 where FoodbankLocationRowNarrow promises booleans -- invisible until
+// something does `=== true`.
+export async function getLocationsByFoodbankIdNarrow(
+  session: Session,
+  foodbankId: number,
+): Promise<FoodbankLocationRowNarrow[]> {
+  const result = await session
+    .prepare(`SELECT ${LOCATION_COLUMNS_NARROW} FROM foodbanklocation_full WHERE foodbank_id = ?`)
+    .bind(foodbankId)
+    .all();
+  return sortByName(result.results.map((r) => mapLocationRowNarrow(r as Record<string, unknown>)));
 }
 
 // sitemap.xml only ever needs foodbank_slug/slug -- PLAN.md's hard rule
