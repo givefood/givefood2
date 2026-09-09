@@ -71,8 +71,38 @@ function pickAtomLink(node: unknown): string | undefined {
   const links = asArray(node as Record<string, unknown> | Record<string, unknown>[]);
   if (links.length === 0) return undefined;
   const alternate = links.find((l) => !l["@_rel"] || l["@_rel"] === "alternate");
-  const href = (alternate ?? links[0])?.["@_href"];
-  return typeof href === "string" ? href : undefined;
+  const chosen = alternate ?? links[0];
+  const href = chosen?.["@_href"];
+  if (typeof href === "string") return href;
+  // NO href: FALL BACK TO THE ELEMENT'S TEXT (github #26). A feed that
+  // declares itself Atom but writes RSS-style text links -- <link>URL</link>
+  // rather than <link href="URL"/> -- used to lose EVERY entry, on every
+  // crawl, silently: pickAtomLink returned undefined, atomEntryToFeedItem
+  // coerced it to "", and isUsable dropped the item. queues/articles.ts logs
+  // nothing on an empty parse and closes the CrawlItem with a null
+  // discrepancy, so the food bank's news page just stayed empty and the crawl
+  // looked healthy.
+  //
+  // feedparser keeps them, and structurally rather than by accident: its
+  // _start_link (namespaces/_base.py:337-361) is SHARED between RSS and Atom
+  // and ends `else: self.push("link", expecting_text)`, capturing element
+  // text whenever href is absent. It is the same handler that makes ordinary
+  // RSS <link>text</link> work. PLAN.md Task 8.6-a makes feedparser the
+  // parity target in as many words -- "any feed the JS parser handles
+  // differently is a bug to fix, not a feed to skip" -- so spec-invalidity
+  // (Atom 1.0 requires href) is not a defence here.
+  //
+  // textOf, not a bespoke read, so this covers all three shapes
+  // fast-xml-parser produces for a text link at once: a bare string, the
+  // {"#text", …attrs} wrapper from <link type="text/html">URL</link>, and
+  // CDATA. The result flows through resolveLink() unchanged, so a relative
+  // text link is resolved against the feed URL exactly as an RSS one is.
+  //
+  // STRICTLY MORE TOLERANT: this branch only runs where href is absent, and
+  // an entry with no href is one the old code discarded outright, so no
+  // currently-kept entry can change. Verified against all 470 live feeds --
+  // see the note in feedParser.test.ts.
+  return textOf(chosen);
 }
 
 // RFC 822/1123 (RSS pubDate: "Thu, 26 Mar 2026 15:52:06 +0000") and ISO

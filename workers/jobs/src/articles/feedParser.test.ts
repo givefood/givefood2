@@ -1123,13 +1123,63 @@ describe("parseFeed: documented divergences from feedparser", () => {
     ).toEqual([]);
   });
 
-  it("drops an Atom entry whose <link> holds the URL as text rather than an href", () => {
-    // pickAtomLink reads only @_href, per the Atom spec. A feed that declares
-    // itself Atom but writes RSS-style text links loses every entry. Correct by
-    // the spec; recorded because the failure is total and silent.
+  // github #26. This asserted [] -- "correct by the spec; recorded because
+  // the failure is total and silent". Atom 1.0 does require href, but PLAN.md
+  // Task 8.6-a makes feedparser the parity target, not the spec: "any feed
+  // the JS parser handles differently is a bug to fix, not a feed to skip".
+  // feedparser keeps these, and structurally: its _start_link handler is
+  // shared between RSS and Atom and falls back to element text whenever href
+  // is absent.
+  //
+  // MEASURED BEFORE FIXING, because the ticket could not: all 470 live feeds
+  // with an rss_url were fetched and run through this parser. NONE uses this
+  // shape, so no food bank was actually losing articles to it -- the low
+  // severity was right. The fix went in anyway because it is strictly more
+  // tolerant: the fallback only runs where href is absent, which is an entry
+  // the old code discarded outright, so no currently-kept entry can change.
+  // Re-running the same 470 after the change altered no feed's item count.
+  it("reads an Atom <link> that holds the URL as text rather than an href", () => {
     expect(
       parseFeed(`<feed><entry><title>T</title><link>https://example.org/1/</link><published>2026-03-26T15:52:06Z</published></entry></feed>`, "https://example.org/feed.atom"),
+    ).toEqual([{ title: "T", link: "https://example.org/1/", publishedDate: new Date("2026-03-26T15:52:06Z") }]);
+  });
+
+  it("reads the other two shapes a text link arrives in, and resolves a relative one", () => {
+    // textOf(), not a bespoke read, is what makes one branch cover all three:
+    // fast-xml-parser gives a bare string for <link>URL</link>, a
+    // {"#text", …attrs} wrapper once the element carries an attribute, and
+    // the same wrapper for CDATA. Asserted separately because a fix written
+    // against only the bare-string shape passes the test above and still
+    // loses every entry in a feed whose links carry a type attribute.
+    expect(
+      parseFeed(
+        `<feed><entry><title>T</title><link type="text/html">https://example.org/1/</link><published>2026-03-26T15:52:06Z</published></entry></feed>`,
+        "https://example.org/feed.atom",
+      ),
+    ).toEqual([{ title: "T", link: "https://example.org/1/", publishedDate: new Date("2026-03-26T15:52:06Z") }]);
+
+    // Relative text links go through resolveLink() exactly as RSS ones do.
+    expect(
+      parseFeed(`<feed><entry><title>T</title><link>/news/1/</link><published>2026-03-26T15:52:06Z</published></entry></feed>`, "https://example.org/feed.atom"),
+    ).toEqual([{ title: "T", link: "https://example.org/news/1/", publishedDate: new Date("2026-03-26T15:52:06Z") }]);
+  });
+
+  it("still prefers href, and still drops an entry with neither href nor text", () => {
+    // The fallback must not outrank a real href, and must not resurrect an
+    // entry that genuinely has no link -- both are ways a "more tolerant"
+    // change turns into a wrong or a duplicate article.
+    expect(
+      parseFeed(
+        `<feed><entry><title>T</title><link rel="self" href="https://example.org/self/"/><link rel="alternate" href="https://example.org/alt/"/><published>2026-03-26T15:52:06Z</published></entry></feed>`,
+        "https://example.org/feed.atom",
+      ).map((i) => i.link),
+    ).toEqual(["https://example.org/alt/"]);
+
+    expect(
+      parseFeed(`<feed><entry><title>T</title><link rel="alternate"/><published>2026-03-26T15:52:06Z</published></entry></feed>`, "https://example.org/feed.atom"),
     ).toEqual([]);
+
+    expect(parseFeed(`<feed><entry><title>T</title><published>2026-03-26T15:52:06Z</published></entry></feed>`, "https://example.org/feed.atom")).toEqual([]);
   });
 
   it("ignores <dc:date> on an ATOM entry, dropping an entry dated only that way", () => {
