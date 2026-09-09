@@ -1492,7 +1492,10 @@ describe("the constituency page: the MP, the map and the nearby list", () => {
         expect.stringContaining("FROM foodbanklocation_full WHERE parliamentary_constituency_id = ? AND is_closed = 0") as unknown as string,
       ],
       ["SELECT * FROM foodbank WHERE id IN (?, ?, ?, ?, ?, ?, ?, ?)"],
-      ["SELECT * FROM foodbankchange_full WHERE id IN (?, ?, ?, ?, ?, ?)"],
+      // github #53: the need read is now a subquery bound to the FOOD BANK
+      // ids, so it goes out with the row read above rather than after it --
+      // eight binds, not the six distinct need ids the two-step form derived.
+      ["SELECT * FROM foodbankchange_full WHERE id IN (SELECT latest_need_id FROM foodbank WHERE id IN (?, ?, ?, ?, ?, ?, ?, ?))"],
     ]);
     expect(prepared.every((p) => !p.sql.includes("boundary_geojson"))).toBe(true);
   });

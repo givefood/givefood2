@@ -1379,14 +1379,21 @@ describe("mdFoodbankNearby -- the envelope, and the route that nearly is not one
       ["SELECT id, latitude, longitude FROM foodbank WHERE is_closed = 0", []],
       ["SELECT id, latitude, longitude FROM foodbanklocation WHERE is_closed = 0", []],
       ["SELECT * FROM foodbank WHERE id IN (?, ?, ?, ?, ?, ?, ?, ?)", [2, 3, 5, 6, 7, 8, 9, 11]],
+      // ...and their needs, issued WITH that read rather than after it
+      // (github #53): the binds are the food bank ids and a subquery finds
+      // the need ids, so the statement no longer waits on the row result and
+      // this line moves ahead of the location read.
+      [
+        "SELECT * FROM foodbankchange_full WHERE id IN (SELECT latest_need_id FROM foodbank WHERE id IN (?, ?, ?, ?, ?, ?, ?, ?))",
+        [2, 3, 5, 6, 7, 8, 9, 11],
+      ],
       ["SELECT * FROM foodbanklocation_full WHERE id IN (?, ?, ?, ?)", [101, 102, 104, 105]],
-      ["SELECT * FROM foodbankchange_full WHERE id IN (?, ?, ?, ?, ?, ?, ?, ?)", [102, 103, 105, 106, 107, 108, 109, 111]],
       // The winning locations' parents, deduplicated (Wilton appears twice
       // over -- as a winner in its own right and as Bemerton's parent) and,
       // per findLocations' documented redundancy, re-read even though the
       // statement two lines up already had most of them.
       ["SELECT * FROM foodbank WHERE id IN (?, ?, ?, ?)", [1, 2, 3, 5]],
-      ["SELECT * FROM foodbankchange_full WHERE id IN (?, ?, ?, ?)", [101, 102, 103, 105]],
+      ["SELECT * FROM foodbankchange_full WHERE id IN (SELECT latest_need_id FROM foodbank WHERE id IN (?, ?, ?, ?))", [1, 2, 3, 5]],
     ]);
   });
 

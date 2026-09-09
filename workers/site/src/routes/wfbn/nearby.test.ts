@@ -481,14 +481,19 @@ describe("wfbnFoodbankNearby -- the response envelope", () => {
       // Wave two: the ranked winners, by id, in ranked order. Three food banks
       // and four locations out of a five-and-five candidate set.
       ["SELECT * FROM foodbank WHERE id IN (?, ?, ?)", [2, 3, 5]],
+      // ...and their needs, issued WITH that read rather than after it
+      // (github #53). The binds are the food bank ids and the need ids are
+      // found by a subquery, which is what removes the dependency -- so this
+      // line sits before the location read rather than after it, and the wave
+      // count drops by one.
+      ["SELECT * FROM foodbankchange_full WHERE id IN (SELECT latest_need_id FROM foodbank WHERE id IN (?, ?, ?))", [2, 3, 5]],
       ["SELECT * FROM foodbanklocation_full WHERE id IN (?, ?, ?, ?)", [101, 102, 104, 105]],
-      ["SELECT * FROM foodbankchange_full WHERE id IN (?, ?, ?)", [102, 103, 105]],
       // Wave three: the winning locations' parents, deduplicated (Wilton
       // appears twice over -- as a winner in its own right and as Bemerton's
       // parent) and, per findLocations' documented redundancy, re-read even
       // though wave two already had them.
       ["SELECT * FROM foodbank WHERE id IN (?, ?, ?, ?)", [1, 2, 3, 5]],
-      ["SELECT * FROM foodbankchange_full WHERE id IN (?, ?, ?, ?)", [101, 102, 103, 105]],
+      ["SELECT * FROM foodbankchange_full WHERE id IN (SELECT latest_need_id FROM foodbank WHERE id IN (?, ?, ?, ?))", [1, 2, 3, 5]],
     ]);
   });
 

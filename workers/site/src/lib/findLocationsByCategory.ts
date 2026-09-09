@@ -41,7 +41,16 @@ import type { LocationSearchResult } from "./findLocations";
 // Django's `.filter(distance__lte=max_distance_meters)[:quantity]` does
 // (a threshold filter over a distance-ascending list commutes with taking
 // its head) -- just without a second DB round trip to apply it.
-type Candidate = { kind: "organisation" | "location"; coord: { id: number; latitude: number; longitude: number } };
+// A DISCRIMINATED union since github #53, not one shape with a `kind` label
+// beside it. The location branch's scan is
+// getOpenLocationCoordinatesWithFoodbankId, so its rows really do carry a
+// foodbank_id -- and the parent read now uses it. Typing both branches the
+// same way hid that: `coord.foodbank_id` would not compile, which is what
+// made deriving the parents from the hydrated rows look like the only
+// option.
+type Candidate =
+  | { kind: "organisation"; coord: { id: number; latitude: number; longitude: number } }
+  | { kind: "location"; coord: { id: number; latitude: number; longitude: number; foodbank_id: number } };
 
 export async function findLocationsByCategory(
   session: Session,
@@ -82,14 +91,31 @@ export async function findLocationsByCategory(
 
   const organisationIds = withinRadius.filter((r) => r.item.kind === "organisation").map((r) => r.item.coord.id);
   const locationIds = withinRadius.filter((r) => r.item.kind === "location").map((r) => r.item.coord.id);
-  const [organisationFoodbanks, winningLocations] = await Promise.all([
-    getFoodbanksByIds(session, organisationIds),
+
+  // ONE WAVE AND ONE FOOD BANK READ, NOT TWO OF EACH (github #53).
+  //
+  // The parent ids used to be derived from `winningLocations` -- the HYDRATED
+  // rows -- which made the parent fetch wait for a read it did not actually
+  // depend on. This function's candidate scan is
+  // getOpenLocationCoordinatesWithFoodbankId, so every ranked location
+  // already carries its foodbank_id: the ids are in hand before either read
+  // is issued. That is why the merge is free HERE and is not free in
+  // findLocations.ts, whose scan projects three columns and would need a
+  // wider (non-covering) index to do the same.
+  //
+  // The two reads also collapse into one statement, since both wanted the
+  // same table by id. `foodbankById` is a Map, so the union's order does not
+  // matter, and getFoodbanksByIds deduplicates nothing it does not need to --
+  // the Set does that first. A location whose parent is also a winning
+  // organisation is counted once, which is the common case in a city centre.
+  const parentFoodbankIds = withinRadius.flatMap((r) => (r.item.kind === "location" ? [r.item.coord.foodbank_id] : []));
+  const allFoodbankIds = Array.from(new Set([...organisationIds, ...parentFoodbankIds]));
+  const [foodbanks, winningLocations] = await Promise.all([
+    getFoodbanksByIds(session, allFoodbankIds),
     getLocationsByIds(session, locationIds),
   ]);
   const locationById = new Map(winningLocations.map((loc) => [loc.id, loc]));
-  const parentFoodbankIds = Array.from(new Set(winningLocations.map((loc) => loc.foodbank_id)));
-  const parentFoodbanks = parentFoodbankIds.length === 0 ? [] : await getFoodbanksByIds(session, parentFoodbankIds);
-  const foodbankById = new Map([...organisationFoodbanks, ...parentFoodbanks].map((fb) => [fb.id, fb]));
+  const foodbankById = new Map(foodbanks.map((fb) => [fb.id, fb]));
 
   // flatMap and explicit misses, not `!` -- github #48; findLocations.ts
   // carries the full reasoning. Short version: ranking and hydration are

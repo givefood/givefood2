@@ -118,8 +118,37 @@ export async function getNeedsByIds(session: Session, ids: readonly number[]): P
     .prepare(`SELECT * FROM foodbankchange_full WHERE id IN (${placeholders})`)
     .bind(...ids)
     .all();
-  const rows = result.results.map((r) => mapNeedRow(r as Record<string, unknown>));
-  return new Map(rows.map((row) => [row.id, row]));
+  return mapNeedRowsById(result.results);
+}
+
+// The same needs, addressed by the FOOD BANK ids that own them rather than
+// by the need ids themselves (github #53).
+//
+// WHY THE SUBQUERY EXISTS. getNeedsByIds above can only be called once the
+// food bank rows are back, because the need ids are columns of those rows --
+// so it is a second, dependent round trip, and every search endpoint pays it
+// after the row read rather than beside it. Pushing the id lookup into SQL
+// removes the dependency without changing the answer: the set of need ids is
+// identical either way, since a food bank id that matches no row contributes
+// no latest_need_id, and a NULL one matches nothing in an IN list.
+//
+// Measured on production: the plan is SEARCH c USING INTEGER PRIMARY KEY /
+// LIST SUBQUERY 1 / SEARCH foodbank USING INTEGER PRIMARY KEY -- all
+// primary-key lookups, no scan, so the subquery costs nothing over the
+// two-step form it replaces.
+export async function getNeedsByFoodbankIds(session: Session, foodbankIds: readonly number[]): Promise<Map<number, FoodbankChangeRow>> {
+  if (foodbankIds.length === 0) return new Map();
+  const placeholders = foodbankIds.map(() => "?").join(", ");
+  const result = await session
+    .prepare(`SELECT * FROM foodbankchange_full WHERE id IN (SELECT latest_need_id FROM foodbank WHERE id IN (${placeholders}))`)
+    .bind(...foodbankIds)
+    .all();
+  return mapNeedRowsById(result.results);
+}
+
+function mapNeedRowsById(rows: readonly unknown[]): Map<number, FoodbankChangeRow> {
+  const mapped = rows.map((r) => mapNeedRow(r as Record<string, unknown>));
+  return new Map(mapped.map((row) => [row.id, row]));
 }
 
 // gfwfbn `index` view's "by item" category filter -- the food-bank half of

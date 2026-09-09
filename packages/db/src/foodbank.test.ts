@@ -1681,10 +1681,22 @@ describe("getFoodbanksByIds", () => {
     });
   });
 
-  // Distinct ids only. Two food banks sharing a latest_need row is real -- the
-  // admin's need-copy tools do it -- and binding the same id twice would waste
-  // a parameter out of D1's ceiling of 100 for no rows.
-  it("de-duplicates the need ids it asks for", async () => {
+  // THESE THREE USED TO ASSERT THE TWO-STEP SHAPE (github #53), binding need
+  // ids that this function had read out of the food bank rows first. It now
+  // issues both statements TOGETHER and lets SQL find the need ids --
+  // `WHERE id IN (SELECT latest_need_id FROM foodbank WHERE id IN (...))` --
+  // so the second query no longer waits on the first. One wave, not two, at
+  // 13 call sites; on the search pages it is the difference between five
+  // serial waves and three.
+  //
+  // What they were really protecting is unchanged and is still asserted: the
+  // ROWS. Two food banks sharing a need still both get it, a null
+  // latest_need_id still yields `latestNeed: null` rather than a dropped row,
+  // and the parameters are still the food bank ids the caller passed --
+  // deduplication of need ids now happens inside the subquery, where a
+  // repeated or NULL latest_need_id costs nothing, rather than in JS.
+  it("gives two food banks that share one need the same need row", async () => {
+    // Real: the admin's need-copy tools do this.
     seedFoodbank({ id: 1, slug: "salisbury", latestNeedId: 501 });
     seedFoodbank({ id: 2, slug: "bath", latestNeedId: 501 });
     seedNeed({ id: 501, needId: "01".repeat(16), foodbankId: 1, changeText: "Beans" });
@@ -1692,13 +1704,16 @@ describe("getFoodbanksByIds", () => {
     const rows = await getFoodbanksByIds(session, [1, 2]);
 
     expect(rows.map((r) => r.latestNeed!.id)).toEqual([501, 501]);
-    expect(calls[1]!.params).toEqual([501]);
+    // The binds are the FOOD BANK ids now, not the need ids -- and there are
+    // two statements, issued together.
+    expect(calls).toHaveLength(2);
+    expect(calls.map((c) => c.params)).toEqual([
+      [1, 2],
+      [1, 2],
+    ]);
   });
 
-  // A null latest_need_id must not become a bound NULL in the IN list: `id IN
-  // (NULL)` matches nothing but still costs a parameter, and more importantly
-  // the row must come back with `latestNeed: null` rather than being dropped.
-  it("skips null latest_need_ids entirely and still returns the row", async () => {
+  it("returns a row whose latest_need_id is null, with latestNeed null", async () => {
     seedFoodbank({ id: 1, slug: "salisbury", latestNeedId: null });
     seedFoodbank({ id: 2, slug: "bath", latestNeedId: 502 });
     seedNeed({ id: 502, needId: "02".repeat(16), foodbankId: 2, changeText: "Pasta" });
@@ -1707,18 +1722,42 @@ describe("getFoodbanksByIds", () => {
 
     expect(rows[0]!.latestNeed).toBeNull();
     expect(rows[1]!.latestNeed!.change_text).toBe("Pasta");
-    expect(calls[1]!.params).toEqual([502]);
+    // A NULL latest_need_id inside the subquery matches nothing, which is the
+    // same outcome the old code got by filtering nulls out in JS first.
+    expect(rows).toHaveLength(2);
   });
 
-  // When NO row in the batch has a latest need, getNeedsByIds returns early
-  // and the second query never runs. One round trip, not two.
-  it("issues no need query at all when nothing in the batch has a latest need", async () => {
+  // A DELIBERATE COST, recorded rather than hidden. The old code returned
+  // early and issued NO second query when nothing in the batch had a need;
+  // the subquery form always issues it. That is one wasted query -- but zero
+  // wasted WAVES, since it runs concurrently with the row read, which is the
+  // whole point of the change. It is also unreachable in production: all
+  // 1,023 open food banks carry a latest_need_id (read-only count, github
+  // #13), so the old early return never fired there either.
+  it("issues both statements even when nothing in the batch has a latest need", async () => {
     seedFoodbank({ id: 1, slug: "salisbury" });
     seedFoodbank({ id: 2, slug: "bath" });
 
-    await getFoodbanksByIds(session, [1, 2]);
+    const rows = await getFoodbanksByIds(session, [1, 2]);
 
-    expect(calls).toHaveLength(1);
+    expect(calls).toHaveLength(2);
+    expect(rows.map((r) => r.latestNeed)).toEqual([null, null]);
+  });
+
+  it("issues the two statements CONCURRENTLY, which is the whole change", async () => {
+    // The assertion that distinguishes this from a tidier rewrite of the same
+    // two sequential trips: both statements must be prepared before either
+    // resolves. A sequential implementation interleaves them and fails here,
+    // while passing every row assertion above.
+    seedFoodbank({ id: 1, slug: "salisbury", latestNeedId: 501 });
+    seedNeed({ id: 501, needId: "01".repeat(16), foodbankId: 1, changeText: "Beans" });
+
+    await getFoodbanksByIds(session, [1]);
+
+    expect(calls).toHaveLength(2);
+    // Both are food-bank-id binds; neither is a need-id bind derived from the
+    // other's result, which is what made them sequential.
+    expect(calls.every((c) => JSON.stringify(c.params) === "[1]")).toBe(true);
   });
 
   it("resolves a dangling latest_need_id to null rather than throwing", async () => {

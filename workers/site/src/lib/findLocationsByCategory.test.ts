@@ -735,14 +735,21 @@ describe("findLocationsByCategory -- the decorated row the template reads", () =
       latest_need_change_text: "Pasta\nLong Life Milk",
       latest_need_id: 4242,
     });
-    // No organisation survived the ceiling, so the FIRST getFoodbanksByIds
-    // is the empty organisation list and the SECOND is the parent
-    // resolved from the location row's own foodbank_id. Sourcing the
-    // parents from the ranked organisation winners instead -- an easy
-    // "simplification", since they usually overlap -- would leave the
-    // shopping list and the "part of ..." line blank in exactly this
-    // case, and only in this case.
-    expect(db.getFoodbanksByIds.mock.calls.map((call) => call[1])).toEqual([[], [1]]);
+    // THE CASE THAT KEEPS THE MERGE HONEST. No organisation survived the
+    // ceiling, so the one id read here can only have come from the winning
+    // LOCATION's own foodbank_id. github #53 merged the two food bank reads
+    // into one, and this is the assertion that says the union is
+    // organisationIds ∪ parent ids rather than just the organisation
+    // winners -- sourcing the parents from those instead is the easy
+    // "simplification", since they usually overlap, and it would leave the
+    // shopping list and the "part of ..." line blank in exactly this case,
+    // and only in this case.
+    //
+    // It also pins WHERE the parent id comes from now: the ranked candidate
+    // row, not the hydrated location row. Both carry foodbank_id and they
+    // agree, but only the candidate has it before the read is issued, which
+    // is the whole reason this is one wave instead of two.
+    expect(db.getFoodbanksByIds.mock.calls.map((call) => call[1])).toEqual([[1]]);
   });
 
   it("prefers a location's own phone and email, and falls back on empty strings as well as nulls", async () => {
@@ -851,12 +858,15 @@ describe("findLocationsByCategory -- quantity, and the query shape D1 forces", (
     expect(results.length).toBe(20);
     expect(results.map((r) => r.type).slice(0, 4)).toEqual(["organisation", "location", "organisation", "location"]);
     const hydrationIds = db.getFoodbanksByIds.mock.calls.map((call) => call[1] as number[]);
-    // Ten food banks and ten locations win; call 1 hydrates the food-bank
-    // winners, call 2 the (deduplicated) parents of the location winners.
-    expect(hydrationIds).toEqual([
-      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
-      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
-    ]);
+    // Ten food banks and ten locations win. ONE call, not two (github #53):
+    // the parents used to be read separately, in a wave of their own, because
+    // their ids were taken from the hydrated location rows -- but this
+    // function's candidate scan already carries foodbank_id, so both id lists
+    // are known before either read is issued and they merge into one
+    // statement. Here every location's parent is also a winning food bank, so
+    // the union is the same ten ids and the second query bought nothing at
+    // all.
+    expect(hydrationIds).toEqual([[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]]);
     expect(db.getLocationsByIds.mock.calls.map((call) => call[1])).toEqual([
       [1001, 1002, 1003, 1004, 1005, 1006, 1007, 1008, 1009, 1010],
     ]);
@@ -875,7 +885,7 @@ describe("findLocationsByCategory -- quantity, and the query shape D1 forces", (
       db.getOpenLocationCoordinatesWithFoodbankId.mock.calls.length +
       db.getFoodbanksByIds.mock.calls.length +
       db.getLocationsByIds.mock.calls.length;
-    expect(totalCalls).toBe(6);
+    expect(totalCalls).toBe(5);
   });
 
   it("resolves each parent food bank once for many locations sharing it", async () => {
@@ -893,9 +903,11 @@ describe("findLocationsByCategory -- quantity, and the query shape D1 forces", (
     });
     const results = await search("Pasta");
     expect(results.map((r) => r.slug)).toEqual(["location-10", "location-11", "location-12", "foodbank-1"]);
-    // Call 1 is the organisation winners, call 2 the deduplicated
-    // parents -- one id, not three.
-    expect(db.getFoodbanksByIds.mock.calls.map((call) => call[1])).toEqual([[1], [1]]);
+    // ONE call since github #53, and the id appears once in it: the Set over
+    // organisationIds union parentFoodbankIds collapses a food bank that is
+    // both a winner in its own right and the parent of three winning
+    // locations. That used to be two separate reads of the same row.
+    expect(db.getFoodbanksByIds.mock.calls.map((call) => call[1])).toEqual([[1]]);
   });
 
   it("threads one D1 session through every query, and passes the category through verbatim", async () => {

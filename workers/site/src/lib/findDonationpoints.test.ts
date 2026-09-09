@@ -64,12 +64,24 @@ function fakeSession(tables: Partial<Record<TableName, Row[]>>): { session: Sess
         async all() {
           const rows = (table && tables[table]) ?? [];
           if (recorded.binds.length === 0) return { results: [...rows] };
+          // THE SUBQUERY FORM, since github #53. getFoodbanksByIds now asks
+          // for needs as `WHERE id IN (SELECT latest_need_id FROM foodbank
+          // WHERE id IN (...))`, so the binds are FOOD BANK ids and the rows
+          // being filtered are needs. Without this the double would compare
+          // food bank ids against need ids, match nothing, and hand back a
+          // null latest need -- a green-looking failure that says nothing
+          // about the code under test. Resolved here the way SQLite would:
+          // map the bound food bank ids through foodbank.latest_need_id
+          // first.
+          const wanted = /IN \(SELECT latest_need_id FROM foodbank WHERE id IN/.test(sql)
+            ? (tables.foodbank ?? []).filter((row) => recorded.binds.includes(row.id)).map((row) => row.latest_need_id)
+            : recorded.binds;
           // Every bound statement on this path is `WHERE id IN (...)`, which
           // carries no ORDER BY -- SQLite may return those rows in any order
           // it likes (see getFoodbanksByIds's own comment on exactly this).
           // Handing them back REVERSED keeps that promise honest: nothing in
           // the output may depend on D1's row order.
-          return { results: [...rows.filter((row) => recorded.binds.includes(row.id))].reverse() };
+          return { results: [...rows.filter((row) => wanted.includes(row.id))].reverse() };
         },
       };
       return statement;
@@ -192,8 +204,13 @@ const EDINBURGH = { lat: 55.9533, lng: -3.1883 }; // ~536 km
 
 const labels = (results: DonationpointSearchResult[]) => results.map((r) => `${r.type}:${r.name}`);
 
+// Matched on the FIRST `FROM`, not any `FROM` (github #53). The need query
+// is now `SELECT * FROM foodbankchange_full WHERE id IN (SELECT
+// latest_need_id FROM foodbank WHERE id IN (...))`, so a bare substring test
+// counts it as a `foodbank` query too and every "exactly one food bank read"
+// assertion below would silently start passing for the wrong reason.
 const sqlFor = (queries: RecordedQuery[], table: TableName) =>
-  queries.filter((q) => new RegExp(`FROM ${table}\\b`).test(q.sql));
+  queries.filter((q) => new RegExp(`^\\s*SELECT[^()]*?FROM ${table}\\b`).test(q.sql));
 
 // The mileage the page should print for a point, computed independently of
 // the function under test. Used instead of "the distances come out sorted",
@@ -581,9 +598,12 @@ describe("findDonationpoints", () => {
     const results = await findDonationpoints(session, LONDON.lat, LONDON.lng, 10);
     expect(results).toHaveLength(3);
     expect(sqlFor(queries, "foodbank")[0]!.binds).toEqual([1]);
-    // ...and one batched need lookup for that one food bank, not one per row.
+    // ...and one batched need lookup, not one per row. Its binds are the FOOD
+    // BANK ids since github #53 -- the need ids are found by a subquery
+    // rather than read out of the row result first, which is what lets the
+    // two statements go out together instead of one after the other.
     expect(sqlFor(queries, "foodbankchange_full")).toHaveLength(1);
-    expect(sqlFor(queries, "foodbankchange_full")[0]!.binds).toEqual([101]);
+    expect(sqlFor(queries, "foodbankchange_full")[0]!.binds).toEqual([1]);
   });
 
   it("fetches every distinct parent food bank in ONE statement, not one per food bank", async () => {
@@ -619,7 +639,8 @@ describe("findDonationpoints", () => {
     // bank 1 owns both a donation point and a location) is still counted
     // once, so this covers the de-duplication case as well.
     expect([...sqlFor(queries, "foodbank")[0]!.binds].sort()).toEqual([1, 2, 3]);
-    expect([...sqlFor(queries, "foodbankchange_full")[0]!.binds].sort()).toEqual([101, 102, 103]);
+    // The same three FOOD BANK ids, not their need ids -- see github #53.
+    expect([...sqlFor(queries, "foodbankchange_full")[0]!.binds].sort()).toEqual([1, 2, 3]);
     // ...and every row still ends up with its OWN parent's need, which is
     // the thing the batching must not trade away.
     expect(results.map((r) => `${r.foodbank_slug}:${r.latest_need_change_text}`)).toEqual([

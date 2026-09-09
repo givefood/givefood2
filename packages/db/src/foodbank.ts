@@ -1,6 +1,6 @@
 import { coerceBooleans, mapCoordinateRows, queryCoordinates, type CoordinateRow, type Session } from "./types";
 import { normalizeUuid } from "./uuid";
-import { getNeedsByIds, mapNeedRow, type FoodbankChangeRow } from "./needs";
+import { getNeedsByIds, getNeedsByFoodbankIds, mapNeedRow, type FoodbankChangeRow } from "./needs";
 
 const BOOLEAN_COLUMNS = [
   "charity_just_foodbank",
@@ -416,33 +416,61 @@ export function foodbanksByIdsStatement(session: Session, ids: readonly number[]
   return session.prepare(`SELECT * FROM foodbank WHERE id IN (${placeholders})`).bind(...ids);
 }
 
-// The rest of getFoodbanksByIds, applied to rows the caller has already got
-// back: re-sort into `ids` order, then resolve every distinct latest_need_id
-// in ONE further query. That query is genuinely dependent -- the need ids are
-// columns of these rows -- so it cannot be batched with them.
-export async function mapFoodbanksByIds(
-  session: Session,
-  rows: readonly unknown[],
-  ids: readonly number[],
-): Promise<FoodbankWithLatestNeed[]> {
+// Rows back into the caller's `ids` order, dropping any id that matched no
+// row. Split out of mapFoodbanksByIds by github #53 so the two callers can
+// differ in HOW they get the needs while agreeing exactly on everything
+// else.
+function orderFoodbankRows(rows: readonly unknown[], ids: readonly number[]): FoodbankRow[] {
   const mapped = rows.map((r) => mapFoodbankRow(r as Record<string, unknown>));
   const byId = new Map(mapped.map((row) => [row.id, row]));
-  const ordered = ids.map((id) => byId.get(id)).filter((row): row is FoodbankRow => row !== undefined);
+  return ids.map((id) => byId.get(id)).filter((row): row is FoodbankRow => row !== undefined);
+}
 
-  const needIds = Array.from(
-    new Set(ordered.map((row) => row.latest_need_id).filter((id): id is number => id !== null)),
-  );
-  const needsById = await getNeedsByIds(session, needIds);
+function attachNeeds(ordered: readonly FoodbankRow[], needsById: Map<number, FoodbankChangeRow>): FoodbankWithLatestNeed[] {
   return ordered.map((row) => ({
     ...row,
     latestNeed: row.latest_need_id === null ? null : (needsById.get(row.latest_need_id) ?? null),
   }));
 }
 
+// The rest of getFoodbanksByIds, applied to rows the caller has ALREADY got
+// back -- foodbankDetail.ts's batch, which fetches the neighbour rows in a
+// wave of its own. Here the need query really is dependent: the rows are in
+// hand, so their latest_need_ids are the cheapest thing to ask with. The
+// self-fetching path below does not have that constraint.
+export async function mapFoodbanksByIds(
+  session: Session,
+  rows: readonly unknown[],
+  ids: readonly number[],
+): Promise<FoodbankWithLatestNeed[]> {
+  const ordered = orderFoodbankRows(rows, ids);
+  const needIds = Array.from(
+    new Set(ordered.map((row) => row.latest_need_id).filter((id): id is number => id !== null)),
+  );
+  return attachNeeds(ordered, await getNeedsByIds(session, needIds));
+}
+
+// ONE WAVE, NOT TWO (github #53). This used to read the food bank rows, then
+// read their needs -- two sequential round trips, because the need ids are
+// columns of the first result. Thirteen call sites paid that, and on the
+// search pages it was the difference between five serial waves and three:
+// findLocations and findDonationpoints each spend one here, and
+// wfbn/index.ts runs them in the same Promise.all, so the page floors on
+// whichever is deeper.
+//
+// getNeedsByFoodbankIds removes the dependency by pushing the id lookup into
+// a subquery, so both statements can be issued together. The set of needs is
+// identical -- see that function's own note -- and the plan is all
+// primary-key lookups, verified on production.
+//
+// Measured at ~15 ms per D1 round trip from the edge (a single-query endpoint
+// returning 791 bytes and one returning 71 KB both render in 14-22 ms, so the
+// round trip is the whole cost, not serialisation). ~30 ms off /needs/?lat_lng=
+// against a 128-328 ms render, and the same off /api/2/locations/search/.
 export async function getFoodbanksByIds(session: Session, ids: readonly number[]): Promise<FoodbankWithLatestNeed[]> {
   if (ids.length === 0) return [];
-  const result = await foodbanksByIdsStatement(session, ids).all();
-  return mapFoodbanksByIds(session, result.results, ids);
+  const [rowResult, needsById] = await Promise.all([foodbanksByIdsStatement(session, ids).all(), getNeedsByFoodbankIds(session, ids)]);
+  return attachNeeds(orderFoodbankRows(rowResult.results, ids), needsById);
 }
 
 // gfapi3 `slugfromid` -- projected to just `slug`, matching Django's

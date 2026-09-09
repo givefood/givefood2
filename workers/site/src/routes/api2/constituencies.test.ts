@@ -1132,15 +1132,21 @@ describe("api2 constituency -- the queries behind it", () => {
     expect(idQueries).toEqual(["SELECT * FROM foodbank WHERE id IN (?, ?, ?, ?)"]);
   });
 
-  // The latest needs of those four food banks, resolved in one further query --
-  // genuinely dependent on the rows above (the need ids are columns of them),
-  // so it cannot join the batch, but it must not become one query per row
-  // either.
-  it("resolves every latest need in one further query, not one per food bank", async () => {
+  // The latest needs of those four food banks, in ONE query, issued WITH the
+  // row read rather than after it.
+  //
+  // github #53: this comment used to say the need query was "genuinely
+  // dependent on the rows above (the need ids are columns of them), so it
+  // cannot join the batch". That was true of the two-step form and is no
+  // longer true -- a subquery finds the need ids in SQL, so the two
+  // statements go out together and the wave count drops. What has NOT
+  // changed, and is still the thing this test is for, is that it must not
+  // become one query per row.
+  it("resolves every latest need in one query, alongside the row read", async () => {
     await get("/api/2/constituency/salisbury/");
 
     const needQueries = prepared.filter((sql) => sql.includes("foodbankchange_full"));
-    expect(needQueries).toEqual(["SELECT * FROM foodbankchange_full WHERE id IN (?, ?, ?, ?)"]);
+    expect(needQueries).toEqual(["SELECT * FROM foodbankchange_full WHERE id IN (SELECT latest_need_id FROM foodbank WHERE id IN (?, ?, ?, ?))"]);
   });
 
   // getFoodbanksByIds returns early on an empty id list. A constituency with
