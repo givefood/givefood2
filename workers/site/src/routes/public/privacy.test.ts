@@ -567,7 +567,7 @@ describe("publicPrivacy -- routing and chrome", () => {
   it("renders the full footer, with the registration numbers a privacy notice needs", async () => {
     const html = await body("/privacy/");
 
-    expect(html).toContain('<a rel="self" href="https://register-of-charities.charitycommission.gov.uk/en/charity-search/-/charity-details/5147019">1188192</a>');
+    expect(html).toContain('<a rel="self" href="https://opencharities.uk/ew/1188192">1188192</a>');
     expect(html).toContain('ICO Data Protection Registration <a href="https://ico.org.uk/ESDWebPages/Entry/ZB528540">ZB528540</a>');
     expect(html).toContain('<p class="flag">');
   });
