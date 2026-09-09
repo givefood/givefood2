@@ -133,7 +133,9 @@ export async function writeIndex(c: Context<AppEnv>): Promise<Response> {
   const postcode = c.req.query("postcode") ?? null;
 
   if (postcode) {
-    const slug = await constituencySlugFromPostcode(postcode);
+    // Takes a session since github #56: the lookup resolves the ONS code
+    // openpostcodes.uk returns against D1 rather than slugifying a name.
+    const slug = await constituencySlugFromPostcode(dbSession(c), postcode);
     if (slug) {
       return c.redirect(`${url("write:constituency", slug)}?postcode=${encodeURIComponent(postcode)}`, 302);
     }

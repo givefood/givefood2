@@ -2,11 +2,13 @@ import type { Context } from "hono";
 import {
   getAllConstituenciesOrderedByName,
   getConstituencyBySlugNarrow,
+  getConstituencySlugByPcon24cd,
   getFoodbanksByIds,
   getFoodbanksForConstituency,
   getNeedTranslationsByIds,
   type ConstituencyListRow,
   type FoodbankWithLatestNeed,
+  type Session,
 } from "@givefood/db";
 import { buildPageContext, render } from "@givefood/templates";
 import { nearest, R_PYTHON } from "@givefood/geo";
@@ -36,7 +38,7 @@ export async function wfbnConstituencies(c: Context<AppEnv>): Promise<Response> 
   const postcode = c.req.query("postcode") ?? null;
 
   if (postcode) {
-    const slug = await constituencySlugFromPostcode(postcode);
+    const slug = await constituencySlugFromPostcode(session, postcode);
     if (slug) {
       const target = urlForLocale(locale, "wfbn:constituency", slug);
       return c.redirect(target, 302);
@@ -74,37 +76,48 @@ export async function wfbnConstituencies(c: Context<AppEnv>): Promise<Response> 
   return c.html(html);
 }
 
-// api.postcodes.io -- free, keyless UK postcode lookup. Prefers the 2024
-// boundary review's constituency name (parliamentary_constituency_2024)
-// over the pre-2024 one, falling back to it only when the 2024 field is
-// absent, matching Django's exact preference order.
-export async function constituencySlugFromPostcode(postcode: string): Promise<string | null> {
-  const response = await fetch(`https://api.postcodes.io/postcodes/${encodeURIComponent(postcode)}?decache=true`);
+// openpostcodes.uk -- free, keyless UK postcode lookup, replacing
+// api.postcodes.io (github #56). Flat response, no `result` envelope, and
+// the constituency arrives as `{ name, code }`.
+//
+// THE CODE, NOT THE NAME, AND THAT IS THE POINT OF THE MOVE. The old
+// implementation took the constituency NAME and ran Django's slugify over
+// it, then redirected to whatever that produced -- without checking such a
+// page existed. That is the pattern PLAN.md §6.9 R7 warns about by name
+// ("Do not reimplement slugify"), and swapping upstreams is exactly when it
+// bites: our 650 slugs were derived from postcodes.io's spelling of these
+// names, and a new provider that writes one of them differently -- an
+// ampersand, an apostrophe, "and" versus "&" -- would 302 the visitor to a
+// 404 with nothing logged. Verified before changing it: the old slugify
+// agreed with all 650 stored slugs, so this was correct and undetectably
+// fragile rather than already broken.
+//
+// `constituency.code` is the ONS PCON24CD, which
+// 0011_constituency_pcon24cd.sql already stores on all 650 rows with none
+// missing (read-only count against production D1). Spot-checked across all
+// four nations: E14001460 Salisbury, W07000112 Ynys Mon, S14000078
+// Edinburgh East and Musselburgh, N05000003 Belfast South and Mid Down --
+// each resolving to the right slug. getConstituencySlugByPcon24cd is the
+// helper migration 0011 was written for, already used for the map-click
+// path in routes/write/index.ts:167 for this same reason; this is the
+// second caller it was always meant to have.
+//
+// A CONSEQUENCE WORTH NAMING: the redirect target is now a row we have
+// READ, so it cannot point at a page that does not exist. An unknown code
+// returns null and falls through to the "didn't recognise this postcode"
+// notice, which is where Django lands when postcodes.io returns nothing --
+// the one input where the two differ is a constituency the API knows and we
+// do not, which cannot happen while we hold all 650.
+//
+// Both non-2xx shapes this API uses are handled by the `ok` check: an
+// unknown postcode is 404 {"error":"Postcode not found"}, a malformed one
+// is 400 {"error":"Invalid postcode format"}.
+export async function constituencySlugFromPostcode(session: Session, postcode: string): Promise<string | null> {
+  const response = await fetch(`https://openpostcodes.uk/${encodeURIComponent(postcode)}.json`);
   if (!response.ok) return null;
-  const json = (await response.json()) as { result?: { parliamentary_constituency_2024?: string | null; parliamentary_constituency?: string | null } };
-  const name = json.result?.parliamentary_constituency_2024 || json.result?.parliamentary_constituency;
-  return name ? slugifyConstituencyName(name) : null;
-}
-
-// Django's slugify() on the constituency name -- NFKD-normalise then drop
-// combining marks BEFORE stripping non-alphanumerics (Python's real
-// django.utils.text.slugify does the same, via unicodedata.normalize
-// ("NFKD", value).encode("ascii", "ignore")), not just discarding
-// non-ASCII outright -- of the 650 real 2024 constituency names, two need
-// this ("Ynys Môn" -> "ynys-mon", "Montgomeryshire and Glyndŵr" ->
-// "montgomeryshire-and-glyndwr"), verified directly against a real Django
-// install. @givefood/models' own slugify() does NOT do this either (it
-// treats non-ASCII as noise to hyphenate, not transliterate) -- not reused
-// here since it would be equally wrong for this specific need, and fixing
-// that shared, more-widely-relied-on function is a separate decision.
-function slugifyConstituencyName(value: string): string {
-  return value
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9\s-]/g, "")
-    .replace(/[\s-]+/g, "-");
+  const json = (await response.json()) as { constituency?: { name?: string | null; code?: string | null } | null };
+  const code = json.constituency?.code;
+  return code ? getConstituencySlugByPcon24cd(session, code) : null;
 }
 
 // gfwfbn `constituency` (GET /needs/in/constituency/:slug/,

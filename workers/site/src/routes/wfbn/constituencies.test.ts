@@ -37,9 +37,10 @@ import { constituencySlugFromPostcode, mpPhotoUrl } from "./constituencies";
 //     which branch of the template runs, on a page that still looks fine;
 //   * `nearby` is an in-memory haversine over all ~650 rows with skip_first,
 //     i.e. the page's own constituency is dropped by POSITION, not by id;
-//   * the postcode box does a live api.postcodes.io lookup and 302s on
-//     success. Slugifying its answer wrongly 404s the visitor -- and two of
-//     the real 650 names ("Ynys Môn", "Montgomeryshire and Glyndŵr") need
+//   * the postcode box does a live openpostcodes.uk lookup and 302s on
+//     success. It resolves the ONS code against D1 since github #56; before
+//     that it slugified the NAME, and two of the real 650 ("Ynys Môn",
+//     "Montgomeryshire and Glyndŵr") need
 //     NFKD folding that @givefood/models' own slugify() does not do.
 //
 // So the assertions below read VALUES out of the rendered HTML -- names,
@@ -59,7 +60,7 @@ import { constituencySlugFromPostcode, mpPhotoUrl } from "./constituencies";
 // schema without them fails with "no such table" somewhere unrelated.
 //
 // MOCKED: only `fetch`, which is the leg that leaves the machine
-// (api.postcodes.io), and the two KV namespaces, which have no local double.
+// (openpostcodes.uk), and the two KV namespaces, which have no local double.
 //
 // MUTATION TESTED, not assumed. The repo was copied OUTSIDE the tree and
 // routes/wfbn/constituencies.ts broken one edit at a time in the COPY:
@@ -518,13 +519,31 @@ describe("mpPhotoUrl", () => {
 });
 
 // ===========================================================================
-// constituencySlugFromPostcode -- admin_regions_from_postcode(),
-// givefood/utils/geo.py:508-532, plus the module's private slugify
+// constituencySlugFromPostcode -- openpostcodes.uk, resolved by ONS code
 // ===========================================================================
+//
+// github #56 moved this off api.postcodes.io. The interesting half is not the
+// hostname: it is that the answer is now looked up by the ONS PCON24CD code
+// the new API returns, instead of by slugifying the constituency NAME and
+// redirecting to whatever that produced.
+//
+// The old way was correct and undetectably fragile. It derived a slug with a
+// private Django-slugify port and redirected WITHOUT checking the page
+// existed, so a provider that spelled one of the 650 names differently -- an
+// ampersand, an apostrophe, "and" versus "&" -- would 302 the visitor to a
+// 404 with nothing logged. Swapping providers is exactly when that bites.
+// Checked before changing it: the old slugify agreed with all 650 stored
+// slugs, so this replaced a working mechanism with a safe one rather than
+// fixing a live break.
+//
+// The two names that used to justify the private slugify -- "Ynys Môn" and
+// "Montgomeryshire and Glyndŵr", the only two of the 650 carrying combining
+// marks -- are now the clearest demonstration that no string handling is left
+// on this path at all.
 
 describe("constituencySlugFromPostcode", () => {
-  /** Stub api.postcodes.io. Records every URL asked for. */
-  function stubPostcodesIo(reply: { ok?: boolean; status?: number; json?: unknown }, calls: string[] = []): string[] {
+  /** Stub openpostcodes.uk. Records every URL asked for. */
+  function stubOpenPostcodes(reply: { ok?: boolean; status?: number; json?: unknown }, calls: string[] = []): string[] {
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       calls.push(typeof input === "string" ? input : input.toString());
       return {
@@ -536,56 +555,87 @@ describe("constituencySlugFromPostcode", () => {
     return calls;
   }
 
-  it("calls api.postcodes.io with decache=true and the postcode percent-encoded", async () => {
-    // Django: "https://api.postcodes.io/postcodes/%s?decache=true" %
-    // urllib.parse.quote(postcode) (geo.py:510). `decache=true` is not
-    // decoration -- postcodes.io serves a cached answer without it, and a
-    // freshly-changed constituency boundary is precisely what this lookup is
-    // for. The space in a real postcode is the reason quote() is there at all.
-    const calls = stubPostcodesIo({ json: { result: { parliamentary_constituency_2024: "Salisbury" } } });
-    await constituencySlugFromPostcode("SP1 1AA");
-    expect(calls).toEqual(["https://api.postcodes.io/postcodes/SP1%201AA?decache=true"]);
+  const session = () => d1Session(db, [], []) as unknown as Parameters<typeof constituencySlugFromPostcode>[0];
+
+  it("calls openpostcodes.uk with the postcode percent-encoded", async () => {
+    // `/{postcode}.json`, a flat path rather than postcodes.io's
+    // `/postcodes/{postcode}?decache=true`. The space in a real postcode is
+    // why the encode is there; verified live that the encoded form answers.
+    const calls = stubOpenPostcodes({ json: { constituency: { name: "Salisbury", code: "E140041" } } });
+
+    await constituencySlugFromPostcode(session(), "SP1 1AA");
+
+    expect(calls).toEqual(["https://openpostcodes.uk/SP1%201AA.json"]);
   });
 
-  it("prefers the 2024 boundary name over the pre-2024 one", async () => {
-    // geo.py:515-518's exact preference order. The two differ for most of the
-    // country after the 2024 review, and taking the old one would send the
-    // visitor to a constituency that no longer exists -- a 404, since D1 only
-    // holds the 650 new ones.
-    stubPostcodesIo({ json: { result: { parliamentary_constituency_2024: "East Wiltshire", parliamentary_constituency: "Devizes" } } });
-    expect(await constituencySlugFromPostcode("SN10 1AA")).toBe("east-wiltshire");
+  it("resolves the slug from the ONS code, never from the name", async () => {
+    // THE ASSERTION THE WHOLE CHANGE RESTS ON. The name in the response is
+    // deliberately nothing like the stored one: if any part of this still
+    // slugified the name, the answer would be "not-the-stored-name" or null,
+    // not "salisbury".
+    stubOpenPostcodes({ json: { constituency: { name: "Not The Stored Name", code: "E140041" } } });
+
+    expect(await constituencySlugFromPostcode(session(), "SP1 1AA")).toBe("salisbury");
   });
 
-  it("falls back to the pre-2024 name when the 2024 field is null, absent or empty", async () => {
-    // `||`, not `??`, in the port -- matching Python's `if
-    // pc_api_json["result"]["parliamentary_constituency_2024"]:`, which is a
-    // truthiness test. All three falsy shapes are asserted because
-    // postcodes.io emits null for a postcode with no 2024 mapping and the
-    // difference between `||` and `??` is one character.
-    for (const value of [null, undefined, ""]) {
-      stubPostcodesIo({ json: { result: { parliamentary_constituency_2024: value, parliamentary_constituency: "Devizes" } } });
-      expect(await constituencySlugFromPostcode("SN10 1AA"), String(value)).toBe("devizes");
-    }
+  it("handles the two accented names that used to need a bespoke slugify", async () => {
+    // "Ynys Môn" and "Montgomeryshire and Glyndŵr" are the only two of the
+    // real 650 with combining marks, and the reason a private NFKD-folding
+    // slugify existed in this module at all (@givefood/models' own slugify
+    // would have produced "ynys-m-n" -- a 404 for every Anglesey postcode).
+    // Now they are just two more codes, and the name is never read.
+    seedConstituency({ id: 91, name: "Ynys Môn", slug: "ynys-mon", country: "Wales", centroid: "53.28,-4.40" });
+    seedConstituency({ id: 92, name: "Montgomeryshire and Glyndŵr", slug: "montgomeryshire-and-glyndwr", country: "Wales", centroid: "52.56,-3.32" });
+
+    stubOpenPostcodes({ json: { constituency: { name: "Ynys Môn", code: "E140091" } } });
+    expect(await constituencySlugFromPostcode(session(), "LL77 7AA")).toBe("ynys-mon");
+
+    stubOpenPostcodes({ json: { constituency: { name: "Montgomeryshire and Glyndŵr", code: "E140092" } } });
+    expect(await constituencySlugFromPostcode(session(), "SY16 1AA")).toBe("montgomeryshire-and-glyndwr");
   });
 
-  it("returns null when neither field is set, and when there is no result at all", async () => {
-    // The port's `json.result?...` optional chaining is a DIVERGENCE in
-    // mechanism, not outcome: Django indexes with [] and would raise a
-    // KeyError, which the view does not catch. Both end with the visitor on
-    // the index page -- Django's 500 handler versus this null -- so the port
-    // is the friendlier of the two, but it means a postcodes.io response
-    // shape change fails silently here and loudly there.
-    stubPostcodesIo({ json: { result: { parliamentary_constituency_2024: null, parliamentary_constituency: null } } });
-    expect(await constituencySlugFromPostcode("SP1 1AA")).toBeNull();
+  it("is unmoved by an upstream that spells a name differently", async () => {
+    // The migration risk this change exists to remove, stated as a test: our
+    // 650 slugs were derived from the OLD provider's spelling. A new one
+    // writing "&" for "and", or dropping an apostrophe, used to mean a 302 to
+    // a 404 with nothing logged. The code is the same either way.
+    seedConstituency({ id: 93, name: "Bishop's Stortford & Sawbridgeworth", slug: "bishops-stortford-and-sawbridgeworth", country: "England", centroid: "51.87,0.16" });
 
-    stubPostcodesIo({ json: { status: 404, error: "Postcode not found" } });
-    expect(await constituencySlugFromPostcode("ZZ99 9ZZ")).toBeNull();
+    stubOpenPostcodes({ json: { constituency: { name: "Bishops Stortford and Sawbridgeworth", code: "E140093" } } });
+
+    expect(await constituencySlugFromPostcode(session(), "CM23 1AA")).toBe("bishops-stortford-and-sawbridgeworth");
+  });
+
+  it("returns null for a code we do not hold, rather than redirecting to a 404", async () => {
+    // The other side of the same property: the redirect target is now a row
+    // that has been READ, so it cannot point at a page that does not exist.
+    // Null falls through to the index and its "didn't recognise this
+    // postcode" notice -- where Django lands when postcodes.io returns
+    // nothing. The one input where the two differ is a constituency the API
+    // knows and we do not, which cannot happen while D1 holds all 650 (a
+    // read-only count against production put pcon24cd on 650 of 650, none
+    // missing).
+    stubOpenPostcodes({ json: { constituency: { name: "Somewhere Else", code: "E99999999" } } });
+
+    expect(await constituencySlugFromPostcode(session(), "SP1 1AA")).toBeNull();
+  });
+
+  it("returns null when the response carries no constituency at all", async () => {
+    stubOpenPostcodes({ json: {} });
+    expect(await constituencySlugFromPostcode(session(), "SP1 1AA")).toBeNull();
+
+    stubOpenPostcodes({ json: { constituency: null } });
+    expect(await constituencySlugFromPostcode(session(), "SP1 1AA")).toBeNull();
+
+    stubOpenPostcodes({ json: { constituency: { name: "Salisbury" } } });
+    expect(await constituencySlugFromPostcode(session(), "SP1 1AA")).toBeNull();
   });
 
   it("returns null on a non-2xx response without reading the body", async () => {
-    // geo.py:531-532's `else: return {}`. postcodes.io answers an unknown
-    // postcode with a 404 and a JSON error object, so the guard is on the
-    // hot path, not an edge case.
+    // Both of this API's error shapes are non-2xx, verified live: an unknown
+    // postcode is 404 {"error":"Postcode not found"} and a malformed one is
+    // 400 {"error":"Invalid postcode format"}. So the `ok` guard is the hot
+    // path, not an edge case, and it must not touch the body.
     const calls: string[] = [];
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       calls.push(String(input));
@@ -597,80 +647,27 @@ describe("constituencySlugFromPostcode", () => {
         },
       } as unknown as Response;
     });
-    expect(await constituencySlugFromPostcode("ZZ99 9ZZ")).toBeNull();
+
+    expect(await constituencySlugFromPostcode(session(), "ZZ99 9ZZ")).toBeNull();
     expect(calls).toHaveLength(1);
   });
 
-  it("accepts any 2xx, where Django accepted only 200 -- a divergence, pinned", async () => {
-    // `response.ok` is 200-299; geo.py:512 is `if request.status_code == 200`.
-    // On a 203 (a proxy that rewrote the body) or a 226, Django would take its
-    // `else: return {}` branch and re-render the index with the
-    // not-recognised notice, while this redirects on whatever the rewritten
-    // body said. postcodes.io does not send those today, so it is dormant
-    // rather than live -- recorded because the two spellings look identical
-    // and only one of them is what was ported.
-    stubPostcodesIo({ ok: true, status: 203, json: { result: { parliamentary_constituency_2024: "East Wiltshire" } } });
-    expect(await constituencySlugFromPostcode("SN10 1AA")).toBe("east-wiltshire");
-  });
+  it("issues no database query when the lookup fails, and exactly one when it succeeds", async () => {
+    // A null code must not cost a round trip. Asserted through the recorder
+    // the session helper already has, rather than inferred.
+    const prepared: Prepared[] = [];
+    stubOpenPostcodes({ json: {} });
+    await constituencySlugFromPostcode(d1Session(db, prepared, []) as unknown as Parameters<typeof constituencySlugFromPostcode>[0], "SP1 1AA");
+    expect(prepared).toHaveLength(0);
 
-  it("NFKD-folds accented names, which is why this does not reuse @givefood/models' slugify()", async () => {
-    // THE WHOLE REASON THE PRIVATE slugify LIVES IN THIS MODULE. Two of the
-    // real 650 constituency names carry combining marks, and Django's
-    // slugify() decomposes then ASCII-drops them
-    // (unicodedata.normalize("NFKD", value).encode("ascii", "ignore")).
-    // @givefood/models' slugify() treats non-ASCII as noise to hyphenate
-    // instead, so it would produce "ynys-m-n" -- a 404 for every visitor who
-    // types an Anglesey postcode into the box.
-    stubPostcodesIo({ json: { result: { parliamentary_constituency_2024: "Ynys Môn" } } });
-    expect(await constituencySlugFromPostcode("LL77 7AA")).toBe("ynys-mon");
-
-    stubPostcodesIo({ json: { result: { parliamentary_constituency_2024: "Montgomeryshire and Glyndŵr" } } });
-    expect(await constituencySlugFromPostcode("SY16 1AA")).toBe("montgomeryshire-and-glyndwr");
-  });
-
-  it("drops apostrophes and ampersands rather than hyphenating them, as Django's slugify does", async () => {
-    // The `[^a-z0-9\s-]` strip runs BEFORE the whitespace/hyphen collapse, so
-    // "Bishop's" becomes "bishops", not "bishop-s". Same rule Django's real
-    // slugify uses, and the reason "Cities of London and Westminster"-style
-    // names round-trip cleanly.
-    stubPostcodesIo({ json: { result: { parliamentary_constituency_2024: "Bishop's & Stortford" } } });
-    expect(await constituencySlugFromPostcode("CM23 1AA")).toBe("bishops-stortford");
-  });
-
-  it("collapses runs of spaces and hyphens into one hyphen, and lowercases", async () => {
-    // "Kingston upon Hull East" and the hyphenated Welsh names both depend on
-    // this final collapse. Note what it does NOT do: no leading/trailing
-    // hyphen strip (Django's slugify has one), which the next test pins.
-    stubPostcodesIo({ json: { result: { parliamentary_constituency_2024: "Kingston  upon --Hull EAST" } } });
-    expect(await constituencySlugFromPostcode("HU1 1AA")).toBe("kingston-upon-hull-east");
-  });
-
-  it("leaves a leading or trailing hyphen in place, unlike Django's real slugify -- pinned", async () => {
-    // SUSPECT, and dormant. django.utils.text.slugify ends with
-    // `re.sub(r"[-\s]+", "-", value).strip("-_")`; this port omits the strip,
-    // and its own trim() runs BEFORE the punctuation strip, so it cannot
-    // remove a hyphen that only becomes leading afterwards. "- Salisbury -"
-    // slugs to "-salisbury-" here and "salisbury" in Django -- a URL that
-    // 404s against a slug column Django populated. No real constituency name
-    // has outer punctuation, so nothing is broken today; recorded because the
-    // two implementations are not the same function and this is the only
-    // place that says so.
-    stubPostcodesIo({ json: { result: { parliamentary_constituency_2024: "- Salisbury -" } } });
-    expect(await constituencySlugFromPostcode("SP1 1AA")).toBe("-salisbury-");
-  });
-
-  it("strips edge punctuation that is not a hyphen, leaving no separator behind", async () => {
-    // The other half of the rule above: "(" and ")" are removed by the
-    // `[^a-z0-9\s-]` strip rather than turned into separators, so a
-    // parenthesised name comes back clean. Together the two tests say exactly
-    // which characters survive to the edges of a slug and which do not.
-    stubPostcodesIo({ json: { result: { parliamentary_constituency_2024: "(Salisbury)" } } });
-    expect(await constituencySlugFromPostcode("SP1 1AA")).toBe("salisbury");
+    const preparedOk: Prepared[] = [];
+    stubOpenPostcodes({ json: { constituency: { name: "Salisbury", code: "E140041" } } });
+    await constituencySlugFromPostcode(d1Session(db, preparedOk, []) as unknown as Parameters<typeof constituencySlugFromPostcode>[0], "SP1 1AA");
+    expect(preparedOk).toHaveLength(1);
+    expect(preparedOk[0]!.sql).toContain("WHERE pcon24cd = ?");
   });
 });
 
-// ===========================================================================
-// wfbnConstituencies -- GET /needs/in/constituencies/
 // ===========================================================================
 
 describe("the constituencies index", () => {
@@ -760,11 +757,13 @@ describe("the constituencies index", () => {
     expect(html).toContain('<input id="postcode_field" type="text" name="postcode" class="input" placeholder="Search by postcode" value="" autofocus');
   });
 
-  it("302s to the resolved constituency when postcodes.io recognises the postcode", async () => {
+  it("302s to the resolved constituency when the postcode is recognised", async () => {
     // views.py:1052-1057. The redirect is the entire point of the search box:
     // it is how a visitor who knows their postcode and not their constituency
-    // gets to the right one of 650 pages.
-    vi.stubGlobal("fetch", async () => ({ ok: true, status: 200, json: async () => ({ result: { parliamentary_constituency_2024: "East Wiltshire" } }) }) as unknown as Response);
+    // gets to the right one of 650 pages. Since github #56 the code in the
+    // response is resolved against D1's pcon24cd -- east-wiltshire is seeded
+    // with id 46, so the seed helper gives it E140046.
+    vi.stubGlobal("fetch", async () => ({ ok: true, status: 200, json: async () => ({ constituency: { name: "East Wiltshire", code: "E140046" } }) }) as unknown as Response);
     const res = await get("/needs/in/constituencies/?postcode=SN10+1AA");
     expect(res.status).toBe(302);
     expect(res.headers.get("Location")).toBe("/needs/in/constituency/east-wiltshire/");
@@ -776,7 +775,7 @@ describe("the constituencies index", () => {
     // Getting this wrong is invisible in English and drops every Welsh,
     // Irish and Gaelic visitor into the English site at the exact moment they
     // have just used the search box.
-    vi.stubGlobal("fetch", async () => ({ ok: true, status: 200, json: async () => ({ result: { parliamentary_constituency_2024: "East Wiltshire" } }) }) as unknown as Response);
+    vi.stubGlobal("fetch", async () => ({ ok: true, status: 200, json: async () => ({ constituency: { name: "East Wiltshire", code: "E140046" } }) }) as unknown as Response);
     for (const locale of ["cy", "ga", "gd"]) {
       const res = await get(`/${locale}/needs/in/constituencies/?postcode=SN10+1AA`);
       expect(res.status, locale).toBe(302);
@@ -784,17 +783,25 @@ describe("the constituencies index", () => {
     }
   });
 
-  it("redirects to a slug that need not exist -- the lookup is never checked against D1", async () => {
-    // PINNED AS CURRENT BEHAVIOUR, and it is Django's too (views.py:1057
-    // reverses the slug straight out of slugify() with no existence check).
-    // A postcode in a constituency D1 does not hold -- or a postcodes.io name
-    // that slugs differently from the stored slug -- sends the visitor to a
-    // 404. Worth knowing because the failure surfaces one hop away from its
-    // cause, on a page that looks like a plain missing constituency.
-    vi.stubGlobal("fetch", async () => ({ ok: true, status: 200, json: async () => ({ result: { parliamentary_constituency_2024: "Nowhere At All" } }) }) as unknown as Response);
+  // github #56. This asserted the opposite: that the redirect target "need
+  // not exist", pinned as current behaviour and as Django's too -- Django
+  // reverses the slug straight out of slugify() with no existence check, so a
+  // constituency D1 does not hold, or an upstream name that slugs differently
+  // from the stored slug, sent the visitor to a 404 one hop from its cause.
+  //
+  // The target is now a row that has been READ, so it cannot be a 404. A code
+  // we do not hold falls through to the index and its not-recognised notice,
+  // which is the same place Django lands when the API returns nothing. The
+  // only input where the two now differ is a constituency the API knows and
+  // we do not -- impossible while D1 holds all 650, which it does.
+  it("cannot redirect to a constituency that does not exist", async () => {
+    vi.stubGlobal("fetch", async () => ({ ok: true, status: 200, json: async () => ({ constituency: { name: "Nowhere At All", code: "E99999999" } }) }) as unknown as Response);
+
     const res = await get("/needs/in/constituencies/?postcode=SP1+1AA");
-    expect(res.headers.get("Location")).toBe("/needs/in/constituency/nowhere-at-all/");
-    expect((await get("/needs/in/constituency/nowhere-at-all/")).status).toBe(404);
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Location")).toBeNull();
+    expect(await res.text()).toContain("Sorry, we didn't recognise this postcode");
   });
 
   it("renders the index with the not-recognised notice when the lookup fails", async () => {
@@ -829,7 +836,7 @@ describe("the constituencies index", () => {
     // `?postcode=` yields "" from c.req.query, and `if (postcode)` is falsy
     // for it -- matching Python's `if postcode:` on the "" that
     // request.GET.get returns. A port written as `!== null` would fire a
-    // postcodes.io request for every visitor who submits the box empty, and
+    // postcode-lookup request for every visitor who submits the box empty, and
     // then show them the "we didn't recognise this postcode" notice for a
     // postcode they never typed.
     const calls: string[] = [];
@@ -842,12 +849,12 @@ describe("the constituencies index", () => {
     expect(html).not.toContain("Sorry, we didn't recognise this postcode");
   });
 
-  it("500s when postcodes.io is unreachable, rather than falling back to the index", async () => {
+  it("500s when the postcode API is unreachable, rather than falling back to the index", async () => {
     // PINNED AS CURRENT BEHAVIOUR, and the honest answer to "what happens when
     // the downstream fails". `fetch` rejecting propagates out of the handler
     // and index.ts's onError renders the 500 page. Django's requests.get()
     // raising a ConnectionError does exactly the same thing (the view has no
-    // try/except), so this is parity -- but it means an api.postcodes.io
+    // try/except), so this is parity -- but it means an openpostcodes.uk
     // outage takes out the constituencies index for anyone who submits the
     // search box, not just the search itself.
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -878,7 +885,8 @@ describe("the constituencies index", () => {
     // and a cached one would send everyone to one visitor's constituency.
     // Asserted as an absence precisely because "stamp the header at the top of
     // the handler" is a plausible tidy-up that would break it.
-    vi.stubGlobal("fetch", async () => ({ ok: true, status: 200, json: async () => ({ result: { parliamentary_constituency_2024: "Salisbury" } }) }) as unknown as Response);
+    // Salisbury is seeded with id 41, so the seed helper gives it E140041.
+    vi.stubGlobal("fetch", async () => ({ ok: true, status: 200, json: async () => ({ constituency: { name: "Salisbury", code: "E140041" } }) }) as unknown as Response);
     const res = await get("/needs/in/constituencies/?postcode=SP1+1AA");
     expect(res.status).toBe(302);
     expect(res.headers.get("Cache-Control")).toBeNull();
