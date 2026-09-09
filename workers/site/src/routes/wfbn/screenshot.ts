@@ -1,8 +1,15 @@
 import type { Context } from "hono";
 import { getFoodbankBySlug } from "@givefood/db";
-import puppeteer from "@cloudflare/puppeteer";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
+
+// TYPE-ONLY. `typeof import(...)` is a type expression, erased by tsc, so it
+// leaves the deferred import inside screenshot() as the module's only runtime
+// reference to puppeteer. Spelled out rather than imported by name because
+// the package's public types entry does not re-export `Browser`.
+type PuppeteerBrowser = Awaited<
+  ReturnType<(typeof import("@cloudflare/puppeteer"))["default"]["launch"]>
+>;
 
 // gfwfbn `foodbank_screenshot` (gfwfbn/views.py:528-554), registered at
 // gfwfbn/urls/generic.py:14 with the five page names spelled out in the URL
@@ -57,8 +64,21 @@ const HIDE_CCC_STYLE = "#ccc {display:none};"; // verbatim from general.py:50, t
 const CACHE_CONTROL_WEEK = "public, max-age=604800"; // @cache_page(SECONDS_IN_WEEK)
 
 async function screenshot(c: Context<AppEnv>, targetUrl: string): Promise<Uint8Array | null> {
-  let browser: Awaited<ReturnType<typeof puppeteer.launch>> | null = null;
+  let browser: PuppeteerBrowser | null = null;
   try {
+    // DEFERRED ON PURPOSE. @cloudflare/puppeteer is 453 KiB of the site
+    // Worker's 3.2 MiB bundle and this route is its only importer -- one URL
+    // out of everything the Worker serves. A static import evaluates the whole
+    // puppeteer module graph (rxjs, the device-descriptor table, the US
+    // keyboard layout) at startup, on every cold start, for every request
+    // path. esbuild keeps a dynamically-imported module in the same bundle but
+    // behind a lazy initialiser, so the bytes still ship -- what moves is the
+    // evaluation, which now happens only when a screenshot is actually asked
+    // for. Bundle size is not the constraint (the limit is 64 MiB and we use
+    // 5%); the 400 ms startup-time limit is.
+    //
+    // Inside the try because a failed import should 404 like a failed launch.
+    const { default: puppeteer } = await import("@cloudflare/puppeteer");
     browser = await puppeteer.launch(c.env.BROWSER);
     const page = await browser.newPage();
     await page.setViewport(VIEWPORT);

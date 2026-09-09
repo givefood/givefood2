@@ -1,5 +1,9 @@
-import puppeteer from "@cloudflare/puppeteer";
 import type { Env } from "../../worker-configuration";
+
+// TYPE-ONLY -- see the deferred import in getMarkdownViaBinding() below.
+type PuppeteerBrowser = Awaited<
+  ReturnType<(typeof import("@cloudflare/puppeteer"))["default"]["launch"]>
+>;
 
 export type ScrapeType = "web" | "facebook" | "bankthefood";
 
@@ -284,8 +288,16 @@ async function getMarkdownViaRest(env: Env, url: string): Promise<string | null>
 // CF_ACCOUNT_ID/CF_API_KEY. It works -- it just produces different text,
 // which is exactly the problem above, so it is no longer the default.
 async function getMarkdownViaBinding(env: Env, url: string): Promise<string | null> {
-  let browser: Awaited<ReturnType<typeof puppeteer.launch>>;
+  let browser: PuppeteerBrowser;
   try {
+    // DEFERRED ON PURPOSE. This is the fallback path -- it runs only when
+    // CF_ACCOUNT_ID/CF_API_KEY are absent -- and it is the jobs Worker's only
+    // importer of @cloudflare/puppeteer, 453 KiB of a 2.7 MiB bundle. A static
+    // import evaluates that whole module graph at startup for every cron tick
+    // and every queue batch, none of which reach this function. esbuild keeps
+    // the bytes in the bundle but behind a lazy initialiser, so what moves is
+    // the evaluation. Same change as the site Worker's wfbn/screenshot.ts.
+    const { default: puppeteer } = await import("@cloudflare/puppeteer");
     browser = await puppeteer.launch(env.BROWSER);
   } catch {
     return null; // no session available at all -- nothing left to retry
