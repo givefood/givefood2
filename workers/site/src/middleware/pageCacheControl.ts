@@ -67,6 +67,20 @@ const at = (rest: string) => new RegExp(`^/${LOCALE_PREFIX}${rest}$`);
 
 const HOME = at("");
 const NEWS = at("news/");
+
+// gfwfbn `index` -- @cache_page(SECONDS_IN_HOUR) at gfwfbn/views.py:50,
+// mounted at "needs/" by givefood/urls.py:47 INSIDE i18n_patterns, so the
+// locale prefix applies exactly as it does to HOME. github #19: this had no
+// rule at all and fell through to the day default, so the site's primary
+// search page could serve a food bank list 24 hours stale where Django
+// capped it at one.
+const WFBN_INDEX = at("needs/");
+
+// givefood `md_index` -- @cache_page(SECONDS_IN_HOUR) at
+// givefood/views.py:699. NOT built with at(): the markdown block is OUTSIDE
+// i18n_patterns, so /cy/md/ is not a route and inventing a locale prefix
+// here would match a URL that does not exist.
+const MD_INDEX = /^\/md\/$/;
 const COUNTRY = at("(?:scotland|england|wales|northern-ireland)/");
 const WEEKLY_PAGES = at("(?:about-us|privacy|donate|colophon|bot|api|annual-reports|constituencies)/");
 const ANNUAL_REPORT = at("(?:19|20)\\d{2}/");
@@ -78,6 +92,17 @@ const SHARED_TTL: { test: (path: string) => boolean; ttl: number }[] = [
   { test: (p) => HOME.test(p), ttl: SECONDS_IN_HOUR },
   { test: (p) => NEWS.test(p), ttl: SECONDS_IN_HOUR },
   { test: (p) => COUNTRY.test(p), ttl: SECONDS_IN_HOUR },
+  // gfwfbn index (the postcode-search results) and givefood md_index --
+  // both @cache_page(SECONDS_IN_HOUR). github #19.
+  //
+  // THE TTL IS THE ONLY BOUND ON STALENESS FOR /needs/, which is why the
+  // number matters more here than on the pages around it. tagsFor() returns
+  // [] for this path, so the fb-all purge that fires on every publish cannot
+  // reach it -- and that is PARITY, not a second bug: Django's decache list
+  // (givefood/models/foodbank.py:717-758) omits reverse("wfbn:index") too.
+  // Django simply had an hour to fall back on, and this port had a day.
+  { test: (p) => WFBN_INDEX.test(p), ttl: SECONDS_IN_HOUR },
+  { test: (p) => MD_INDEX.test(p), ttl: SECONDS_IN_HOUR },
   // gfwfbn foodbank_nearby / md_foodbank_nearby -- @cache_page(SECONDS_IN_WEEK).
   { test: (p) => p.endsWith("/nearby/"), ttl: SECONDS_IN_WEEK },
   // givefood about_us/privacy/donate/colophon/bot/annual reports and

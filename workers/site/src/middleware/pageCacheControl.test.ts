@@ -284,18 +284,51 @@ describe("pageCacheControl: TTL families copied from Django", () => {
     expect(await sharedTtl("/needs/at/sid-valley/locations/")).toBe(DAY);
     expect(await sharedTtl("/needs/at/sid-valley/news/")).toBe(DAY);
     expect(await sharedTtl("/needs/in/constituency/exeter/")).toBe(DAY);
-    // DIVERGENCE, pinned as current behaviour rather than fixed: /needs/ is
-    // gfwfbn/views.py's index, which is @cache_page(SECONDS_IN_HOUR) --
-    // givefood/urls.py:47 mounts gfwfbn.urls.i18n at "needs/" and its ""
-    // path is that view. The hour family here covers only the site home
-    // page, so the needs index gets a day at the edge: 24x Django, on a page
-    // that lists recently-updated food banks. Reported, not changed.
-    expect(await sharedTtl("/needs/")).toBe(DAY);
-    expect(await sharedTtl("/cy/needs/")).toBe(DAY);
+    // /needs/ USED TO BE HERE, pinned at DAY as "reported, not changed" --
+    // github #19 changed it; see the hour test below.
+    //
     // gfwfbn/views.py rss is @cache_page(SECONDS_IN_DAY) too, so the feed
     // lands on the right number by falling through rather than by a rule.
+    // Checked against the Django source while fixing #19 rather than
+    // assumed, because /needs/rss.xml sits one path segment from a page
+    // whose TTL just moved: gfwfbn/views.py:131 really is SECONDS_IN_DAY.
     expect(await sharedTtl("/needs/rss.xml")).toBe(DAY);
     expect(await sharedTtl("/some/route/nobody/has/written/yet/")).toBe(DAY);
+  });
+
+  // github #19. The site's primary search page was getting a 24-hour edge
+  // TTL where Django's @cache_page(SECONDS_IN_HOUR) allowed one, so a
+  // visitor searching a postcode could be served a food bank list a day out
+  // of date.
+  //
+  // THE TTL IS THE ONLY BOUND ON STALENESS HERE, which is what made the
+  // multiplier matter: tagsFor() returns [] for /needs/, so the fb-all purge
+  // fired on every publish cannot reach it. That missing tag is PARITY, not
+  // a second bug -- Django's decache list omits reverse("wfbn:index") too --
+  // and it is the reason the number is the whole defence.
+  it("caches the needs index and the markdown homepage for an hour, like Django", async () => {
+    expect(await sharedTtl("/needs/")).toBe(HOUR);
+    // Inside i18n_patterns, so every locale prefix gets the same rule.
+    for (const locale of ["cy", "ga", "gd"]) {
+      expect(await sharedTtl(`/${locale}/needs/`), locale).toBe(HOUR);
+    }
+    // givefood/views.py:699 md_index, also SECONDS_IN_HOUR.
+    expect(await sharedTtl("/md/")).toBe(HOUR);
+  });
+
+  it("does not let the new hour rules swallow the pages beneath them", async () => {
+    // `at()` anchors both ends, so "needs/" cannot match /needs/at/... --
+    // asserted rather than trusted, because a rule that lost its `$` would
+    // hand an hour to nearly every page on the site and the only symptom
+    // would be more origin traffic.
+    expect(await sharedTtl("/needs/at/sid-valley/")).toBe(DAY);
+    expect(await sharedTtl("/needs/in/constituency/exeter/")).toBe(DAY);
+    expect(await sharedTtl("/needs/at/sid-valley/nearby/")).toBe(WEEK);
+    // MD_INDEX is deliberately NOT built with at(): the markdown block sits
+    // outside i18n_patterns, so /cy/md/ is not a route and must not be
+    // matched. It falls through to the default like any unknown path.
+    expect(await sharedTtl("/cy/md/")).toBe(DAY);
+    expect(await sharedTtl("/md/needs/at/sid-valley/")).toBe(DAY);
   });
 });
 
