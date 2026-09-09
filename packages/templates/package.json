@@ -13,7 +13,7 @@
     "nunjucks": "^3.2.4"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^5.20260905.1",
+    "@cloudflare/workers-types": "^5.20260908.1",
     "@types/node": "^26.4.1",
     "@types/nunjucks": "^3.2.6",
     "tsx": "^4.23.13",

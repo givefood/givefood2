@@ -18,8 +18,8 @@
     "fast-xml-parser": "^5.11.1"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^5.20260905.1",
+    "@cloudflare/workers-types": "^5.20260908.1",
     "typescript": "^7.0.2",
-    "wrangler": "^4.129.0"
+    "wrangler": "^4.129.1"
   }
 }
