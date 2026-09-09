@@ -276,9 +276,11 @@ describe("round2", () => {
   });
 
   it("matches CPython round() across the WHOLE distance_mi domain, not just six samples", () => {
-    // The module header claims round2 is "hand-verified against real Python
-    // output for distance_mi", and the divergence test below asserts in a
-    // COMMENT that no integer metre count reaches the broken branch. Six
+    // The module header used to claim round2 was "hand-verified against real
+    // Python output for distance_mi", and the divergence test below asserted
+    // in a COMMENT that no integer metre count reached the broken branch --
+    // which was the justification for leaving round2 as its own copy of the
+    // defect (github #14 has since routed it through pyRound). Six
     // hand-picked metre values cannot support either claim, and a prose
     // comment supports nothing at all -- so check the entire production
     // input domain instead.
@@ -348,27 +350,39 @@ describe("round2", () => {
     expect(formatFloat(round2(-0.001))).toBe("-0.0"); // CPython repr: '-0.0'
   });
 
-  it("DIVERGES from Python when x*100 lands on .5 only through float error", () => {
-    // KNOWN DIVERGENCE, pinned rather than fixed (see the structured report).
-    // The tie test is `x * 100 - floor === 0.5`, i.e. it is applied to the
-    // PRODUCT, which carries its own rounding error. 2.675 as a double is
-    // really 2.67499999999999982, so CPython rounds it DOWN to 2.67 -- but
-    // 2.675 * 100 is exactly 267.5 in binary, so this code sees a tie that
-    // does not exist and rounds half-to-even up to 2.68.
-    expect(2.675 * 100).toBe(267.5); // the false tie
-    expect(round2(2.675)).toBe(2.68); // CPython: 2.67
-    expect(round2(-2.675)).toBe(-2.68); // CPython: -2.67
-    expect(round2(0.005)).toBe(0); // CPython: 0.01
-    expect(round2(0.015)).toBe(0.02); // CPython: 0.01
-    expect(round2(0.025)).toBe(0.02); // CPython: 0.03
-    expect(round2(0.615)).toBe(0.62); // CPython: 0.61
-    expect(round2(12.345)).toBe(12.34); // CPython: 12.35
-    expect(round2(32.735)).toBe(32.74); // CPython: 32.73
-    // Not reachable through distance_mi in practice, which is why the
-    // module's "hand-verified against real Python output" claim held: no
+  // github #14. This asserted the divergences, "pinned rather than fixed".
+  // The tie test was applied to the PRODUCT `x * 100`, which carries its own
+  // rounding error, so doubles that are not ties produced a product landing
+  // exactly on .5 and half-to-even was applied to a non-tie. 2.675 as a
+  // double is really 2.67499999999999982, below the boundary, so CPython
+  // rounds it DOWN -- but 2.675 * 100 is exactly 267.5 in binary.
+  //
+  // Every expectation below is CPython's own answer, taken from
+  // `json.dumps(round(v, 2))` rather than reasoned about.
+  it("matches Python when x*100 lands on .5 only through float error", () => {
+    expect(2.675 * 100).toBe(267.5); // the product really is a false tie
+    expect(round2(2.675)).toBe(2.67);
+    expect(round2(-2.675)).toBe(-2.67);
+    expect(round2(0.005)).toBe(0.01);
+    expect(round2(0.015)).toBe(0.01);
+    expect(round2(0.025)).toBe(0.03);
+    expect(round2(0.615)).toBe(0.61);
+    expect(round2(12.345)).toBe(12.35);
+    expect(round2(32.735)).toBe(32.73);
+    // The direction runs BOTH ways -- 0.015 down, 0.025 up -- so the fix is
+    // not a bias correction. And it is not "toFixed everywhere" either: on a
+    // TRUE tie toFixed rounds away from zero where CPython rounds to even.
+    // 0.125 is exactly representable, so it is a real tie, and the two
+    // disagree.
+    expect((0.125).toFixed(2)).toBe("0.13");
+    expect(round2(0.125)).toBe(0.12); // CPython: 0.12
+    // None of this was reachable through distance_mi in practice -- no
     // integer metre count from 1 to 200,000 produces a miles() value whose
-    // *100 is an exact half. The exposure is via pyRound on coordinates --
-    // see the matching pyRound test below.
+    // *100 is an exact half -- which is why round2's "hand-verified" claim
+    // held even while it carried the defect. That made it a LATENT copy of a
+    // live bug rather than a second bug, and github #14 removed the copy by
+    // making round2 a call to pyRound. The observable exposure was always
+    // pyRound on coordinates; see the matching test below.
   });
 });
 
@@ -570,37 +584,62 @@ describe("pyRound", () => {
     // byte-identical to Django's json.dumps output.
     expect(formatFloat(pyRound(-0.00002, 6))).toBe("-2e-05"); // CPython repr: '-2e-05'
     expect(formatFloat(pyRound(-0.000002, 6))).toBe("-2e-06"); // CPython repr: '-2e-06'
-    // DIVERGENCE, and the worst-placed one: at exactly half a unit the false
-    // tie described above flips the value AND loses the sign. -0.00005 * 1e4
-    // is exactly -0.5 in binary, so the tie branch takes floor(-0.5) == -1,
-    // rounds to even and lands on +0 -- while CPython sees the double as
-    // slightly larger than 5e-05 in magnitude, so it is not a tie at all
-    // there and it rounds away to -0.0001.
-    expect(pyRound(-0.00005, 4)).toBe(0); // CPython: -0.0001
-    expect(formatFloat(pyRound(-0.00005, 4))).toBe("0.0"); // CPython repr: '-0.0001'
+    // github #14: the worst-placed instance of the false tie, because it
+    // flipped the value AND lost the sign. -0.00005 * 1e4 is exactly -0.5 in
+    // binary, so the old tie branch took floor(-0.5) == -1, rounded to even
+    // and landed on +0 -- while the double is slightly larger than 5e-05 in
+    // magnitude, so CPython does not see a tie at all and rounds away.
+    expect(pyRound(-0.00005, 4)).toBe(-0.0001);
+    expect(formatFloat(pyRound(-0.00005, 4))).toBe("-0.0001"); // CPython repr: '-0.0001'
     // A stored longitude of exactly "-0.0" would also lose its sign: Number()
     // preserves negative zero, but toFixed does not.
     expect(Object.is(Number("-0.0"), -0)).toBe(true); // how it would arrive
     expect(formatFloat(pyRound(-0, 4))).toBe("0.0"); // CPython repr: '-0.0'
   });
 
-  it("DIVERGES from Python on coordinates whose *10^n lands on a false tie", () => {
-    // KNOWN DIVERGENCE, same root cause as the round2 case above, but this
-    // one is reachable from live data: geocoders emit 5-to-7 decimal places,
-    // and geo.json is a byte-exact contract. 51.50005 is a real central
-    // London latitude; as a double it is 51.500050000000002, so CPython
-    // rounds it UP to 51.5001. Here 51.50005 * 1e4 is exactly 515000.5, the
-    // code reads that as a tie and rounds half-to-even DOWN to 51.5 -- which
-    // formatFloat then prints as "51.5", a different byte string in the
-    // response body.
-    expect(51.50005 * 1e4).toBe(515000.5); // the false tie
-    expect(pyRound(51.50005, 4)).toBe(51.5); // CPython: 51.5001
-    expect(formatFloat(pyRound(51.50005, 4))).toBe("51.5"); // CPython repr: "51.5001"
-    expect(pyRound(51.50015, 4)).toBe(51.5002); // CPython: 51.5001 (both directions)
-    expect(pyRound(57.98525, 4)).toBe(57.9852); // CPython: 57.9853
-    expect(pyRound(0.12345, 4)).toBe(0.1234); // CPython: 0.1235
-    expect(pyRound(-0.1999985, 6)).toBe(-0.199998); // CPython: -0.199998 (agrees)
-    expect(pyRound(-0.1999975, 6)).toBe(-0.199998); // CPython: -0.199997
-    expect(pyRound(0.00005, 4)).toBe(0); // CPython: 0.0001
+  // github #14, and the reason it was a medium rather than a curiosity: this
+  // is reachable from live data. Geocoders emit 5-to-7 decimal places
+  // (geo.py:72-75 stores Google's lat/lng verbatim, and the repo's own rows
+  // carry 51.5073509), and geo.json is a byte-exact contract. Measured
+  // against CPython over 80,000 UK-bounding-box coordinates: the old code
+  // disagreed on 4.90% at 6dp and 0.42% at 4dp.
+  //
+  // Every expectation is CPython's own answer, from json.dumps(round(v, n)).
+  it("matches Python on coordinates whose *10^n lands on a false tie", () => {
+    expect(51.50005 * 1e4).toBe(515000.5); // the product really is a false tie
+    expect(pyRound(51.50005, 4)).toBe(51.5001);
+    expect(formatFloat(pyRound(51.50005, 4))).toBe("51.5001");
+    // Both directions, which is what rules out a one-sided correction.
+    expect(pyRound(51.50015, 4)).toBe(51.5001);
+    expect(pyRound(57.98525, 4)).toBe(57.9853);
+    expect(pyRound(0.12345, 4)).toBe(0.1235);
+    expect(pyRound(-0.1999985, 6)).toBe(-0.199998);
+    expect(pyRound(-0.1999975, 6)).toBe(-0.199997);
+    expect(pyRound(0.00005, 4)).toBe(0.0001);
+    expect(pyRound(57.1066945, 6)).toBe(57.106695);
+    expect(pyRound(53.98505, 4)).toBe(53.9851);
+  });
+
+  // THE HALF THAT KEEPS THE FIX FROM BEING "JUST USE toFixed". Genuine ties
+  // are reachable -- every dyadic rational is one -- and there CPython rounds
+  // half-to-EVEN while toFixed rounds half-away-from-zero. Deleting the tie
+  // branch would pass every assertion above and break these.
+  it("still rounds a TRUE tie half-to-even, where toFixed rounds away from zero", () => {
+    for (const [value, expected, toFixedGives] of [
+      [51.03125, 51.0312, "51.0313"],
+      [51.15625, 51.1562, "51.1563"],
+      [51.40625, 51.4062, "51.4063"],
+      [51.53125, 51.5312, "51.5313"],
+    ] as const) {
+      expect(pyRound(value, 4), `${value}`).toBe(expected);
+      // Asserted alongside, so the two rules are visibly different rather
+      // than coincidentally equal on this fixture.
+      expect(value.toFixed(4), `${value} toFixed`).toBe(toFixedGives);
+    }
+    expect(pyRound(0.125, 2)).toBe(0.12);
+    expect(pyRound(2.5, 0)).toBe(2);
+    // Half-to-even means the odd neighbour goes UP, not that everything
+    // goes down.
+    expect(pyRound(0.375, 2)).toBe(0.38);
   });
 });
