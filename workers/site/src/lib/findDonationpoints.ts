@@ -32,7 +32,8 @@ export interface DonationpointSearchResult {
   facebook_page: string | null;
   distance_mi: number;
   latest_need_change_text: string;
-  latest_need_id: number;
+  // Nullable for the same reason as LocationSearchResult's -- github #13.
+  latest_need_id: number | null;
 }
 
 type Candidate = { kind: "donationpoint" | "location"; coord: CoordinateRow };
@@ -99,9 +100,11 @@ export async function findDonationpoints(
         foodbank_name: row.foodbank_name,
         facebook_page: parentFoodbank.facebook_page,
         distance_mi: miles(distanceM),
-        // Frozen bug B12 (see findLocations.ts): unguarded, matches Django.
-        latest_need_change_text: parentFoodbank.latestNeed!.change_text,
-      latest_need_id: parentFoodbank.latestNeed!.id,
+        // NOT frozen bug B12 -- see findLocations.ts's note (github #13).
+        // Django's find_donationpoints() (geo.py:407) never touches
+        // latest_need either, and this page is HTML.
+        latest_need_change_text: parentFoodbank.latestNeed?.change_text ?? "",
+      latest_need_id: parentFoodbank.latestNeed?.id ?? null,
       };
     }
     const row = locationById.get(item.coord.id);
@@ -117,8 +120,8 @@ export async function findDonationpoints(
       foodbank_name: row.foodbank_name,
       facebook_page: parentFoodbank.facebook_page,
       distance_mi: miles(distanceM),
-      latest_need_change_text: parentFoodbank.latestNeed!.change_text,
-      latest_need_id: parentFoodbank.latestNeed!.id,
+      latest_need_change_text: parentFoodbank.latestNeed?.change_text ?? "",
+      latest_need_id: parentFoodbank.latestNeed?.id ?? null,
     };
   });
 }

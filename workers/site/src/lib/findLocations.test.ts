@@ -760,38 +760,77 @@ describe("findLocations location decoration", () => {
   });
 });
 
-describe("findLocations frozen bug B12 and missing rows", () => {
-  it("throws when a winning food bank has no latest_need -- frozen bug B12", async () => {
-    // The module says so outright: "a null latest_need throws here exactly
-    // as it 500s in Django". Django's template does
-    // `{{ result.latest_need.change_text }}` against None and errors; the
-    // port's `row.latestNeed!.change_text` throws a TypeError. Documented,
-    // NOT endorsed -- both sides of the migration fail loudly and
-    // identically, which is the point. Anyone adding a null guard here is
-    // changing behaviour and should have to delete this test to do it.
+describe("findLocations: a null latest_need, and missing rows", () => {
+  // github #13. This pair asserted TypeErrors, on the grounds that "a null
+  // latest_need throws here exactly as it 500s in Django" -- and that
+  // justification was wrong for this file, which is what made it a high.
+  //
+  // B12 is real, and it is about the FIVE API views PLAN.md:7305 names:
+  // gfapi1/views.py:143 and gfapi2/views.py:401,588 attribute-access None in
+  // PYTHON and raise. Nothing that calls findLocations is one of them. On the
+  // HTML side Django cannot fail: geo.py's find_locations() only ASSIGNS
+  // `location.latest_need = location.foodbank.latest_need`, and
+  // wfbn/index.html reaches the value through a TEMPLATE lookup, which
+  // swallows the attribute error on None into string_if_invalid. Rendered
+  // against the real template shape with latest_need=None it produces the
+  // empty branch, not an exception -- run in the repo's own Django venv, not
+  // reasoned about. wfbn/foodbank/nearby.html does not mention latest_need at
+  // all, so that page could never fail there under any circumstances.
+  //
+  // The state is ordinary, not exotic: the admin creates it by adding a food
+  // bank before its first need, or by unpublishing its only published one.
+  it("returns a blank need for a winning food bank that has none", async () => {
     db.getOpenLocationCoordinates.mockResolvedValue([]);
     db.getFoodbanksByIds.mockImplementation((session: Session, ids: readonly number[]) =>
       fetchFoodbanks(session, ids).then((rows) => rows.map((row) => ({ ...row, latestNeed: null }))),
     );
-    await expect(findLocations(SESSION, LAT, LNG, 1)).rejects.toThrow(TypeError);
+
+    const results = await findLocations(SESSION, LAT, LNG, 1);
+
+    expect(results).toHaveLength(1);
+    // "" and not null: the route feeds this straight to resolveNeedText,
+    // whose empty-string answer is what puts index.njk on the same branch
+    // Django's template takes.
+    expect(results[0]!.latest_need_change_text).toBe("");
+    expect(results[0]!.latest_need_id).toBeNull();
+    // The rest of the row is intact -- this is a blank cell, not a blank row.
+    expect(results[0]!.name).toBeTruthy();
+    expect(results[0]!.foodbank_slug).toBeTruthy();
   });
 
-  it("throws when a winning location's parent food bank has no latest_need", async () => {
-    // Same frozen bug reached through the location branch, which is the
-    // more likely one in practice: a brand-new food bank that has never had
-    // a need recorded can still have locations, and any of them can be
-    // someone's nearest result.
+  it("keeps the other results when ONE of them has no latest_need", async () => {
+    // THE ASSERTION THE SEVERITY RESTS ON. The failure was never one blank
+    // row: the throw escaped Promise.all in routes/wfbn/index.ts and took the
+    // whole page with it -- all twenty results, the donation-points tab and
+    // the by-item tab. A fixture where every row lacks a need cannot tell
+    // "degrades that row" from "degrades everything", so exactly one does.
+    db.getOpenLocationCoordinates.mockResolvedValue([]);
+    db.getFoodbanksByIds.mockImplementation((session: Session, ids: readonly number[]) =>
+      fetchFoodbanks(session, ids).then((rows) => rows.map((row, i) => (i === 0 ? { ...row, latestNeed: null } : row))),
+    );
+
+    const results = await findLocations(SESSION, LAT, LNG, 4);
+
+    expect(results.length).toBeGreaterThan(1);
+    expect(results[0]!.latest_need_change_text).toBe("");
+    expect(results.slice(1).every((r) => r.latest_need_change_text !== "")).toBe(true);
+    expect(results.slice(1).every((r) => r.latest_need_id !== null)).toBe(true);
+  });
+
+  it("returns a blank need for a location whose PARENT food bank has none", async () => {
+    // The location branch reads the need off the parent, and it is the more
+    // likely leg in practice: a brand-new food bank that has never had a need
+    // recorded can still have locations, and any of them can be somebody's
+    // nearest result.
     db.getFoodbanksByIds.mockImplementation((session: Session, ids: readonly number[]) =>
       fetchFoodbanks(session, ids).then((rows) => rows.map((row) => ({ ...row, latestNeed: null }))),
     );
-    await expect(findLocations(SESSION, LAT, LNG, 1)).rejects.toThrow(TypeError);
-    // Which dereference blew up matters here: the parent food bank is
-    // FOUND and its need is null. Without this the test would pass just as
-    // happily if the parent lookup itself had returned undefined -- a
-    // different bug (the wrong id in the parent query) wearing the same
-    // TypeError. Only the quoted property name is asserted, not V8's
-    // wording around it.
-    await expect(findLocations(SESSION, LAT, LNG, 1)).rejects.toThrow(/reading 'change_text'/);
+
+    const results = await findLocations(SESSION, LAT, LNG, 4);
+
+    expect(results.some((r) => r.type === "location")).toBe(true);
+    expect(results.every((r) => r.latest_need_change_text === "")).toBe(true);
+    expect(results.every((r) => r.latest_need_id === null)).toBe(true);
   });
 
   // THIS PAIR USED TO ASSERT A 500, and their own comment said the 500 was
@@ -836,16 +875,15 @@ describe("findLocations frozen bug B12 and missing rows", () => {
     expect(db.getFoodbanksByIds).toHaveBeenCalledTimes(1);
   });
 
-  // The other half of the same rule, and the reason this is not simply "stop
-  // throwing": a miss that DJANGO WOULD ALSO HAVE HIT keeps throwing. B12 is
-  // pinned by the two tests above this block and is untouched by #48.
-  it("still throws for frozen bug B12 even though missing rows no longer throw", async () => {
-    db.getOpenLocationCoordinates.mockResolvedValue([]);
-    db.getFoodbanksByIds.mockImplementation((session: Session, ids: readonly number[]) =>
-      fetchFoodbanks(session, ids).then((rows) => rows.map((row) => ({ ...row, latestNeed: null }))),
-    );
-    await expect(findLocations(SESSION, LAT, LNG, 1)).rejects.toThrow(/reading 'change_text'/);
-  });
+  // I WROTE THIS TEST DURING github #48 AND ITS PREMISE WAS WRONG. It asserted
+  // that a null latest_need "still throws", on the rule that a miss Django
+  // would also have hit must keep failing -- correct as a rule, wrong in
+  // believing Django hits this one. It does not: the HTML path resolves the
+  // value in a template, which swallows it. #13 is the correction, and the
+  // rule that survives is narrower than the one I wrote: a row that is NOT
+  // FOUND is a window this port's two-phase read opened, and is dropped
+  // (asserted below); a row that is found carrying a null need is ordinary
+  // data, and renders blank.
 });
 
 describe("LocationSearchResult shape", () => {

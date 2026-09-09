@@ -110,20 +110,37 @@ export async function wfbnIndex(c: Context<AppEnv>): Promise<Response> {
   // matching Django's real wfbn/index.html, which resolves
   // `change_text=location.latest_need.get_change_text` FIRST via
   // `{% with %}` and only then branches on it.
+  // NULLS FILTERED OUT, not passed down (github #13). A result whose food
+  // bank has no published need now carries `latest_need_id: null` instead of
+  // 500ing the page, and a null in this list would become a `WHERE id IN
+  // (..., NULL)` bind that matches nothing and costs a round trip to find
+  // that out -- and, on a search where EVERY result lacked a need, would turn
+  // the "no ids, skip the query" guard below into a query for [null].
   const allNeedIds = Array.from(
-    new Set([
-      ...(filteredLocations ?? []).map((r) => r.latest_need_id),
-      ...(filteredDonationpoints ?? []).map((r) => r.latest_need_id),
-      ...(filteredLocationsByCategory ?? []).map((r) => r.latest_need_id),
-    ]),
+    new Set(
+      [
+        ...(filteredLocations ?? []).map((r) => r.latest_need_id),
+        ...(filteredDonationpoints ?? []).map((r) => r.latest_need_id),
+        ...(filteredLocationsByCategory ?? []).map((r) => r.latest_need_id),
+      ].filter((id): id is number => id !== null),
+    ),
   );
   const needTranslations = locale !== "en" && allNeedIds.length > 0 ? await getNeedTranslationsByIds(session, allNeedIds, locale) : null;
-  const withTranslatedText = <T extends { latest_need_change_text: string; latest_need_id: number }>(rows: T[] | null) =>
+  // `latest_need_id` is nullable since github #13. resolveNeedText("") is ""
+  // -- the same empty string Django's template produces when it resolves
+  // `latest_need.get_change_text` on None -- so index.njk falls through its
+  // Nothing/Unknown/Facebook branches to `{{ ...|linebreaks }}` exactly as
+  // Django does, and the row renders blank instead of taking the page down.
+  const withTranslatedText = <T extends { latest_need_change_text: string; latest_need_id: number | null }>(rows: T[] | null) =>
     rows === null
       ? null
       : rows.map((row) => ({
           ...row,
-          latest_need_get_change_text: resolveNeedText(row.latest_need_change_text, needTranslations?.get(row.latest_need_id)?.change_text, locale),
+          latest_need_get_change_text: resolveNeedText(
+            row.latest_need_change_text,
+            row.latest_need_id === null ? undefined : needTranslations?.get(row.latest_need_id)?.change_text,
+            locale,
+          ),
         }));
   const locations = withTranslatedText(filteredLocations);
   const donationpoints = withTranslatedText(filteredDonationpoints);

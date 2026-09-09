@@ -789,26 +789,27 @@ describe("wfbnFoodbankNearby -- the list, which is the whole page", () => {
     expect(rows.filter((row) => row.includes("|Salisbury|"))).toHaveLength(1);
   });
 
-  // FROZEN BUG B12, reached through this route. findLocations dereferences
-  // `row.latestNeed!.change_text` for every winner -- including the parent of
-  // every winning location -- so a neighbour with no need row at all takes the
-  // whole page down with a TypeError. lib/findLocations.test.ts pins the throw;
-  // this pins what a VISITOR gets, which is a 500 on a page that has nothing to
-  // do with need text and never renders any.
+  // github #13. This asserted a 500, as "frozen bug B12 ... both sides of the
+  // migration fail loudly and identically". They do not. Django's
+  // wfbn/foodbank/nearby.html does not reference latest_need ANYWHERE, so this
+  // page could never fail there for this reason under any circumstances --
+  // the port computed the field eagerly in findLocations and threw. A page
+  // that renders no need text at all was 500ing over need text.
   //
-  // Documented, NOT endorsed: Django's template does
-  // `{{ result.latest_need.change_text }}` against None and errors in the same
-  // place, so both sides of the migration fail loudly and identically. All
-  // 1,070 production rows have a latest_need_id (packages/db/src/foodbank.ts
-  // records that), which is why this needs a test rather than an observation.
-  it("SUSPECT: 500s the whole page when any listed neighbour has no need row", async () => {
-    vi.spyOn(console, "error").mockImplementation(() => {});
+  // Latent rather than live when fixed: 0 of the 1,023 open production food
+  // banks had a NULL latest_need_id (read-only count, 2026-09-09). The admin
+  // manufactures the state -- adding a food bank before its first need, or
+  // unpublishing its only published one -- and a new food bank's locations
+  // spread it across every postcode near any of them.
+  it("renders the whole page when a listed neighbour has no need row", async () => {
     db.prepare("UPDATE foodbank SET latest_need_id = NULL WHERE slug = 'wilton'").run();
 
     const res = await get("/needs/at/salisbury/nearby/");
-    expect(res.status).toBe(500);
-    expect(res.headers.get("Cache-Control")).toBeNull();
-    expect(await res.text()).not.toContain("Harnham Centre");
+
+    expect(res.status).toBe(200);
+    // The neighbour list is the whole page, so the assertion that matters is
+    // that the OTHER rows survived -- the failure was never one blank row.
+    expect(await res.text()).toContain("Harnham Centre");
   });
 
   // THE OTHER SIDE OF THAT, and the asymmetry is the point. The SUBJECT food

@@ -698,44 +698,44 @@ describe("findDonationpoints", () => {
     }
   });
 
-  it("throws when a parent food bank has no latest need (frozen bug B12)", async () => {
-    // Documented in the module as frozen bug B12: the `!` on latestNeed is
-    // unguarded on purpose, because Django's template access on a null
-    // latest_need 500s too. This test records the current behaviour; it is
-    // NOT an endorsement of it. If B12 is ever unfrozen, this is the test
-    // to rewrite.
+  // github #13. Both of these asserted TypeErrors as "frozen bug B12". The
+  // justification did not hold for this file: B12 is about the five API views
+  // PLAN.md:7305 names, which attribute-access None in PYTHON and raise.
+  // Django's find_donationpoints() (geo.py:407) never touches latest_need at
+  // all, and this function feeds an HTML page whose template swallows the
+  // lookup. See findLocations.ts's note for the full reasoning and how it was
+  // checked.
+  it("returns a blank need when the parent food bank has none", async () => {
     const { session } = build({
       foodbanks: [{ id: 1, name: "Croydon Foodbank", slug: "croydon", latestNeedId: null }],
       donationpoints: [{ id: 11, name: "Croydon Tesco", ...CROYDON }],
     });
 
-    // `rejects.toThrow(TypeError)` alone is nearly free to satisfy -- every
-    // other missing-row bug in this function also throws a TypeError, so
-    // the message is asserted to pin that it failed on the need and not,
-    // say, on a food bank the fixture forgot to supply.
-    await expect(findDonationpoints(session, LONDON.lat, LONDON.lng, 10)).rejects.toThrow(
-      /Cannot read properties of null \(reading 'change_text'\)/,
-    );
+    const results = await findDonationpoints(session, LONDON.lat, LONDON.lng, 10);
+
+    expect(results.map((r) => r.name)).toEqual(["Croydon Tesco"]);
+    expect(results[0]!.latest_need_change_text).toBe("");
+    expect(results[0]!.latest_need_id).toBeNull();
+    // The row is otherwise whole -- a blank cell, not a dropped result.
+    expect(results[0]!.foodbank_name).toBe("Croydon Foodbank");
   });
 
-  it("throws the same way when latest_need_id points at a need row that is gone", async () => {
-    // The other half of B12: getFoodbanksByIds resolves a dangling
-    // latest_need_id to null rather than erroring, so the failure surfaces
-    // here identically. Worth pinning separately -- a future guard that only
-    // checked `latest_need_id !== null` would still crash on this one.
+  it("does the same when latest_need_id points at a need row that is gone", async () => {
+    // Worth keeping separate, and it is why the guard is on `latestNeed`
+    // rather than on the id: getFoodbanksByIds resolves a DANGLING
+    // latest_need_id to `latestNeed: null` rather than erroring, so a fix
+    // that had checked `latest_need_id !== null` would still have crashed
+    // here.
     const { session } = build({
       foodbanks: [{ id: 1, name: "Croydon Foodbank", slug: "croydon", latestNeedId: 999, omitNeedRow: true }],
       locations: [{ id: 21, name: "Croydon Church", ...CROYDON }],
     });
 
-    // Same message as the null-latest_need case above: getFoodbanksByIds
-    // resolves the dangling id to `latestNeed: null`, so both arrive at the
-    // same `!`. Asserting the message (not just the class) is what makes
-    // this test say something the previous one does not -- it proves the
-    // dangling id took the SAME path, rather than failing earlier.
-    await expect(findDonationpoints(session, LONDON.lat, LONDON.lng, 10)).rejects.toThrow(
-      /Cannot read properties of null \(reading 'change_text'\)/,
-    );
+    const results = await findDonationpoints(session, LONDON.lat, LONDON.lng, 10);
+
+    expect(results).toHaveLength(1);
+    expect(results[0]!.latest_need_change_text).toBe("");
+    expect(results[0]!.latest_need_id).toBeNull();
   });
 
   // THESE THREE USED TO ASSERT A 500. Their own comment called it "reported

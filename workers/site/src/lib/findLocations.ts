@@ -44,7 +44,12 @@ export interface LocationSearchResult {
   contact_email: string;
   facebook_page: string | null;
   latest_need_change_text: string;
-  latest_need_id: number;
+  // NULLABLE (github #13). An open food bank with no published need is an
+  // ordinary state the admin creates -- adding a food bank before its first
+  // need, or unpublishing its only one -- and it is a candidate for these
+  // searches like any other, because getOpenFoodbankCoordinates filters on
+  // is_closed alone.
+  latest_need_id: number | null;
 }
 
 type Candidate = { kind: "organisation" | "location"; coord: CoordinateRow };
@@ -100,11 +105,35 @@ export async function findLocations(
   // two-phase port is what opened the window; degrading to Django's own
   // outcome closes it.
   //
-  // NOT TO BE CONFUSED WITH THE `!`s THAT REMAIN below. `row.latestNeed!` is
-  // frozen bug B12 -- Django dereferences a null latest_need unguarded and
-  // 500s, and this port reproduces that deliberately. Those must keep
-  // throwing. The rule is: a miss caused by the port's own read window is
-  // dropped; a miss Django would also have hit is left alone.
+  // B12 DOES NOT REACH THIS FILE, and the comment that used to stand here
+  // said it did (github #13). The claim was that `row.latestNeed!`
+  // reproduced Django dereferencing a null latest_need and 500ing. That is
+  // true of the FIVE API views PLAN.md:7305 names -- gfapi1/views.py:143 and
+  // gfapi2/views.py:401,588 really do attribute-access None in Python and
+  // raise -- and it is false of every consumer of THIS function, all of which
+  // are HTML or markdown:
+  //
+  //   * givefood/utils/geo.py's find_locations() never dereferences it. The
+  //     location leg is a plain assignment, `location.latest_need =
+  //     location.foodbank.latest_need`, which stores None happily.
+  //   * wfbn/index.html resolves `location.latest_need.get_change_text`
+  //     through a TEMPLATE lookup, and Django templates swallow attribute
+  //     errors on None into string_if_invalid. Rendered against the real
+  //     template shape with latest_need=None it produces the empty branch,
+  //     not an exception -- run, not reasoned about.
+  //   * wfbn/foodbank/nearby.html does not mention latest_need at all, so
+  //     Django cannot fail there under any circumstance. The port computed
+  //     the field eagerly and 500d.
+  //
+  // So the port turned a blank cell into a 500 that took out the whole page:
+  // all twenty results, the donation-points tab and the by-item tab, on the
+  // site's primary function. `?? ""` and `?? null` below reproduce what
+  // Django's template actually renders.
+  //
+  // The `flatMap` guards above are a DIFFERENT rule and still stand: a row
+  // that is NOT FOUND is a window the two-phase port opened, and it is
+  // dropped. A row that is found with a null need is ordinary data, and it
+  // renders.
   return ranked.flatMap(({ item, distanceM }) => {
     if (item.kind === "organisation") {
       const row = foodbankById.get(item.coord.id);
@@ -121,8 +150,8 @@ export async function findLocations(
         phone_number: row.phone_number,
         contact_email: row.contact_email,
         facebook_page: row.facebook_page,
-        latest_need_change_text: row.latestNeed!.change_text,
-        latest_need_id: row.latestNeed!.id,
+        latest_need_change_text: row.latestNeed?.change_text ?? "",
+        latest_need_id: row.latestNeed?.id ?? null,
       };
     }
     const row = locationById.get(item.coord.id);
@@ -139,8 +168,8 @@ export async function findLocations(
       phone_number: phoneOrFoodbankPhone(row.phone_number, row.foodbank_phone_number),
       contact_email: emailOrFoodbankEmail(row.email, row.foodbank_email),
       facebook_page: parentFoodbank.facebook_page,
-      latest_need_change_text: parentFoodbank.latestNeed!.change_text,
-      latest_need_id: parentFoodbank.latestNeed!.id,
+      latest_need_change_text: parentFoodbank.latestNeed?.change_text ?? "",
+      latest_need_id: parentFoodbank.latestNeed?.id ?? null,
     };
   });
 }

@@ -1218,24 +1218,20 @@ describe("mdFoodbankNearby -- the list, which is the whole page", () => {
     expect(await res.text()).toBe("# Nearby - Salisbury Foodbank\n\n\n\n");
   });
 
-  // FROZEN BUG B12, reached through this route. findLocations dereferences
-  // `row.latestNeed!.change_text` for every winner -- including the parent of
-  // every winning location -- so a neighbour with no need row at all takes the
-  // whole page down with a TypeError. lib/findLocations.test.ts pins the
-  // throw; this pins what a CLIENT gets, which is a 500 on a page that has
-  // nothing to do with need text and never renders any.
-  //
-  // Documented, NOT endorsed: Django's find_locations() reads
-  // `foodbank.latest_need.change_text` against None and errors in the same
-  // place, so both sides of the migration fail loudly and identically.
-  it("SUSPECT: 500s the whole page when any listed neighbour has no need row", async () => {
-    vi.spyOn(console, "error").mockImplementation(() => {});
+  // github #13. This asserted a 500, on the grounds that "Django's
+  // find_locations() reads `foodbank.latest_need.change_text` against None and
+  // errors in the same place". It does not read it at all. The whole of
+  // geo.py:246-303 mentions latest_need exactly once, and it is an
+  // ASSIGNMENT: `location.latest_need = location.foodbank.latest_need`, which
+  // stores None without complaint. The claim was checked against the
+  // read-only Django source rather than inherited.
+  it("renders the whole page when a listed neighbour has no need row", async () => {
     db.prepare("UPDATE foodbank SET latest_need_id = NULL WHERE slug = 'wilton'").run();
 
     const res = await get("/md/needs/at/salisbury/nearby/");
-    expect(res.status).toBe(500);
-    expect(res.headers.get("Cache-Control")).toBeNull();
-    expect(await res.text()).not.toContain("Harnham Centre");
+
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain("Harnham Centre");
   });
 
   // THE OTHER SIDE OF THAT, and the asymmetry is the point. The SUBJECT food
