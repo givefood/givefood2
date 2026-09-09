@@ -65,6 +65,7 @@
 //    module's spliced boundary text AND the hand-built Point features
 //    around it), is both simpler and cheaper than normalising twice.
 import { pyJsonString } from "./pyJsonString";
+import { formatFloat } from "./float";
 
 // Mirrors Django's geojson_dict() (givefood/utils/geo.py): strip exactly
 // one trailing comma before doing anything else. Confirmed real, not
@@ -275,10 +276,53 @@ function isJsonWs(code: number): boolean {
 //     whitespace (none, or a multi-line indent) was already there;
 //   - every STRING literal (key or value) is decoded and re-encoded via
 //     pyJsonString, matching json.dumps's ensure_ascii=True.
-// Every number literal (including formatFloat's output, and every digit
-// of a stored boundary polygon's coordinates) is copied through
-// character-for-character, never touched -- this is a punctuation/string
-// pass, not a parse+reserialize, so it cannot collapse `51.0` to `51`.
+//   - every NUMBER literal outside a string is re-emitted the way
+//     json.dumps would print it (github #22).
+//
+// THE NUMBER CASE USED TO BE A PASS-THROUGH, and this comment used to state
+// the opposite invariant: "every number literal ... is copied through
+// character-for-character, never touched". That was safe for the numbers the
+// port GENERATES (formatFloat already prints them CPython's way, so copying
+// them through is a no-op) and wrong for the ones it SPLICES. A stored ONS
+// boundary is the raw file line -- gfadmin assigns it verbatim and the
+// pg-to-d1 extract copies it unmodified -- so its coordinates carry whatever
+// spelling the ONS generator used, while Django json.loads/json.dumps the
+// whole thing and re-prints every float through CPython's repr.
+//
+// Measured over the real 650 stored constituency features: 12 of them
+// differ, carrying 16 non-canonical tokens between them, in two shapes --
+// `-0.00006763445938537486`, which Python prints as `-6.763445938537486e-05`,
+// and `-4.658355775837418e-7`, which Python prints with a two-digit exponent
+// as `-4.658355775837418e-07`. Numerically identical, so no map moves; the
+// cost is that geo.json is in PLAN.md's STRICT byte-equality corpus where
+// "any difference fails the build".
+//
+// INTEGERS ARE STILL COPIED VERBATIM, deliberately: json.loads gives a
+// Python int for a token with no `.`/`e`, and Python ints are arbitrary
+// precision, so routing one through a double could lose digits a
+// pass-through preserves. The single exception is a bare `-0`, which
+// json.loads reads as the int 0 and json.dumps prints as `0`.
+//
+// NaN / Infinity / -Infinity are not matched and keep their pass-through,
+// which is already what json.dumps does with them.
+// JSON's own number grammar, which is narrower than JS's: no leading `+`,
+// no leading zeros, no hex, no bare `.5`. Anything else is not a number
+// token and falls through to the passes below untouched.
+const NUMBER_TOKEN = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/;
+
+// What json.dumps prints for one JSON number token.
+function pythonNumberLiteral(token: string): string {
+  // No `.`, `e` or `E` means json.loads produced an INT, and Python ints are
+  // arbitrary precision -- 12345678901234567890 survives a round trip there
+  // and would not survive a double here. So the digits are returned as they
+  // came, with the one exception json.loads collapses: `-0` is the int 0.
+  if (!/[.eE]/.test(token)) return token === "-0" ? "0" : token;
+  // A float: formatFloat is already CPython's repr, exponent thresholds and
+  // the e+16/e-05 two-digit spelling included (it is what the port's own
+  // generated coordinates go through).
+  return formatFloat(Number(token));
+}
+
 export function toDjangoJsonFormat(text: string): string {
   const out: string[] = [];
   let chunkStart = 0;
@@ -294,6 +338,20 @@ export function toDjangoJsonFormat(text: string): string {
       i = end;
       chunkStart = i;
       continue;
+    }
+    // A number literal, outside a string. Matched from the current position
+    // rather than scanned by hand so the token boundary is one regex rather
+    // than four conditions -- and anchored with ^ on a slice, since a bare
+    // `y` flag would carry state across the loop.
+    if (ch === "-" || (ch >= "0" && ch <= "9")) {
+      const token = NUMBER_TOKEN.exec(text.slice(i))?.[0];
+      if (token !== undefined) {
+        if (i > chunkStart) out.push(text.slice(chunkStart, i));
+        out.push(pythonNumberLiteral(token));
+        i += token.length;
+        chunkStart = i;
+        continue;
+      }
     }
     if (ch === "," || ch === ":") {
       out.push(text.slice(chunkStart, i + 1));

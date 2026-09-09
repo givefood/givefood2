@@ -39,14 +39,14 @@ const STORED_CONSTITUENCY =
 // A pretty-printed stored location row with NO "properties" key at all --
 // the other stored shape the header records, from an older pipeline.
 const STORED_LOCATION_PRETTY =
-  '{\n  "type": "Feature",\n  "geometry": {\n    "coordinates": [51.0, -1.50]\n  }\n}';
+  '{\n  "type": "Feature",\n  "geometry": {\n    "coordinates": [51.0, -1.5]\n  }\n}';
 
 // A pretty-printed stored constituency row that DOES have a properties
 // object. Used to prove the splices are byte-conservative: everything
 // outside the one span being written keeps its original indentation.
 const STORED_CONSTITUENCY_PRETTY =
   '{\n  "type": "Feature",\n  "properties": {\n    "PCON24CD": "W07000041"\n  },\n' +
-  '  "geometry": {\n    "coordinates": [[[-4.20000, 53.30]]]\n  }\n}';
+  '  "geometry": {\n    "coordinates": [[[-4.2, 53.3]]]\n  }\n}';
 
 describe("replaceBoundaryProperties", () => {
   it("replaces an existing properties object wholesale, in its original position", () => {
@@ -73,7 +73,7 @@ describe("replaceBoundaryProperties", () => {
     // left untouched by the splice, and the insertion landing immediately
     // before the closing brace rather than after the last value.
     expect(replaceBoundaryProperties(STORED_LOCATION_PRETTY, [["type", "lb"], ["name", "Hall"]])).toBe(
-      '{\n  "type": "Feature",\n  "geometry": {\n    "coordinates": [51.0, -1.50]\n  }\n' +
+      '{\n  "type": "Feature",\n  "geometry": {\n    "coordinates": [51.0, -1.5]\n  }\n' +
         ',"properties":{"type":"lb","name":"Hall"}}',
     );
   });
@@ -129,7 +129,7 @@ describe("replaceBoundaryProperties", () => {
     // JSON.stringify round trip turns `51.0` into `51` and `-1.50` into
     // `-1.5`; both would be a byte-parity failure on every boundary feed.
     const out = replaceBoundaryProperties(STORED_LOCATION_PRETTY, [["type", "lb"]]);
-    expect(out).toContain("[51.0, -1.50]");
+    expect(out).toContain("[51.0, -1.5]");
   });
 
   it("strips exactly one trailing comma, matching Django's geojson_dict", () => {
@@ -650,7 +650,7 @@ describe("setBoundaryPropertyType", () => {
     // closing brace.
     expect(setBoundaryPropertyType(STORED_CONSTITUENCY_PRETTY, "b")).toBe(
       '{\n  "type": "Feature",\n  "properties": {\n    "PCON24CD": "W07000041"\n  ,"type":"b"},\n' +
-        '  "geometry": {\n    "coordinates": [[[-4.20000, 53.30]]]\n  }\n}',
+        '  "geometry": {\n    "coordinates": [[[-4.2, 53.3]]]\n  }\n}',
     );
   });
 
@@ -829,22 +829,60 @@ describe("toDjangoJsonFormat", () => {
     expect(toDjangoJsonFormat('{"a":"\\u0000\\u0001\\u001f\\b\\f"}')).toBe('{"a": "\\u0000\\u0001\\u001f\\b\\f"}');
   });
 
-  it("never reformats a number, so 51.0 does not become 51", () => {
-    // The single most important property of this pass: it is punctuation
-    // and strings only. Python prints a round-tripped 51.0 as "51.0";
-    // JavaScript's JSON.stringify prints it as "51". A parse-based
-    // implementation would pass every other test in this file and still
-    // corrupt thousands of coordinates.
+  // github #22, with the tokens that actually caused it. These are lifted
+  // from the 12 real constituency boundaries that diverged -- Beckenham and
+  // Penge, Croydon East and the rest -- rather than invented, because the
+  // shapes are the whole finding: nothing in the corpus had a trailing zero,
+  // and the divergence was entirely small magnitudes that Python prints in
+  // exponent form, plus one-digit exponents that Python pads to two.
+  //
+  // Every expectation is python3's json.dumps(json.loads(token)).
+  it.each([
+    // Beckenham and Penge, at char 7871 of a 10,195-char body -- the first
+    // divergence found in the real data.
+    ["-0.00006763445938537486", "-6.763445938537486e-05"],
+    ["-0.00009874601421123357", "-9.874601421123357e-05"],
+    ["-0.0000692637605758801", "-6.92637605758801e-05"],
+    // Croydon East and East Surrey: already exponent form, but with a
+    // ONE-digit exponent, which Python pads.
+    ["-4.658355775837418e-7", "-4.658355775837418e-07"],
+    // The threshold either side: 1e-4 prints in full, 1e-5 does not.
+    ["0.0001", "0.0001"],
+    ["0.00001", "1e-05"],
+    // And the upper one, where Python switches to exponent form at 1e16.
+    ["1000000000000000.0", "1000000000000000.0"],
+    ["10000000000000000.0", "1e+16"],
+  ])("re-prints the real ONS token %s as %s, like json.dumps", (stored, expected) => {
+    expect(toDjangoJsonFormat(`{"c":[${stored}]}`)).toBe(`{"c": [${expected}]}`);
+  });
+
+  it("re-prints a number the way json.dumps would, so 51.0 does not become 51", () => {
+    // The property this pass has always had to protect: python3 prints a
+    // round-tripped 51.0 as "51.0" where JavaScript's JSON.stringify prints
+    // "51", so a naive parse+reserialize would corrupt thousands of
+    // coordinates. formatFloat is CPython's repr, so routing numbers through
+    // it keeps that property rather than costing it.
     expect(toDjangoJsonFormat('{"c":[51.0,-1.5,0]}')).toBe('{"c": [51.0, -1.5, 0]}');
     // Negative zero is the sharpest single case: JSON.stringify(-0) is "0",
     // losing the sign entirely, while python3 json.dumps(-0.0) is "-0.0".
     // A coordinate on the prime meridian or the equator really can be -0.0.
     expect(toDjangoJsonFormat('{"c":[-0.0,0.0]}')).toBe('{"c": [-0.0, 0.0]}');
-    // Digits are copied character-for-character, which also means a stored
-    // number that is NOT already in Python's repr form is passed through
-    // as-is: Python would print -1.50 as -1.5 and 1e10 as 10000000000.0.
-    // Pinning current behaviour -- see the note in this port's report.
-    expect(toDjangoJsonFormat('{"c":[-1.50,1e10,1E+10]}')).toBe('{"c": [-1.50, 1e10, 1E+10]}');
+    // github #22: these used to be pinned AS-IS -- "-1.50", "1e10", "1E+10"
+    // copied through character-for-character. That was right for numbers the
+    // port GENERATES (formatFloat already prints them Python's way) and wrong
+    // for the ones it SPLICES out of a stored ONS boundary, which carry
+    // whatever spelling the generator used while Django re-prints every float
+    // through repr. Every expectation here is python3's own
+    // json.dumps(json.loads(token)).
+    expect(toDjangoJsonFormat('{"c":[-1.50,1e10,1E+10]}')).toBe('{"c": [-1.5, 10000000000.0, 10000000000.0]}');
+    // INTEGERS ARE NOT ROUTED THROUGH A DOUBLE. json.loads gives a Python
+    // int, and Python ints are arbitrary precision -- this one does not
+    // survive a float64 and must be copied verbatim.
+    expect(toDjangoJsonFormat('{"c":[12345678901234567890]}')).toBe('{"c": [12345678901234567890]}');
+    // The one int json.loads does collapse: -0 is the int 0.
+    expect(toDjangoJsonFormat('{"c":[-0]}')).toBe('{"c": [0]}');
+    // A number inside a STRING is still a string, untouched by any of this.
+    expect(toDjangoJsonFormat('{"s":"-1.50"}')).toBe('{"s": "-1.50"}');
     // The three bare literals take the same copy-through path as numbers.
     expect(toDjangoJsonFormat('{"a":null,"b":true,"c":false}')).toBe('{"a": null, "b": true, "c": false}');
     // So do Python's three NON-STANDARD literals, and here the copy-through
@@ -912,12 +950,19 @@ describe("toDjangoJsonFormat", () => {
     // A real constituency boundary is up to 1.5 MB of coordinates, and this
     // pass walks every character of it. Both halves matter: the chunked
     // out[] accumulator must not be swapped for string concatenation in a
-    // recursive walk (stack overflow on the biggest 20 or so rows), and no
-    // trailing zero anywhere in those 40,000 numbers may be touched.
+    // recursive walk (stack overflow on the biggest 20 or so rows), and
+    // every one of those 40,000 numbers must come out as json.dumps prints
+    // it.
+    //
+    // github #22: the second ordinate is `.50`, which Python collapses to
+    // `.5` -- this test used to assert it survived, on the old
+    // copy-through. The FIRST ordinate is `.0`, which Python keeps, and
+    // that is the one whose survival still matters: it is what a naive
+    // parse+reserialize would destroy.
     const coords = Array.from({ length: 20000 }, (_, i) => `[${i}.0,${i}.50]`).join(",");
     const out = toDjangoJsonFormat(setBoundaryPropertyType(`{"geometry":{"coordinates":[${coords}]}}`, "b"));
-    expect(out.startsWith('{"geometry": {"coordinates": [[0.0, 0.50], [1.0, 1.50], ')).toBe(true);
-    expect(out.endsWith('[19999.0, 19999.50]]}, "properties": {"type": "b"}}')).toBe(true);
+    expect(out.startsWith('{"geometry": {"coordinates": [[0.0, 0.5], [1.0, 1.5], ')).toBe(true);
+    expect(out.endsWith('[19999.0, 19999.5]]}, "properties": {"type": "b"}}')).toBe(true);
     // Every one of the 20,000 ".0" first ordinates is still there.
     expect(out.match(/\.0,/g)).toHaveLength(20000);
   });
@@ -932,7 +977,7 @@ describe("the assembled geo.json boundary feature", () => {
     // last, and every coordinate digit exactly as it came out of D1.
     expect(toDjangoJsonFormat(setBoundaryPropertyType(STORED_CONSTITUENCY, "b"))).toBe(
       '{"type": "Feature", "properties": {"PCON24CD": "W07000041", "PCON24NM": "Ynys M\\u00f4n", "type": "b"}, ' +
-        '"geometry": {"type": "Polygon", "coordinates": [[[-4.20000, 53.30]]]}}',
+        '"geometry": {"type": "Polygon", "coordinates": [[[-4.2, 53.3]]]}}',
     );
     // The same stored row pretty-printed comes out byte-identical apart
     // from the fields it genuinely lacks: the splice leaves the indentation
@@ -940,7 +985,7 @@ describe("the assembled geo.json boundary feature", () => {
     // whole reason the two responsibilities are split.
     expect(toDjangoJsonFormat(setBoundaryPropertyType(STORED_CONSTITUENCY_PRETTY, "b"))).toBe(
       '{"type": "Feature", "properties": {"PCON24CD": "W07000041", "type": "b"}, ' +
-        '"geometry": {"coordinates": [[[-4.20000, 53.30]]]}}',
+        '"geometry": {"coordinates": [[[-4.2, 53.3]]]}}',
     );
   });
 
@@ -956,7 +1001,7 @@ describe("the assembled geo.json boundary feature", () => {
       ["url", "/needs/at/testville/st-johns-hall/"],
     ]);
     expect(toDjangoJsonFormat(spliced)).toBe(
-      '{"type": "Feature", "geometry": {"coordinates": [51.0, -1.50]}, ' +
+      '{"type": "Feature", "geometry": {"coordinates": [51.0, -1.5]}, ' +
         '"properties": {"type": "lb", "name": "St John\\u2019s Hall", "foodbank": "Testville", ' +
         '"url": "/needs/at/testville/st-johns-hall/"}}',
     );
@@ -991,7 +1036,7 @@ describe("the assembled geo.json boundary feature", () => {
     // any of the scanning, so the combination has to work in one pass.
     expect(toDjangoJsonFormat(setBoundaryPropertyType(`${STORED_CONSTITUENCY},`, "b"))).toBe(
       '{"type": "Feature", "properties": {"PCON24CD": "W07000041", "PCON24NM": "Ynys M\\u00f4n", "type": "b"}, ' +
-        '"geometry": {"type": "Polygon", "coordinates": [[[-4.20000, 53.30]]]}}',
+        '"geometry": {"type": "Polygon", "coordinates": [[[-4.2, 53.3]]]}}',
     );
   });
 });

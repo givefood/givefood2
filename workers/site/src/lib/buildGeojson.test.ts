@@ -171,8 +171,14 @@ function featureNames(body: string): string[] {
 
 // A stored boundary_geojson column, in the compact shape packages/serialise's
 // geojsonBoundary.ts records for production rows -- including a coordinate
-// written as "53.30" and one as "-4.20000", the trailing zeros that a
-// JSON.parse/JSON.stringify round trip would silently eat.
+// written as "53.30" and one as "-4.20000".
+//
+// Those trailing zeros used to be asserted as SURVIVORS, on the old
+// number-pass-through. github #22 changed that: Django json.loads/dumps the
+// whole body, so it prints -4.2 and 53.3, and the port now does too. The
+// fixture is kept in its non-canonical form precisely because it exercises
+// that -- and it is synthetic either way, since the real ONS data contains
+// no trailing-zero coordinates at all.
 const STORED_LOCATION_BOUNDARY =
   '{"type":"Feature","properties":{"stored":"gone"},"geometry":{"type":"Polygon","coordinates":[[[-4.20000,53.30]]]}}';
 
@@ -446,15 +452,17 @@ describe("buildGeojsonResponse: the food bank feed (/needs/at/<slug>/geo.json)",
     // "stored":"gone" key really is gone -- and "address" is absent from
     // the replacement dict even on an address-carrying feed, because the
     // Python literal (gfwfbn/views.py:290-295) has no address key.
-    // The "-4.20000"/"53.30" survivors are the byte-parity guard: a
-    // parse+re-serialize of the stored column would print -4.2 and 53.3.
+    // -4.2 / 53.3, not the stored -4.20000 / 53.30: json.dumps re-prints
+    // every float through CPython's repr, and github #22 made this pass do
+    // the same. The guard that remains is 51.0 NOT becoming 51 -- asserted
+    // in geojsonBoundary.test.ts, where the pass itself is tested.
     vi.mocked(getFoodbankBySlug).mockResolvedValue(makeFoodbank() as never);
     vi.mocked(getLocationsByFoodbankIdUnsorted).mockResolvedValue([
       makeLocation({ boundary_geojson: STORED_LOCATION_BOUNDARY }),
     ]);
 
     const body = (await buildGeojsonResponse(session, "en", { kind: "foodbank", slug: "testville" })) as string;
-    expect(body).toContain('"coordinates": [[[-4.20000, 53.30]]]');
+    expect(body).toContain('"coordinates": [[[-4.2, 53.3]]]');
     expect(body).toContain(
       '"properties": {"type": "lb", "name": "Church Hall", "foodbank": "Testville", ' +
         '"url": "/needs/at/testville/church-hall/"}',
@@ -584,7 +592,7 @@ describe("buildGeojsonResponse: the location feed (/needs/at/<slug>/<locslug>/ge
       '{"type": "FeatureCollection", "features": [{"type": "Feature", "properties": ' +
         '{"type": "lb", "name": "Church Hall", "foodbank": "Testville", ' +
         '"url": "/needs/at/testville/church-hall/"}, "geometry": {"type": "Polygon", ' +
-        '"coordinates": [[[-4.20000, 53.30]]]}}]}',
+        '"coordinates": [[[-4.2, 53.3]]]}}]}',
     );
   });
 

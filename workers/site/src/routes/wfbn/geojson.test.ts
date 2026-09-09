@@ -846,7 +846,7 @@ describe("wfbnFoodbankGeojson -- the body", () => {
 
     expect(body).toContain(
       '{"type": "Feature", "properties": {"type": "lb", "name": "Downton Hall", "foodbank": "Salisbury", ' +
-        '"url": "/needs/at/salisbury/downton/"}, "geometry": {"type": "Polygon", "coordinates": [[[-1.74000, 51.10]]]}}',
+        '"url": "/needs/at/salisbury/downton/"}, "geometry": {"type": "Polygon", "coordinates": [[[-1.74, 51.1]]]}}',
     );
     expect(body).not.toContain("stored");
     // The point form of that same location is what the all-items feed emits,
@@ -938,7 +938,7 @@ describe("wfbnFoodbankLocationGeojson", () => {
     expect(await getBody("/needs/at/salisbury/downton/geo.json")).toBe(
       '{"type": "FeatureCollection", "features": [' +
         '{"type": "Feature", "properties": {"type": "lb", "name": "Downton Hall", "foodbank": "Salisbury", ' +
-        '"url": "/needs/at/salisbury/downton/"}, "geometry": {"type": "Polygon", "coordinates": [[[-1.74000, 51.10]]]}}]}',
+        '"url": "/needs/at/salisbury/downton/"}, "geometry": {"type": "Polygon", "coordinates": [[[-1.74, 51.1]]]}}]}',
     );
   });
 
@@ -990,7 +990,7 @@ describe("wfbnConstituencyGeojson", () => {
     expect(await getBody("/needs/in/constituency/salisbury/geo.json")).toBe(
       '{"type": "FeatureCollection", "features": [' +
         '{"type": "Feature", "properties": {"PCON24CD": "E14001427", "PCON24NM": "Salisbury M\\u00f4n", "type": "b"}, ' +
-        '"geometry": {"type": "Polygon", "coordinates": [[[-1.80000, 51.10]]]}}, ' +
+        '"geometry": {"type": "Polygon", "coordinates": [[[-1.8, 51.1]]]}}, ' +
         '{"type": "Feature", "geometry": {"type": "Point", "coordinates": [-1.794568, 51.068812]}, ' +
         '"properties": {"type": "f", "name": "Salisbury Foodbank", "address": "1 High Street\\r\\nSP1 1AA", ' +
         '"url": "/needs/at/salisbury/"}}, ' +
@@ -1001,7 +1001,7 @@ describe("wfbnConstituencyGeojson", () => {
         '"properties": {"type": "l", "name": "Amesbury Centre", "foodbank": "Salisbury", ' +
         '"address": "2 Low Street\\r\\nSP4 7HQ", "url": "/needs/at/salisbury/amesbury/"}}, ' +
         '{"type": "Feature", "properties": {"type": "lb", "name": "Downton Hall", "foodbank": "Salisbury", ' +
-        '"url": "/needs/at/salisbury/downton/"}, "geometry": {"type": "Polygon", "coordinates": [[[-1.74000, 51.10]]]}}, ' +
+        '"url": "/needs/at/salisbury/downton/"}, "geometry": {"type": "Polygon", "coordinates": [[[-1.74, 51.1]]]}}, ' +
         '{"type": "Feature", "geometry": {"type": "Point", "coordinates": [-1.8, 51.09]}, ' +
         '"properties": {"type": "l", "name": "Alderbury Room", "foodbank": "Salisbury", ' +
         '"address": "11 Bell Street\\r\\nSP1 6VV", "url": "/needs/at/salisbury/st-thomas/"}}, ' +
