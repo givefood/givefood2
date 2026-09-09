@@ -1621,18 +1621,27 @@ describe("wfbnFoodbankDonationpointOpeninghours", () => {
     expect((await get("/needs/at/cardiff/donationpoint/glasgow-store/openinghours/")).status).toBe(404);
   });
 
-  // This route needs neither the need text nor the service area, so it must not
-  // pay for either -- two round trips saved on a fragment every donation point
-  // page fetches. One session, three statements, and no service-area count even
-  // though its food bank has locations.
-  it("reads only the food bank and the donation point, in one session", async () => {
+  // ONE STATEMENT (github #46). This asserted three, under a comment saying
+  // the route "needs neither the need text nor the service area, so it must
+  // not pay for either" -- which was half true: it had stopped paying for the
+  // service-area count, and was still paying for the food bank row AND its
+  // need, both of which it then ignored. `foodbank` was bound, null-checked
+  // and never read.
+  //
+  // The pairing check the deleted call appeared to provide is done by the
+  // remaining query, and structurally rather than by luck:
+  // foodbankdonationpoint_full derives foodbank_slug by LEFT JOIN, so
+  // `WHERE slug = ? AND foodbank_slug = ?` cannot match across food banks and
+  // cannot match at all when the parent is missing. The three 404 cases above
+  // -- unknown food bank, unknown donation point, donation point belonging to
+  // someone else -- are unchanged and still pass, which is the evidence that
+  // matters here; this test only says what it now costs.
+  it("reads only the donation point, in one statement and one session", async () => {
     await get("/needs/at/salisbury/donationpoint/tesco-extra/openinghours/");
 
     const queries = handlerQueries();
     expect(new Set(queries.map((q) => q.session)).size).toBe(1);
     expect(queries.map((q) => [q.sql, q.params])).toEqual([
-      ["SELECT * FROM foodbank WHERE slug = ?", ["salisbury"]],
-      ["SELECT * FROM foodbankchange_full WHERE id = (SELECT latest_need_id FROM foodbank WHERE slug = ?)", ["salisbury"]],
       ["SELECT * FROM foodbankdonationpoint_full WHERE slug = ? AND foodbank_slug = ?", ["tesco-extra", "salisbury"]],
     ]);
   });

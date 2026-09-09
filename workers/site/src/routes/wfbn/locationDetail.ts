@@ -5,7 +5,6 @@ import type { Context } from "hono";
 // third statement to compute a flag its template never reads.
 import {
   getDonationPointBySlugs,
-  getFoodbankBySlug,
   getFoodbankBySlugWithServiceArea,
   getFoodbankLocationBySlugs,
 } from "@givefood/db";
@@ -221,8 +220,23 @@ export async function wfbnFoodbankDonationpointOpeninghours(c: Context<AppEnv>):
   const slug = c.req.param("slug")!;
   const dpslug = c.req.param("dpslug")!;
   const session = dbSession(c);
-  const foodbank = await getFoodbankBySlug(session, slug);
-  if (!foodbank) return c.notFound();
+  // ONE ROUND TRIP, NOT THREE (github #46). This used to call
+  // getFoodbankBySlug first and then never look at the result: `foodbank`
+  // was bound, null-checked, and never read again. That call is two
+  // sequential trips of its own -- the row, then attachLatestNeed's need
+  // read -- so a fragment that needs one query was doing three, and the
+  // needcheck-sized need row was fetched and thrown away every time.
+  //
+  // THE 404 IS UNCHANGED, AND STRUCTURALLY SO, which is why the guard could
+  // go rather than being replaced with something cheaper.
+  // `foodbankdonationpoint_full` derives foodbank_slug by LEFT JOIN
+  // (`f.slug AS foodbank_slug`, 0019_drop_foodbank_cache.sql:78) rather than
+  // storing it, so `WHERE slug = ? AND foodbank_slug = ?` IS the pairing
+  // check: an unknown food bank matches no row, and a donation point whose
+  // parent is missing gets NULL from the LEFT JOIN, which never equals a
+  // non-null bind. Both 404 exactly as before, and the plan is all index
+  // lookups -- SEARCH f USING INDEX foodbank_slug_uniq, then SEARCH d USING
+  // INDEX dp_foodbank_slug_idx.
   const donationpoint = await getDonationPointBySlugs(session, slug, dpslug);
   if (!donationpoint) return c.notFound();
   if (!donationpoint.opening_hours) return c.notFound();
