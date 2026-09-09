@@ -428,21 +428,33 @@ describe("buildNeedPrompt -- the food bank page", () => {
     }
   });
 
-  it("does NOT HTML-escape the interpolated values -- a real divergence from Django", () => {
-    // DIVERGENCE, pinned rather than fixed. Django's TEMPLATES config uses
-    // the default autoescape=True, and render_to_string() does not care that
-    // this template is a .txt, so Django's live prompt contains
-    // "Beans &amp; Rice" / "&lt;b&gt;" / "&#x27;" wherever a page or a
-    // previous need contains &, <, > or a quote. This port emits the raw
-    // characters. Verified by rendering the real template with the same
-    // input.
+  it("does NOT HTML-escape the interpolated values -- a DECIDED divergence from Django", () => {
+    // SETTLED 2026-09-09 (github #17). This comment used to end "reported
+    // upstream rather than changed here" -- a test awaiting a decision. The
+    // decision is: keep the raw characters, and write the divergence down.
     //
-    // Arguably the port is the better behaviour -- the prompt itself says
-    // 'Do not replace "&" with "and" ... Keep ampersands as written', and
-    // "Tea & Coffee" is extremely common on real shopping lists -- but it IS
-    // a difference in the bytes the model sees, which is exactly what the
-    // module header says must not happen by accident. Reported upstream
-    // rather than changed here.
+    // Django's TEMPLATES config passes no "autoescape" key, so it defaults
+    // to True, and render_to_string() does not care that this template is a
+    // .txt -- the extension only changes autoescaping for the Jinja2
+    // backend, not Django's own. Django's live prompt therefore contains
+    // "Beans &amp; Rice", "&lt;b&gt;" and "&#x27;" wherever a page or a
+    // previous need carries & < > " or '. Re-verified for #17 by rendering
+    // the real gfoffline template through Django 5.2.6 standalone.
+    //
+    // WHY THE PORT'S BEHAVIOUR IS THE ONE THAT SHIPS. The escaped form
+    // argues with the prompt it is embedded in: three lines of that same
+    // prompt say "copy out, verbatim", "keeping each item's own words
+    // intact", and 'Do not replace "&" with "and" ... Keep ampersands as
+    // written'. Feeding the model &amp; and then telling it to copy verbatim
+    // invites it to echo the entity, and the prompt's "Use Title Case" rule
+    // turns that into "&Amp;" -- which python3's html.unescape does NOT
+    // decode, so stage 7's cleanFoodbankNeedText cannot undo it and the
+    // entity reaches published need text.
+    //
+    // The cost was paid where it belongs: PLAN.md §8.5.7's byte-identical
+    // hard gate is amended to normalise these five entities, rather than
+    // being left to fail on ~100% of its 200 samples for a chosen reason.
+    // This test is what keeps the choice from being reversed by accident.
     const page = "Beans & Rice <b>bold</b> \"quoted\" 'apos'";
     const prompt = build({
       foodbankPage: page,
@@ -451,11 +463,19 @@ describe("buildNeedPrompt -- the food bank page", () => {
     expect(prompt).toContain(`\n    ${page}\n`);
     expect(prompt).toContain("Previously needed:\nTea & Coffee\n");
     expect(prompt).toContain("Previously in excess:\nSoup & Stew\n");
-    // The five entities Django's escape() would have produced. Checked
-    // against the whole prompt, so a partial escaping of only one of the
-    // three interpolation sites still fails.
+    // The five entities Django's escape() would have produced, in its own
+    // order (& first, so the entities it introduces are not re-escaped) and
+    // with &#x27; rather than &apos; -- both confirmed against a real
+    // django.utils.html.escape. Checked against the WHOLE prompt, so
+    // escaping only one of the three interpolation sites still fails.
     for (const entity of ["&amp;", "&lt;", "&gt;", "&quot;", "&#x27;"]) {
       expect(prompt).not.toContain(entity);
+    }
+    // And the raw characters really are all present -- without this the
+    // assertions above would pass just as happily on a prompt that had
+    // STRIPPED them instead of leaving them alone.
+    for (const raw of ["&", "<", ">", '"', "'"]) {
+      expect(prompt, raw).toContain(raw);
     }
   });
 

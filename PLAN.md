@@ -8730,7 +8730,11 @@ Five Django templates are rendered through `render_to_string()` and drive model 
 The wider migration counts "150 HTML templates". The real figure is **181 template files** — 149 `.html`, 16 `.txt`, 10 `.md`, 6 `.xml` — and these five `.txt` files carry the strictest fidelity requirement of any of them.
 
 > **Acceptance criterion for the prompt-template port (hard gate on Phase 5):**
-> Render `foodbank_need_prompt.txt` through both engines for **200 sampled food banks** with identical context, and assert the outputs are **byte-identical**. Then run the full extraction against both and assert `need_items_key(needed)` is identical for all 200. Anything less and you are changing model behaviour without knowing it.
+> Render `foodbank_need_prompt.txt` through both engines for **200 sampled food banks** with identical context, and assert the outputs are **byte-identical after normalising Django's autoescaping** — see below. Then run the full extraction against both and assert `need_items_key(needed)` is identical for all 200. Anything less and you are changing model behaviour without knowing it.
+>
+> **⚠️ AMENDED 2026-09-09 (github #17). Raw byte-identity cannot hold and never could.** Django's `settings.py:118-135` passes no `autoescape` key, so it defaults to `True`, and `render_to_string()` applies it regardless of the `.txt` extension (that only changes autoescaping for the Jinja2 backend). Django's prompt therefore contains `Tea &amp; Coffee`, `We&#x27;re short of` and `&quot;UHT&quot;` at the three interpolation sites — for essentially every food bank, since apostrophes are ordinary prose and "Tea & Coffee" is one of the commonest lines in the corpus. **The port deliberately does not escape**, because the escaped form contradicts three of the prompt's own instructions ("copy out, verbatim", "keeping each item's own words intact", `Do not replace "&" with "and" … Keep ampersands as written`), and because the prompt's Title Case rule turns an echoed `&amp;` into `&Amp;`, which Python's `html.unescape` does **not** decode — so the entity would survive stage 7 into published need text.
+>
+> So the harness **normalises Django's `escape()` output before comparing** — mapping `&amp; &lt; &gt; &quot; &#x27;` back to `& < > " '` on the Django side only — or equivalently asserts that the only differences are those five substitutions at those three sites. Asserting raw identity would hard-fail on ~100% of the 200 samples for a known and chosen reason, which would make the gate useless for catching the regression it exists to catch. The divergence is recorded at `workers/jobs/src/needcheck/prompt.ts`'s header and pinned by `prompt.test.ts`.
 
 #### 8.5.8 Cost
 
@@ -8755,7 +8759,9 @@ pnpm needparity --record ./baseline/needcheck/ --sample 200 --stack django
 pnpm needparity --compare ./baseline/needcheck/ --stack worker
 
 # Asserts, in order of severity:
-#   - prompt bytes identical                (hard fail)
+#   - prompt bytes identical, after normalising Django's autoescaping
+#                                           (hard fail -- see the amendment
+#                                            in §8.5.7; github #17)
 #   - need_items_key(needed) identical      (hard fail)
 #   - need_items_key(excess) identical      (hard fail)
 #   - change_state array identical          (hard fail)

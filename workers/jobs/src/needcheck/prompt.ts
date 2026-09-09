@@ -11,6 +11,39 @@
 // values. Do not hand-edit the constants below without re-verifying the
 // same way.
 //
+// WITH ONE DELIBERATE EXCEPTION, DECIDED AND NOT INHERITED: THIS DOES NOT
+// HTML-ESCAPE (github #17). "Byte-for-byte" above is true of the template's
+// STRUCTURE and false at its three interpolation sites. Django's
+// settings.py:118-135 passes no "autoescape" key, so autoescape defaults to
+// True and render_to_string applies it -- the .txt extension is irrelevant
+// for the Django backend, unlike Jinja2 -- and Django's live prompt
+// therefore contains "Tea &amp; Coffee", "We&#x27;re short of" and
+// "&quot;UHT&quot;" wherever a page or a previous need carries & < > " or '.
+// Confirmed by rendering the real gfoffline template standalone, not
+// inferred: escape() maps, in order, & -> &amp;, < -> &lt;, > -> &gt;,
+// " -> &quot;, ' -> &#x27; (note &#x27;, not &apos;). That is essentially
+// every food bank -- apostrophes are ordinary English prose and "Tea &
+// Coffee" is one of the commonest lines in the corpus.
+//
+// The port sends the raw characters, on purpose. The escaped form fights
+// the prompt's own instructions, which are three lines of this same file:
+// "copy out, verbatim", "keeping each item's own words intact", and
+// line 40's 'Do not replace "&" with "and" ... Keep ampersands as written'.
+// Handing the model &amp; and then telling it to copy verbatim invites it to
+// echo the entity back -- and the "Use Title Case" rule turns that into
+// "&Amp;", which Python's html.unescape does NOT decode (only &amp; and
+// &AMP; do), so stage 7's cleanFoodbankNeedText cannot undo it and the
+// entity reaches published need text. Verified in python3.
+//
+// THE COST OF THE CHOICE, so it is not rediscovered as a bug: the Phase 5
+// hard gate at PLAN.md §8.5.7 asked for byte-identical prompts across the
+// two engines. It cannot hold, and §8.5.7 now says so -- the needparity
+// harness normalises those five entities before comparing rather than
+// asserting raw identity that would fail on ~100% of the 200 samples for a
+// known and chosen reason. prompt.test.ts pins the unescaped behaviour with
+// the entity list, so re-adding escaping is a test failure rather than a
+// silent reversal.
+//
 // Not run through @givefood/templates' Nunjucks pipeline: that package
 // exists for HTML page rendering (with i18n, page context, precompilation
 // for the site Worker) and pulling it into this Worker for one plain-text,
