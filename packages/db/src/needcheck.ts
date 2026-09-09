@@ -41,12 +41,19 @@ export async function getFoodbankForNeedCheck(session: Session, foodbankId: numb
     .first<OpenFoodbankRow>();
 }
 
-export async function findCrawlSetByRunId(session: Session, runId: string): Promise<{ id: number } | null> {
-  return session.prepare("SELECT id FROM crawlset WHERE run_id = ?1").bind(runId).first<{ id: number }>();
+// `start` comes back alongside the id so a caller that lost the answer to
+// its own INSERT can tell whether the row it now sees is the one it wrote --
+// see getOrCreateCrawlSet in workers/jobs/src/scheduled/index.ts.
+export async function findCrawlSetByRunId(session: Session, runId: string): Promise<{ id: number; start: string } | null> {
+  return session.prepare("SELECT id, start FROM crawlset WHERE run_id = ?1").bind(runId).first<{ id: number; start: string }>();
 }
 
-export async function insertCrawlSet(session: Session, crawlType: string, runId: string | null): Promise<number> {
-  const now = pyNow();
+// `start` is a parameter, not just pyNow(), so a retrying caller can reuse
+// the timestamp from its first attempt: that keeps the recorded start honest
+// (the run did begin then) AND makes the value a stable ownership token it
+// can match against on re-read.
+export async function insertCrawlSet(session: Session, crawlType: string, runId: string | null, start?: string): Promise<number> {
+  const now = start ?? pyNow();
   const result = await session
     .prepare("INSERT INTO crawlset (crawl_type, run_id, start) VALUES (?1, ?2, ?3)")
     .bind(crawlType, runId, now)

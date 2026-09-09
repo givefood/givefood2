@@ -472,11 +472,25 @@ describe("getFoodbankForNeedCheck", () => {
 // ---------------------------------------------------------------------------
 
 describe("findCrawlSetByRunId", () => {
-  it("finds the run's crawl set and returns only its id", async () => {
-    const id = await insertCrawlSet(session, "need", "needcheck-2026-09-05T07:45");
+  // WAS "returns only its id" until 2026-09-09. `start` is now selected too,
+  // and deliberately so: getOrCreateCrawlSet compares it against the
+  // timestamp it passed to its own INSERT, which is how a retry after a
+  // committed-but-unacknowledged write tells its own row apart from a
+  // concurrent invocation's. Widened rather than deleted so the shape stays
+  // pinned -- a future "select fewer columns" tidy-up would break the cron's
+  // crash recovery silently.
+  it("finds the run's crawl set and returns its id and start", async () => {
+    const id = await insertCrawlSet(session, "need", "needcheck-2026-09-05T07:45", "2026-09-05 07:45:00.123000");
 
     const found = await findCrawlSetByRunId(session, "needcheck-2026-09-05T07:45");
-    expect(found).toEqual({ id });
+    expect(found).toEqual({ id, start: "2026-09-05 07:45:00.123000" });
+  });
+
+  // The ownership check is only as good as `start` round-tripping verbatim.
+  it("returns the start exactly as insertCrawlSet wrote it", async () => {
+    await insertCrawlSet(session, "need", "needcheck-2026-09-06T07:45", "2026-09-06 07:45:09.000000");
+
+    expect((await findCrawlSetByRunId(session, "needcheck-2026-09-06T07:45"))!.start).toBe("2026-09-06 07:45:09.000000");
   });
 
   // The common case, and the one the whole cron depends on: a first delivery

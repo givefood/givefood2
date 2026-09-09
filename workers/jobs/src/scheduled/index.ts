@@ -17,6 +17,7 @@ import {
   updateDaysBetweenNeeds,
   type Session,
 } from "@givefood/db";
+import { pyNow } from "@givefood/models";
 import type { NeedcheckRenderMessage } from "../queues/needcheckRender";
 import type { ArticlesMessage } from "../queues/articles";
 import type { CharityMessage } from "../queues/charity";
@@ -85,22 +86,89 @@ function cronRunId(prefix: string, scheduledTime: number): string {
 // "already exists" outcome rather than an unhandled rejection inside
 // ctx.waitUntil -- nothing has been enqueued yet at this point either way.
 // Returns null when this invocation should no-op (a duplicate delivery).
-async function getOrCreateCrawlSet(session: Session, crawlType: string, runId: string, label: string): Promise<number | null> {
+//
+// RETRIES THE INSERT, because on 2026-09-09 not retrying cost a whole day
+// of data twice. charityinfo (05:30) and needcheck (15:00) both died here
+// with "D1_ERROR: D1 DB storage operation exceeded timeout which caused
+// object to be reset" -- a transient fault in D1's storage layer, on the
+// primary (the find-by-run_id read just above succeeded both times, since
+// withSession("first-unconstrained") lets a read serve from a replica while
+// every write goes to the primary). Different script versions nine hours
+// apart, so not a code regression. Cron Triggers do not retry, so one blip
+// on the first statement lost the entire sweep: zero of 1,023 food banks
+// crawled, and needcheck recorded 0 need updates that day against 14-32 on
+// every other day.
+//
+// THE WRITE HAD ACTUALLY COMMITTED. Only the acknowledgement timed out, so
+// crawlset kept a row for the run that never happened -- which then blocked
+// its own recovery, because the find-by-run_id above would report it as a
+// duplicate delivery and skip. That is why a bare `retry the INSERT` is the
+// wrong fix: the retry hits crawlset_runid_uniq, takes the "lost the race"
+// path, and no-ops exactly as before. The recovery has to RE-READ and adopt
+// the row this invocation already wrote.
+//
+// Distinguishing "my write landed" from "a concurrent invocation beat me"
+// is what `start` is for. It is generated once, before the first attempt,
+// reused verbatim by every retry, and compared on re-read. A row carrying
+// our own start is ours to continue with; any other value belongs to a
+// genuine concurrent delivery and we still skip. Two distinct invocations
+// would have to generate the same millisecond to confuse this, and the
+// residual risk is deliberately biased the safe way round: a false "not
+// mine" costs one skipped run (today's behaviour), while a false "mine"
+// would double-crawl every food bank.
+const CRAWLSET_INSERT_ATTEMPTS = 3;
+const CRAWLSET_RETRY_BASE_MS = 1_000;
+
+// Exported for workers/jobs/src/scheduled/index.test.ts -- this is the
+// function whose un-retried failure lost 2026-09-09, so its recovery paths
+// are tested directly rather than through handleScheduled's queue plumbing.
+export async function getOrCreateCrawlSet(session: Session, crawlType: string, runId: string, label: string): Promise<number | null> {
   const existing = await findCrawlSetByRunId(session, runId);
   if (existing) {
     console.log(`${label}: crawlset for ${runId} already exists (id ${existing.id}) -- duplicate cron delivery, skipping`);
     return null;
   }
-  try {
-    return await insertCrawlSet(session, crawlType, runId);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    if (message.includes("UNIQUE constraint failed")) {
-      console.log(`${label}: crawlset for ${runId} was just created by a concurrent invocation -- lost the race, skipping`);
-      return null;
+
+  // One timestamp for the whole loop -- see the ownership note above.
+  const start = pyNow();
+
+  for (let attempt = 1; attempt <= CRAWLSET_INSERT_ATTEMPTS; attempt++) {
+    try {
+      return await insertCrawlSet(session, crawlType, runId, start);
+    } catch (err) {
+      // Re-read before deciding anything, including on a UNIQUE violation:
+      // after a retry, that constraint fires on OUR OWN committed-but-
+      // unacknowledged row just as readily as on a competitor's.
+      const landed = await findCrawlSetByRunId(session, runId).catch(() => null);
+      if (landed) {
+        if (landed.start === start) {
+          console.log(`${label}: insert for ${runId} threw but had committed (id ${landed.id}) -- adopting it and continuing`);
+          return landed.id;
+        }
+        console.log(`${label}: crawlset for ${runId} was created by a concurrent invocation -- lost the race, skipping`);
+        return null;
+      }
+
+      // Nothing landed, so the write genuinely failed. A UNIQUE violation
+      // with no row to show for it is self-contradictory -- do not retry
+      // into it, and do not claim the run either.
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.includes("UNIQUE constraint failed")) {
+        console.error(`${label}: UNIQUE violation for ${runId} but no row found on re-read -- skipping`);
+        return null;
+      }
+
+      if (attempt === CRAWLSET_INSERT_ATTEMPTS) {
+        console.error(`${label}: crawlset insert for ${runId} failed ${attempt} times, giving up`, err);
+        throw err;
+      }
+      console.warn(`${label}: crawlset insert for ${runId} failed (attempt ${attempt}/${CRAWLSET_INSERT_ATTEMPTS}), retrying`, err);
+      await new Promise((resolve) => setTimeout(resolve, CRAWLSET_RETRY_BASE_MS * attempt));
     }
-    throw err;
   }
+
+  // Unreachable: the final attempt either returns or throws.
+  return null;
 }
 
 // sendBatch caps at 100 messages / 256 KB per call. Each chunk is
