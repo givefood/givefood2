@@ -97,9 +97,15 @@ const NOW_PY = "2026-09-08 09:30:00.000000";
 const SALT = "test-subscriber-salt";
 
 /** The keys FoodbankSubscriber.save()'s port must mint at NOW with `salt`. */
+// The nonce lib/subscriberKeys.ts mints per call. Stubbed to a constant in
+// beforeEach so these keys stay predictable; the point of the real one is
+// that it is NOT, which is exactly what stops two same-millisecond
+// subscribers minting the same key (github #27).
+const NONCE = "00000000-0000-4000-8000-000000000000";
+
 function expectedKeys(salt: string, iso: string = NOW_ISO): { subKey: string; unsubKey: string } {
   const hash = (input: string) => createHash("sha256").update(input, "utf8").digest("hex").slice(0, 16);
-  return { subKey: hash(`sub-${iso}-${salt}`), unsubKey: hash(`unsub-${iso}-${salt}`) };
+  return { subKey: hash(`sub-${iso}-${NONCE}-${salt}`), unsubKey: hash(`unsub-${iso}-${NONCE}-${salt}`) };
 }
 
 type Bindable = null | number | bigint | string | Uint8Array;
@@ -346,6 +352,7 @@ function seedJerseySubscriber(): void {
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"], now: NOW });
+  vi.spyOn(crypto, "randomUUID").mockReturnValue(NONCE);
   db = new DatabaseSync(":memory:");
   // schemaFor, never hand-written DDL. All three subscriber lookups read
   // through the `foodbanksubscriber_full` VIEW and getFoodbankBySlug reads
@@ -1174,32 +1181,60 @@ describe("subscribing an address that is already subscribed", () => {
     expect(mails()).toEqual([]);
   });
 
-  it("MISREPORTS a sub_key collision as a duplicate address -- suspect, pinned as-is", async () => {
-    // SUSPECT. The catch matches on the string "UNIQUE constraint failed",
-    // which foodbanksubscriber has FOUR indexes able to raise: the
-    // (email, foodbank_id) one the comment names, plus sub_key_idx,
-    // unsub_key_idx and the primary key. Here a DIFFERENT person's address
-    // collides on sub_key -- and the handler tells them they are already
-    // subscribed, which is false, and writes nothing, so they can never
-    // subscribe at all.
-    //
-    // Not hypothetical. Both keys derive from `new Date().toISOString()`,
-    // which is MILLISECOND precision; Django's `timezone.now()` interpolates
-    // as `str(datetime)` with MICROSECOND precision (2026-09-08
-    // 09:30:00.123456, run under Django 5.2.6 in the reference venv). The port
-    // therefore has a thousand times Django's collision window, and two people
-    // subscribing to any two food banks in the same millisecond -- with the
-    // same salt, which is global -- mint identical keys. This test stages
-    // exactly that by seeding the colliding key first.
+  // WAS "MISREPORTS a sub_key collision as a duplicate address -- suspect,
+  // pinned as-is". Fixed in github #27, in two halves.
+  //
+  // The cause: this route minted keys with its own un-extracted copy of
+  // generateSubUnsubKeys, hashing `sub-<toISOString()>-<salt>` with NO
+  // nonce. toISOString() is MILLISECOND resolution and the salt is global,
+  // so two different people subscribing in the same millisecond -- to any
+  // two food banks -- minted byte-identical sub_keys. Django cannot do this:
+  // timezone.now() interpolates at microsecond resolution, and Django has no
+  // uniqueness on sub_key at all (subscribers.py:27-32 declares only
+  // unique_together('email','foodbank')). The port was a thousand times more
+  // likely to repeat the hash input while being the only one of the two that
+  // constrained it.
+  //
+  // The route now calls lib/subscriberKeys.ts, whose per-call
+  // crypto.randomUUID() nonce makes the input distinct regardless of clock
+  // resolution -- see "mints different keys for two subscribers in the same
+  // millisecond" below, which is the guard that matters.
+  //
+  // This test survives to pin the FAILURE MODE if a key collision ever
+  // happens anyway: a 500 the maintainer can see, not a false "you are
+  // already subscribed" the visitor believes and acts on by giving up.
+  it("500s on a sub_key collision rather than calling it a duplicate address", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
     const keys = expectedKeys(SALT);
     seedSubscriber({ id: 900, foodbankId: JERSEY, email: "someone-else@example.org", subKey: keys.subKey, unsubKey: "unsubkeyother001" });
 
     const res = await subscribe("salisbury", { email: "new@example.org" });
 
-    expect(res.status).toBe(200);
-    expect(messageOf(await res.text())).toBe(ALREADY);
+    expect(res.status).toBe(500);
+    // Not written, and -- the point -- not told a comforting lie either.
     expect(subscribers().map((r) => r.email)).toEqual(["pat@example.org", "alex@example.org", "pat@example.org", "someone-else@example.org"]);
     expect(mails()).toEqual([]);
+    errors.mockRestore();
+  });
+
+  // THE FIX ITSELF. Un-stubs the nonce so the real crypto.randomUUID() runs,
+  // freezes the clock so both subscribers share a millisecond, and shows the
+  // keys still differ. Under the old nonce-free helper these two inserts
+  // minted the same sub_key and the second one failed.
+  it("mints different keys for two subscribers in the same millisecond", async () => {
+    vi.mocked(crypto.randomUUID).mockRestore();
+
+    const first = await subscribe("salisbury", { email: "one@example.org" });
+    const second = await subscribe("salisbury", { email: "two@example.org" });
+
+    expect([first.status, second.status]).toEqual([200, 200]);
+    const added = subscribers().filter((r) => r.email === "one@example.org" || r.email === "two@example.org");
+    expect(added).toHaveLength(2);
+    expect(added[0]!.sub_key).not.toBe(added[1]!.sub_key);
+    expect(added[0]!.unsub_key).not.toBe(added[1]!.unsub_key);
+    // Both were told the truth, and both got their confirmation mail.
+    expect(messageOf(await second.text())).toContain("not quite done yet");
+    expect(mails()).toHaveLength(2);
   });
 
   it("re-throws any OTHER D1 failure instead of calling it a duplicate", async () => {

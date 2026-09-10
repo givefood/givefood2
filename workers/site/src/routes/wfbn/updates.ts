@@ -16,31 +16,13 @@ import { elapsedMs } from "../../middleware/serverTiming";
 import { CHARITY_DETAIL_COUNTRIES, EMAIL_RE, fullNameLocaleAware } from "@givefood/models";
 import { validateTurnstile } from "../../lib/turnstile";
 import { sendEmail as sendEmailShared } from "../../lib/email";
+import { generateSubUnsubKeys } from "../../lib/subscriberKeys";
 
 // gfwfbn `updates` (re_path /needs/at/<slug>/updates/(subscribe|confirm|
 // unsubscribe)/, i18n-patterned, namespace wfbn, route name "updates").
 // Ported from gfwfbn/views.py:1100-1200 -- ONE handler for all three
 // actions via the :action route param, matching Django's single regex +
 // kwarg dispatch rather than three separate Hono routes.
-
-async function sha256Hex(input: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
-  return Array.from(new Uint8Array(digest))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
-
-// FoodbankSubscriber.save() (givefood/models/subscribers.py:44-57) --
-// sub_key/unsub_key are each the first 16 hex chars of a SHA-256 hash of
-// "sub-<now>-<salt>" / "unsub-<now>-<salt>". PLAN.md's risk register (N1)
-// confirms the salt only affects *newly-minted* keys' format-consistency,
-// never lookups -- SUBSCRIBER_SALT missing degrades to "" rather than
-// throwing.
-async function generateSubUnsubKeys(salt: string): Promise<{ subKey: string; unsubKey: string }> {
-  const subHash = await sha256Hex(`sub-${new Date().toISOString()}-${salt}`);
-  const unsubHash = await sha256Hex(`unsub-${new Date().toISOString()}-${salt}`);
-  return { subKey: subHash.slice(0, 16), unsubKey: unsubHash.slice(0, 16) };
-}
 
 // wfbn/emails/confirm.txt / confirm.html, ported verbatim (copy and
 // links). Both now render through emails/page.njk, the same shell their
@@ -147,7 +129,23 @@ export async function wfbnFoodbankUpdates(c: Context<AppEnv>): Promise<Response>
           unsubKey,
         });
       } catch (err) {
-        if (err instanceof Error && err.message.includes("UNIQUE constraint failed")) {
+        // MATCHES THE EMAIL INDEX SPECIFICALLY, not any "UNIQUE constraint
+        // failed" (github #27). foodbanksubscriber has four unique indexes
+        // able to raise that string, and only sub_email_fb_uniq means what
+        // the message below says. Telling someone who has never subscribed
+        // that they already have is a lie they act on -- they stop trying --
+        // so anything else re-throws and 500s where the maintainer can see
+        // it. The nonce in generateSubUnsubKeys should make a key collision
+        // unreachable; this is what happens if it ever is not.
+        //
+        // SQLite names the COLUMNS, not the index: verified against
+        // node:sqlite on this exact schema, an (email, foodbank_id) clash
+        // raises "UNIQUE constraint failed: foodbanksubscriber.email,
+        // foodbanksubscriber.foodbank_id" while a key clash raises
+        // "...foodbanksubscriber.sub_key". Matching the index NAME would
+        // never fire and would turn every ordinary repeat submission into a
+        // 500, so the column name is the discriminator.
+        if (err instanceof Error && err.message.includes("foodbanksubscriber.email")) {
           inserted = false;
         } else {
           throw err;

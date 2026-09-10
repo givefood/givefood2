@@ -1,10 +1,15 @@
 // FoodbankSubscriber.save() (givefood/models/subscribers.py:44-57) --
 // sub_key/unsub_key are each the first 16 hex chars of a SHA-256 hash of
 // "sub-<now>-<salt>" / "unsub-<now>-<salt>". Extracted from
-// routes/wfbn/updates.ts:26-43, which had the only copy, so that the admin's
-// bulk-add page (routes/admin/foodbankAddSub.ts, porting
-// gfadmin/views.py:1594-1612) mints keys through the same implementation
-// rather than a second one that drifts.
+// routes/wfbn/updates.ts:26-43 so that the admin's bulk-add page
+// (routes/admin/foodbankAddSub.ts, porting gfadmin/views.py:1594-1612) mints
+// keys through the same implementation rather than a second one that drifts.
+//
+// THE EXTRACTION IS NOW COMPLETE. This header used to say updates.ts "had
+// the only copy", which was false the moment the extraction landed: the copy
+// stayed behind and the public subscribe form -- the highest-traffic minting
+// path on the site -- went on calling it, nonce-free, until github #27.
+// Both call sites reach this module now, and it is the only implementation.
 //
 // WHY THE NONCE. Django's helper is safe in a loop only because
 // timezone.now() is microsecond-resolution AND each .save() is its own

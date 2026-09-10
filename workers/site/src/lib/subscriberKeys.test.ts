@@ -161,8 +161,9 @@ describe("generateSubUnsubKeys", () => {
     // module against a string this test just built with the module's own
     // helper proves only that two hyphens differ, and would still "pass" if
     // BOTH implementations were wrong in the same way. These two constants
-    // are also, exactly, what the un-extracted duplicate still living at
-    // routes/wfbn/updates.ts:39-42 mints for this instant and salt.
+    // are also, exactly, what the nonce-free helper that used to live at
+    // routes/wfbn/updates.ts:39-42 minted for this instant and salt -- that
+    // duplicate is gone (github #27) and both call sites reach this module.
     freezeClock();
     const keys = await generateSubUnsubKeys(SALT, NONCE);
     const DJANGO_SUB = "c65cac693261b827";
@@ -317,8 +318,10 @@ describe("generateSubUnsubKeys", () => {
     // out the subscribe form. The one call site that reaches THIS module
     // passes `c.env.SUBSCRIBER_SALT ?? ""` (foodbankAddSub.ts:108), so "" is
     // the exact value that arrives in production when the secret is absent.
-    // (updates.ts:131 uses the same `?? ""` idiom, but still calls its own
-    // un-extracted copy at updates.ts:39-42 -- see the divergence test.)
+    // (updates.ts's subscribe handler uses the same `?? ""` idiom and now
+    // reaches this module too, since github #27 deleted its private copy.
+    // Note it passes the salt only -- never a nonce, so the default fires;
+    // the empty-nonce test below is why that matters.)
     // The template is not conditionally trimmed, so the trailing hyphen
     // survives -- which these Python-computed digests pin.
     freezeClock();
