@@ -262,6 +262,21 @@ describe("adminDonationPointForm -- the (foodbank, name) uniqueness check", () =
       expect(errorBanner(html)).toBe(DUPLICATE_ERROR);
     });
 
+    // The class static/js/admin.js:106 selects on, asserted through the REAL
+    // route so the title expression is exercised rather than a hardcoded
+    // string. Interpolating the food bank name into page_title once produced
+    // `form-new-brixton-food-bank-donation-point`, which matches neither of
+    // the script's two selectors, and silently disabled both the "Lookup
+    // Donation Point" button and the company auto-select (fixed 3b31087;
+    // the auto-select was reported again as github #57).
+    it("renders the form class admin.js selects on", async () => {
+      seed(BRIXTON.id, "Tesco Extra", "tesco-extra", "51.4700,-0.1300");
+      const { html } = await post("/admin/foodbank/brixton/donationpoint/new/", TYPED);
+
+      expect(html).toContain('class="form-new-donation-point"');
+      expect(html).not.toMatch(/class="form-new-[a-z-]*-donation-point"/);
+    });
+
     it("gives the admin back every value they typed", async () => {
       seed(BRIXTON.id, "Tesco Extra", "tesco-extra", "51.4700,-0.1300");
       const { html } = await post("/admin/foodbank/brixton/donationpoint/new/", TYPED);

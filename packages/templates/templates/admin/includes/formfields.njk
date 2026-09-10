@@ -4,7 +4,8 @@
 
    Every control carries id="id_<name>", matching what Django's
    `{{ form|bulma }}` emits for a form field. That is not cosmetic: the admin's
-   own static/js/admin.js (served byte-identical to Django's copy, loaded by
+   own static/js/admin.js (served identical to Django's copy but for the
+   "input"/"keyup" line noted in admin/page.njk, loaded by
    admin/page.njk on every page) selects ALL of its form controls by those ids
    -- #id_name, #id_lat_lng, #id_place_id, #id_address, #id_postcode,
    #id_change_text, #id_excess_change_text, #id_company (admin.js:97-111).

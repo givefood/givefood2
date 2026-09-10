@@ -210,7 +210,22 @@ function setAddressFields(formattedAddress) {
 function initCompanyAutoSelect() {
     if (!DOM.company_field || !DOM.dp_name_field) return;
 
-    DOM.dp_name_field.addEventListener("keyup", () => {
+    // "input", not Django's "keyup" -- the ONE deliberate difference between
+    // this file and givefood/static/js/admin.js (github #57). A donation
+    // point name that arrives without a keystroke -- pasted with the mouse or
+    // the context menu, autofilled, or dragged in -- fires no keyup at all,
+    // so the company was silently left unset. Confirmed in a real browser
+    // against this form's own rendered markup: dispatching `input` alone
+    // selects "Aldi" for "Aldi Alfreton" while `keyup` never runs, which is
+    // exactly what happened to donation point 6279 "Aldi Alfreton" (and 5863
+    // "Aldi Pwllheli") on production, both stored with company NULL while
+    // every other "Aldi *" row has it set.
+    //
+    // "input" is a strict superset here: it fires for typing too, so nothing
+    // that worked before stops working. Django has the same fragility; this
+    // is a fix, not a port gap, and is the reason this file is no longer
+    // byte-identical upstream.
+    DOM.dp_name_field.addEventListener("input", () => {
         for (let i = 0; i < DOM.company_field.options.length; i++) {
             if (DOM.dp_name_field.value.includes(DOM.company_field.options[i].value)) {
                 DOM.company_field.options[i].selected = true;

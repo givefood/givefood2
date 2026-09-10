@@ -66,8 +66,8 @@ const DETAILS_ENDPOINT = "https://maps.googleapis.com/maps/api/place/details/jso
 // The two URLs admin.js actually builds (dist/static/static/js/admin.js:119-120),
 // verbatim including the now-empty `key=` it still appends. Written out rather
 // than constructed so a change to either side of that contract is a visible
-// edit here: the shipped script is byte-identical to Django's and is not going
-// to be regenerated to suit the port.
+// edit here: the shipped script matches Django's except for one deliberate
+// line (github #57) and is not going to be regenerated to suit the port.
 const ADMIN_JS_TEXTSEARCH = "/admin/proxy/gmaps/textsearch/?region=uk&key=&query=Tesco%20Extra%2C%20Brixton%2C%20UK";
 const ADMIN_JS_PLACEDETAILS = "/admin/proxy/gmaps/placedetails/?region=uk&key=&placeid=ChIJnotarealplaceid";
 

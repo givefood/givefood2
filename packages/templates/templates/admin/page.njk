@@ -110,7 +110,9 @@
     </dl>
   </footer>
 
-  {# admin.js is served byte-identical to Django's copy and reads these four
+  {# admin.js is served identical to Django's copy but for one line (its
+     company auto-select listens on "input" rather than "keyup" -- github
+     #57), and reads these four
      globals directly (API_URLS.geolocation/placeSearch/placeDetail/staticMap).
      Without them every "Get Lat/Lng & Place ID", "Lookup Location" and
      "Lookup Donation Point" button on the food bank / location / donation

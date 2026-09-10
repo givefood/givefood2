@@ -17,7 +17,7 @@ import type { AppEnv } from "../../types";
 //    secret server-side and any client-supplied `key` is DISCARDED, so the
 //    Places key never has to reach the browser. admin.js still appends its
 //    (now empty) `key=` param; it is simply ignored, so the shipped
-//    byte-identical admin.js keeps working unchanged.
+//    otherwise-unmodified admin.js keeps working unchanged.
 // 2. `params = request.GET.dict()` also lets a caller inject arbitrary Places
 //    API parameters. Only the parameters admin.js actually sends are
 //    forwarded here.
