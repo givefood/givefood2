@@ -864,7 +864,7 @@ describe("the Scheduled table", () => {
   // "30 3 * * 0" was rejected outright by the trigger-update API (Cloudflare
   // numbers Sunday as 1, not 0) and only a real deploy caught it, so the two
   // files agreeing on "30 3 * * SUN" is a fact worth holding still.
-  it("shows the same six schedules, in the same order, as workers/jobs/wrangler.jsonc", async () => {
+  it("shows the same seven schedules, in the same order, as workers/jobs/wrangler.jsonc", async () => {
     // `.href`, not the URL object: this package typechecks against
     // @cloudflare/workers-types, whose global URL is not node:url's, and
     // fileURLToPath takes a string just as happily.
@@ -883,7 +883,10 @@ describe("the Scheduled table", () => {
 
     const shown = cells((await getJobs()).html, "Scheduled").map((row) => row[1]);
 
-    expect(declared).toHaveLength(6);
+    // Seven since github #59 reinstated the daily dump in Django's own
+    // 04:30 slot. The count is pinned so a cron added to one side and not
+    // the other fails here rather than showing an admin a stale table.
+    expect(declared).toHaveLength(7);
     expect(shown).toEqual(declared);
   });
 
@@ -892,7 +895,7 @@ describe("the Scheduled table", () => {
   // write none say "not recorded" rather than leaving a blank cell that would
   // read as "never ran". The two kinds of nothing are different answers and
   // the page is careful to say which.
-  it("lists all six crons, pairing each with the last run of its own crawl type", async () => {
+  it("lists all seven crons, pairing each with the last run of its own crawl type", async () => {
     seedCrawlSet({ id: 10, crawl_type: "need", start: "2026-09-06 15:00:00.000000", finish: "2026-09-06 15:04:32.000000" });
     seedCrawlSet({ id: 11, crawl_type: "article", start: "2026-09-06 10:20:00.000000", finish: "2026-09-06 10:22:00.000000" });
     seedCrawlSet({ id: 12, crawl_type: "charity", start: "2026-09-06 05:30:00.000000", finish: "2026-09-06 05:41:00.000000" });
@@ -906,6 +909,7 @@ describe("the Scheduled table", () => {
       ["days_between_needs", "30 3 * * SUN", "Weekly recompute (one SQL statement)", "not recorded", ""],
       ["crawlitem prune", "10 3 * * *", "Crawl item retention prune", "not recorded", ""],
       ["frag refresh", "*/5 * * * *", "/frag/ payload refresh into KV", "not recorded", ""],
+      ["dump", "30 4 * * *", "Daily CSV dumps to R2 (github #59)", "not recorded", ""],
     ]);
     // The icon belongs to the crawl type, so the three jobs that record no
     // crawl set get an empty string rather than the fallback help glyph --
@@ -960,7 +964,7 @@ describe("the Scheduled table", () => {
 
     const { html } = await getJobs();
 
-    expect(cells(html, "Scheduled")).toHaveLength(6);
+    expect(cells(html, "Scheduled")).toHaveLength(7);
     expect(cells(html, "Scheduled").every((row) => row[3] === "not recorded")).toBe(true);
     expect(section(html, "Scheduled")).not.toContain("/admin/crawl-set/30/");
   });

@@ -8,6 +8,8 @@ export interface Env {
   MEDIA: R2Bucket;
   GEO: R2Bucket;
   OPS: R2Bucket;
+  // github #59 -- the daily CSV dumps, <type>/csv/<type>-YYYYMMDD.csv.
+  DUMPS: R2Bucket;
   BROWSER: Fetcher;
   HITS: AnalyticsEngineDataset;
   CRAWLS: AnalyticsEngineDataset;

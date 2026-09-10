@@ -129,6 +129,9 @@ importers:
       '@givefood/models':
         specifier: workspace:*
         version: link:../../packages/models
+      '@givefood/serialise':
+        specifier: workspace:*
+        version: link:../../packages/serialise
       '@givefood/templates':
         specifier: workspace:*
         version: link:../../packages/templates

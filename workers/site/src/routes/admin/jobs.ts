@@ -51,6 +51,7 @@ const CRON_JOBS: { schedule: string; name: string; description: string; crawl_ty
   { schedule: "30 3 * * SUN", name: "days_between_needs", description: "Weekly recompute (one SQL statement)", crawl_type: null },
   { schedule: "10 3 * * *", name: "crawlitem prune", description: "Crawl item retention prune", crawl_type: null },
   { schedule: "*/5 * * * *", name: "frag refresh", description: "/frag/ payload refresh into KV", crawl_type: null },
+  { schedule: "30 4 * * *", name: "dump", description: "Daily CSV dumps to R2 (github #59)", crawl_type: null },
 ];
 
 export async function adminJobsList(c: Context<AppEnv>): Promise<Response> {

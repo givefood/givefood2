@@ -1,6 +1,7 @@
 export type { Session, CoordinateRow } from "./types";
 export { normalizeUuid, toDashedUuid } from "./uuid";
 
+export * from "./dumps";
 export * from "./foodbank";
 export * from "./locations";
 export * from "./donationpoints";

@@ -18,6 +18,7 @@ import {
   type Session,
 } from "@givefood/db";
 import { pyNow } from "@givefood/models";
+import { generateDumps, pruneDumps } from "../dumps";
 import type { NeedcheckRenderMessage } from "../queues/needcheckRender";
 import type { ArticlesMessage } from "../queues/articles";
 import type { CharityMessage } from "../queues/charity";
@@ -34,6 +35,7 @@ const HANDLERS: Record<string, (env: Env, scheduledTime: number) => Promise<void
   "30 3 * * 0": daysBetweenNeeds,
   "10 3 * * *": crawlItemPrune,
   "*/5 * * * *": fragRefresh,
+  "30 4 * * *": dumps,
 };
 
 export async function handleScheduled(
@@ -169,6 +171,29 @@ export async function getOrCreateCrawlSet(session: Session, crawlType: string, r
 
   // Unreachable: the final attempt either returns or throws.
   return null;
+}
+
+// github #59. Django's `dump` management command, CSV only, straight to R2.
+//
+// NOT A FAN-OUT, so it takes none of the crawlset machinery above: there is
+// no per-food-bank work to distribute, just four sequential streaming reads.
+// It is also the only cron here that writes objects rather than rows.
+//
+// Runs inline rather than through ctx.waitUntil's usual pattern for the same
+// reason the fan-outs do -- see handleScheduled -- but note this one is long:
+// the items dump alone pages 333,874 rows. The Worker's cpu_ms is 300000.
+async function dumps(env: Env, scheduledTime: number): Promise<void> {
+  const session = env.DB.withSession("first-unconstrained");
+  const date = new Date(scheduledTime * 1000).toISOString().slice(0, 10);
+
+  const results = await generateDumps(session, env.DUMPS, date);
+  for (const r of results) console.log(`dump: wrote ${r.key} -- ${r.rows} rows, ${r.bytes} bytes`);
+
+  // Prune AFTER writing, never before: a failed generation that had already
+  // deleted the old objects would leave the bucket with a hole rather than a
+  // stale-but-complete archive.
+  const deleted = await pruneDumps(env.DUMPS, date);
+  console.log(`dump: pruned ${deleted.length} expired object(s)`);
 }
 
 // sendBatch caps at 100 messages / 256 KB per call. Each chunk is

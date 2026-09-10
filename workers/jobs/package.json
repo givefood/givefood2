@@ -13,6 +13,7 @@
     "@givefood/ai": "workspace:*",
     "@givefood/db": "workspace:*",
     "@givefood/models": "workspace:*",
+    "@givefood/serialise": "workspace:*",
     "@givefood/templates": "workspace:*",
     "@givefood/urls": "workspace:*",
     "fast-xml-parser": "^5.11.1"
