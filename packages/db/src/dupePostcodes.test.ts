@@ -631,10 +631,19 @@ describe("the comparison is an exact raw-string match, like Django's", () => {
   // three tests below would go green if someone added UPPER(), REPLACE(' ')
   // or TRIM() to the GROUP BY -- which is the tempting "improvement" here.
   it("treats a case difference as two different postcodes", async () => {
-    // Reachable from the admin today: parseAdminFields uppercases only for
-    // the format CHECK and stores the value as typed (see adminFormFields
-    // .test.ts's "stores the postcode exactly as typed"), so "ex10 8lz"
-    // really can land in D1 lowercase.
+    // NO LONGER REACHABLE FROM THE ADMIN. It was until github #24:
+    // parseAdminFields uppercased only for the format check and stored the
+    // value as typed, so "ex10 8lz" could land in D1 lowercase. It now
+    // stores upper-cased, and production D1 holds zero non-upper-case
+    // postcodes across all 8,779 rows.
+    //
+    // The test stays, and is seeded directly rather than through the form,
+    // because it pins the QUERY's behaviour, not the writer's: the GROUP BY
+    // runs under SQLite's BINARY collation on a column declared without
+    // COLLATE NOCASE (0001_core.sql:15,63,89), and that is deliberate --
+    // adding UPPER() here would delete a finding this page exists to
+    // surface. A legacy import or a direct SQL edit can still produce the
+    // case variant the admin no longer can.
     seedFoodbank({ name: "Upper", postcode: "EX10 8LZ" });
     seedFoodbank({ name: "Lower", postcode: "ex10 8lz" });
 

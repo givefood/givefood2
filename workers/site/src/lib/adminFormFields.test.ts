@@ -1184,13 +1184,32 @@ describe("parseAdminFields", () => {
       expect(parseAdminFields([postcode], { postcode: "ex10 8lz" }).ok).toBe(true);
     });
 
-    it("stores the postcode exactly as typed, including that lowercase", () => {
-      // The other half of the divergence, pinned because it has a downstream
-      // consequence: only the COMPARISON is uppercased, the stored value is
-      // not, so "ex10 8lz" reaches D1 lowercase. dupePostcodes.ts groups on
-      // the raw string and its comment assumes "uppercase alphanumerics".
-      // Reported rather than fixed.
-      expect(parseAdminFields([postcode], { postcode: "  ex10 8lz  " }).values.postcode).toBe("ex10 8lz");
+    // WAS "stores the postcode exactly as typed, including that lowercase",
+    // pinning the store half of the divergence as reported-not-fixed. Fixed
+    // in github #24: accepting the case difference is deliberate, publishing
+    // it was not -- the lowercase value reached the public <address> block
+    // and every /api/2/ consumer, and manufactured a case variant real
+    // Django could never produce.
+    it("stores the postcode upper-cased, not as typed", () => {
+      expect(parseAdminFields([postcode], { postcode: "  ex10 8lz  " }).values.postcode).toBe("EX10 8LZ");
+    });
+
+    // Parity guard, not a style preference. Django's POSTCODE_REGEX carries
+    // no re.IGNORECASE, so every postcode it accepts is already upper-case
+    // and uppercasing cannot alter one -- verified in CPython against the
+    // real regex. If this ever fails, the normalisation has grown beyond
+    // case and is changing values Django would have stored as-is.
+    it("leaves an already-upper-case postcode untouched", () => {
+      for (const value of ["EX10 8LZ", "SP2 9DY", "GIR 0AA", "BFPO 1234", "SAN TA1", "KY1 1234"]) {
+        expect(parseAdminFields([postcode], { postcode: value }).values.postcode, value).toBe(value);
+      }
+    });
+
+    // The space is load-bearing: dupePostcodes.ts reports "SW1A 1AA" and
+    // "SW1A1AA" as different rows on purpose, so normalising case must not
+    // quietly acquire space-stripping too.
+    it("normalises case without touching spacing", () => {
+      expect(parseAdminFields([postcode], { postcode: "sw1a1aa" }).values.postcode).toBe("SW1A1AA");
     });
 
     it("skips validation entirely when an optional postcode is blank", () => {

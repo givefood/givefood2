@@ -309,10 +309,37 @@ export function parseAdminFields(
       // too -- deliberately not ported here, since every stored postcode
       // in this schema is already upper-case and rejecting a case
       // difference the user almost certainly didn't intend serves no one.
+      //
+      // ACCEPTED LENIENTLY, THEN NORMALISED ON STORE (github #24). Only the
+      // comparison used to be uppercased, so "ex10 8lz" passed here and was
+      // written to D1 verbatim -- publishing a lowercase postcode to the
+      // public <address> block and every /api/2/ consumer, and manufacturing
+      // a case variant real Django could never produce. The leniency is the
+      // point and stays; persisting the typed case was not. See the
+      // normalisation below.
       if (spec.name === "postcode" && !POSTCODE_REGEX.test(trimmed.toUpperCase())) fail(`${spec.label} is not a valid postcode`);
       if (spec.kind === "email" && !isValidEmail(trimmed)) fail(`${spec.label} is not a valid email address`);
     }
-    const normalised = SPACE_STRIPPED_FIELDS.has(spec.name) ? trimmed.split(" ").join("") : trimmed;
+    // Postcode is stored upper-cased, restoring the invariant the comment
+    // above depends on ("every stored postcode in this schema is already
+    // upper-case") -- true of all 8,779 rows on production D1 when this
+    // landed, and now true by construction rather than by luck.
+    //
+    // PARITY-NEUTRAL, verified in CPython against Django's own
+    // POSTCODE_REGEX (const/general.py:176) as base.py:63-68 builds it,
+    // with no re.IGNORECASE: every value Django accepts is already
+    // upper-case, so this cannot change one of them. It only normalises the
+    // case difference this port accepts and Django rejects outright.
+    //
+    // NOT space-stripped, unlike the phone fields: dupePostcodes.ts
+    // deliberately treats "SW1A 1AA" and "SW1A1AA" as different rows so the
+    // maintainer sees inconsistent entry, and collapsing that here would
+    // delete the finding rather than report it.
+    const normalised = SPACE_STRIPPED_FIELDS.has(spec.name)
+      ? trimmed.split(" ").join("")
+      : spec.name === "postcode"
+        ? trimmed.toUpperCase()
+        : trimmed;
     values[spec.name] = normalised === "" ? null : normalised;
   }
   return error === null ? { ok: true, values } : { ok: false, error, values };
