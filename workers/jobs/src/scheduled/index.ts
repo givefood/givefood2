@@ -184,7 +184,10 @@ export async function getOrCreateCrawlSet(session: Session, crawlType: string, r
 // the items dump alone pages 333,874 rows. The Worker's cpu_ms is 300000.
 async function dumps(env: Env, scheduledTime: number): Promise<void> {
   const session = env.DB.withSession("first-unconstrained");
-  const date = new Date(scheduledTime * 1000).toISOString().slice(0, 10);
+  // MILLISECONDS, like cronRunId above -- not seconds. `* 1000` here put the
+  // date in the year 58660, whose toISOString() starts "+058660-", and the
+  // key silently became nonsense.
+  const date = new Date(scheduledTime).toISOString().slice(0, 10);
 
   const results = await generateDumps(session, env.DUMPS, date);
   for (const r of results) console.log(`dump: wrote ${r.key} -- ${r.rows} rows, ${r.bytes} bytes`);

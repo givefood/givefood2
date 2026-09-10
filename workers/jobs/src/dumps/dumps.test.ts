@@ -25,9 +25,21 @@ const djangoRows: Record<string, Record<string, string>> = JSON.parse(readFileSy
 
 type Bindable = string | number | null;
 
+// D1 allows at most 100 bound parameters per query. node:sqlite allows far
+// more, so a harness that just forwards to it is MORE PERMISSIVE THAN
+// PRODUCTION -- which is exactly how the first real run died on an IN list of
+// 1,000 ids while every test passed. The cap is enforced here, with D1's own
+// message, so the harness cannot flatter the code again.
+const D1_MAX_BOUND_PARAMS = 100;
+
 function d1Session(db: DatabaseSync): Session {
   const statement = (sql: string, params: Bindable[]) => ({
-    bind: (...next: unknown[]) => statement(sql, next as Bindable[]),
+    bind: (...next: unknown[]) => {
+      if (next.length > D1_MAX_BOUND_PARAMS) {
+        throw new Error("D1_ERROR: variable number must be between ?1 and ?100: SQLITE_ERROR");
+      }
+      return statement(sql, next as Bindable[]);
+    },
     first: async <T>() => (db.prepare(sql).get(...params) as T | undefined) ?? null,
     all: async () => ({ results: db.prepare(sql).all(...params), success: true, meta: {} }),
     run: async () => ({ success: true, meta: { last_row_id: 0 } }),
@@ -216,6 +228,29 @@ describe("value coercion matches Python's csv.writer(QUOTE_ALL)", () => {
       // them usable as an oracle at all.
       expect(Object.keys(row), name).toEqual([...FOODBANK_FIELDS]);
     }
+  });
+});
+
+describe("volume", () => {
+  // THE ONE THAT REACHED PRODUCTION. locationsForFoodbanks built an IN list
+  // from a whole 1,000-row page, and D1 allows at most 100 bound parameters:
+  // the first real run died with "D1_ERROR: variable number must be between
+  // ?1 and ?100" before writing a single object. Every test above used one
+  // food bank, so none of them could see it.
+  it("handles more food banks than D1 allows bound parameters", async () => {
+    for (let i = 1; i <= 150; i++) {
+      seedFoodbank({ id: i, uuid: String(i).padStart(32, "0"), name: `FB ${String(i).padStart(3, "0")}`, slug: `fb-${i}` });
+      db.prepare(
+        `INSERT INTO foodbanklocation (id, uuid, foodbank_id, name, slug, country, lat_lng, is_closed, modified)
+         VALUES (?, ?, ?, ?, ?, 'England', '51,0', 0, ?)`,
+      ).run(i, String(i).padStart(32, "1"), i, `Loc ${i}`, `loc-${i}`, NOW);
+    }
+
+    const { bucket, results } = await runDumps();
+
+    // 150 parents + 150 locations, so the chunking really did cover them all.
+    expect(results[0]!.rows).toBe(300);
+    expect(bodyOf(bucket, "foodbanks").split("\r\n").filter(Boolean)).toHaveLength(301);
   });
 });
 

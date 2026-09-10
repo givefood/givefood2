@@ -107,22 +107,28 @@ export async function* dumpFoodbanks(session: Session): AsyncGenerator<DumpFoodb
  */
 export async function locationsForFoodbanks(session: Session, foodbankIds: number[]): Promise<Map<number, DumpLocationRow[]>> {
   const out = new Map<number, DumpLocationRow[]>();
-  if (foodbankIds.length === 0) return out;
-  const placeholders = foodbankIds.map((_, i) => `?${i + 1}`).join(", ");
-  const { results } = await session
-    .prepare(
+  // D1 allows at most 100 bound parameters per query -- an IN list built from
+  // a whole 1,000-row page fails outright with "variable number must be
+  // between ?1 and ?100". Chunked rather than paged smaller, so the food bank
+  // reader keeps its 1,000-row pages and only this join is split.
+  const CHUNK = 100;
+  for (let i = 0; i < foodbankIds.length; i += CHUNK) {
+    const ids = foodbankIds.slice(i, i + CHUNK);
+    const placeholders = ids.map((_, n) => `?${n + 1}`).join(", ");
+    const rows = await page<DumpLocationRow>(
+      session,
       `SELECT foodbank_id, uuid, name, slug, address, postcode, lat_lng, phone_number, email,
               place_id, plus_code_compound, plus_code_global, lsoa, msoa,
               parliamentary_constituency_name, mp_parl_id, mp, mp_party, ward, district,
               is_mobile, boundary_geojson, modified, edited
        FROM foodbanklocation WHERE foodbank_id IN (${placeholders}) ORDER BY name ASC, id ASC`,
-    )
-    .bind(...foodbankIds)
-    .all<DumpLocationRow>();
-  for (const row of results) {
-    const list = out.get(row.foodbank_id);
-    if (list) list.push(row);
-    else out.set(row.foodbank_id, [row]);
+      ids,
+    );
+    for (const row of rows) {
+      const list = out.get(row.foodbank_id);
+      if (list) list.push(row);
+      else out.set(row.foodbank_id, [row]);
+    }
   }
   return out;
 }
