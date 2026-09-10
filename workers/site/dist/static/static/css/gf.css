@@ -2,16 +2,19 @@
     font-family:'Soehne Buch';
     src:url('/static/fonts/soehne-buch.woff2') format('woff2');
     font-weight:400;
+    font-display:swap;
 }
 @font-face {
     font-family:'Soehne Kraftig';
     src:url('/static/fonts/soehne-kraftig.woff2') format('woff2');
     font-weight:500;
+    font-display:swap;
 }
 @font-face {
     font-family:'Soehne Dreiviertelfett';
     src:url('/static/fonts/soehne-dreiviertelfett.woff2') format('woff2');
     font-weight:700;
+    font-display:swap;
 }
 html {
     hanging-punctuation: first allow-end last;
