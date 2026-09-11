@@ -7,11 +7,28 @@
    foodbank_name (__str__ would interpolate the literal "None"). #}
 {% block title %}{{ need.foodbank_name or "Unknown" }} - {{ need.created|date("M d Y H:i:s") }} ({{ need.need_id_short }}){% endblock %}
 
-{# need_categorise.html:6-18's head style. Only `.item` carries over: Django
-   lays the forms out as inline .field blocks, this page uses a table. #}
+{# need_categorise.html:6-18's head style. `.item`'s 400px is Django's own
+   value and the width the whole layout is built around. Django's other two
+   rules do not carry over: `hr` (this page has none) and `.label {display:
+   none}` (nothing here renders bulma field labels).
+
+   NOT FULL WIDTH. Django's forms are `.field` blocks that its inline script
+   makes `is-inline-block-desktop`, so each row is item + category sitting
+   side by side at their own size, left-aligned, with the rest of the page
+   empty. The port's table was `is-fullwidth` with 60%/40% columns, which on
+   a 1440px window stretched a "Milk" dropdown to ~570px and left a ~250px
+   dead gap mid-row. `width: auto` puts the table back to its content --
+   the item box at Django's 400px, the select at its widest option. #}
 {% block head %}
   <style>
     .item { width: 400px; }
+    /* Beats Bulma's `.table` (width:100% on is-fullwidth) without needing
+       !important, since this sheet loads after bulma.min.css. */
+    .categorise-table { width: auto; }
+    /* Django's rows are two adjacent inline-blocks with no column gutter;
+       a table cell needs the gap spelled out or the select butts against
+       the item box. */
+    .categorise-table td + td, .categorise-table th + th { padding-left: 1.5rem; }
   </style>
 {% endblock %}
 
@@ -42,14 +59,12 @@
          `existing_need_lines.get(line)`, views.py:2071-2074); `item_N` is
          what the reviewer may have edited. Both are posted so needs.ts can
          tell a rename from a new line. #}
-      <table class="table is-fullwidth">
-        {# Explicit column widths. Both controls are already width:100% of
-           their cell (Bulma's own .input rule), but with no width set the
-           browser sizes each column to its content's INTRINSIC width -- an
-           <input> defaults to ~20 characters -- so both boxes rendered
-           narrow with a wide empty gap between them, regardless of the
-           table being is-fullwidth. #}
-        <thead><tr><th style="width:60%">Item</th><th style="width:40%">Category</th></tr></thead>
+      {# No is-fullwidth and no percentage column widths: both are what
+         stretched this across the window. The item input carries its own
+         400px (.item, Django's value), the select sizes to its longest
+         option, and the table shrinks to the two of them. #}
+      <table class="table categorise-table">
+        <thead><tr><th>Item</th><th>Category</th></tr></thead>
         <tbody>
           {% for line in lines %}
           <tr>
@@ -57,11 +72,13 @@
             <td>
               <input type="hidden" name="orig_item_{{ loop.index0 }}" value="{{ line.item }}">
               <input type="hidden" name="type_{{ loop.index0 }}" value="{{ line.type }}">
-              {# is-fullwidth, and not is-small: the category names are the
-                 longest strings on this page and a narrow box truncated
-                 them mid-word. The item input beside it stays is-small --
-                 it holds short text and the reviewer rarely edits it. #}
-              <div class="select is-fullwidth">
+              {# is-fullwidth REMOVED with the table's own: inside an
+                 auto-width table it is circular (the cell sizes to the
+                 select, the select to the cell) and it is what made "Milk"
+                 570px wide. A bare `.select` sizes to its widest option --
+                 "Tinned Vegetables" -- so nothing truncates, which was the
+                 original reason for is-fullwidth. #}
+              <div class="select">
                 <select name="category_{{ loop.index0 }}">
                   <option value="">-- choose --</option>
                   {% for category in categories %}
