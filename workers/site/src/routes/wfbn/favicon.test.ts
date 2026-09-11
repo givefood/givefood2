@@ -104,7 +104,7 @@ const ORIGIN = "https://www.givefood.org.uk";
 // copy on purpose -- it is what makes "the URL Google is asked for" a fact a
 // test can break on rather than a value that silently follows the source.
 const GSTATIC_PREFIX = "https://t0.gstatic.com/faviconV2";
-const DEFAULT_FAVICON_URL = "https://www.givefood.org.uk/static/img/default_favicon.png";
+const DEFAULT_FAVICON_PATH = "/static/img/default_favicon.png";
 
 // @cache_page(SECONDS_IN_WEEK) on both Django views.
 const CACHE_CONTROL_WEEK = "public, max-age=604800";
@@ -242,9 +242,6 @@ async function stubFetch(input: unknown): Promise<Response> {
     const nullBody = gstatic.status === 204 || gstatic.status === 205 || gstatic.status === 304;
     return new Response(nullBody ? null : gstatic.body, { status: gstatic.status, headers: { "Content-Type": gstatic.contentType } });
   }
-  if (url === DEFAULT_FAVICON_URL) {
-    return new Response(defaultAsset.body, { status: defaultAsset.status, headers: { "Content-Type": "image/png" } });
-  }
   throw new Error(`unexpected fetch: ${url}`);
 }
 
@@ -256,6 +253,8 @@ let db: DatabaseSync;
 let prepared: Prepared[];
 let waited: Promise<unknown>[];
 let errorLogs: string[];
+/** When set, the ASSETS binding rejects rather than answering -- an internal fault, not a missing file. */
+let assetsThrows: boolean;
 
 const execCtx = {
   waitUntil: (p: Promise<unknown>) => void waited.push(p),
@@ -267,6 +266,17 @@ function env(): AppEnv["Bindings"] {
     DB: { withSession: () => d1Session(db, prepared) },
     CSRF_SECRET: "test-csrf-secret-not-a-real-one",
     SITE_DOMAIN: ORIGIN,
+    // The bundled default favicon is read through the binding now, never
+    // fetched from our own public URL -- doing that came back as Cloudflare's
+    // 522 page and was cached for a week as image/png. Recorded into the same
+    // `fetchCalls` list so the existing ordering assertions still hold.
+    ASSETS: {
+      fetch: async (req: Request) => {
+        fetchCalls.push(new URL(req.url).pathname);
+        if (assetsThrows) throw new TypeError("Network connection lost.");
+        return new Response(defaultAsset.body, { status: defaultAsset.status, headers: { "Content-Type": "image/png" } });
+      },
+    },
   } as unknown as AppEnv["Bindings"];
 }
 
@@ -345,6 +355,7 @@ beforeEach(() => {
   prepared = [];
   waited = [];
   errorLogs = [];
+  assetsThrows = false;
   fetchCalls = [];
   cacheStore = new Map<string, CacheEntry>();
   cacheMatches = [];
@@ -555,7 +566,7 @@ describe("wfbnFoodbankFavicon: domain extraction", () => {
 
     expect(res.status).toBe(200);
     expect(body).toBe("BUNDLED-DEFAULT-BYTES");
-    expect(fetchCalls).toEqual([DEFAULT_FAVICON_URL]);
+    expect(fetchCalls).toEqual([DEFAULT_FAVICON_PATH]);
   });
 
   // A non-http scheme parses fine and yields an EMPTY hostname, so the
@@ -583,7 +594,7 @@ describe("wfbnFoodbankFavicon: domain extraction", () => {
 
     expect(res.status).toBe(200);
     expect(body).toBe("BUNDLED-DEFAULT-BYTES");
-    expect(fetchCalls).toEqual([DEFAULT_FAVICON_URL]);
+    expect(fetchCalls).toEqual([DEFAULT_FAVICON_PATH]);
   });
 });
 
@@ -670,7 +681,7 @@ describe("wfbnFoodbankFavicon: the response it builds", () => {
     gstatic = { status: 503, body: "", contentType: "text/html" };
     await get(FB_PATH);
 
-    expect(fetchCalls[1]).toBe("https://www.givefood.org.uk/static/img/default_favicon.png");
+    expect(fetchCalls[1]).toBe(DEFAULT_FAVICON_PATH);
   });
 });
 
@@ -892,39 +903,41 @@ describe("wfbnFoodbankFavicon: what happens when things break", () => {
     expect(cachePuts).toEqual([]);
   });
 
-  // SUSPECT, pinned not fixed. The fallback's own `fetch(DEFAULT_FAVICON_URL)`
-  // is NOT ok-checked (favicon.ts:57), so if the asset layer answers 404 or
-  // 500, that error body is served as image/png with status 200 -- and then
-  // written into the cache with a week-long TTL under this food bank's
-  // favicon URL. A five-minute deploy blip becomes seven days of a broken
-  // icon per food bank that fell back during it, with no purge path (see the
-  // cache-tag block below) and nothing logged.
-  it("SUSPECT: an error body from the default asset is served as a PNG and cached for a week", async () => {
+  // WAS "SUSPECT: an error body from the default asset is served as a PNG and
+  // cached for a week", pinned not fixed. FIXED after it was reported live:
+  // https://www.givefood.org.uk/needs/at/corby/favicon.png was answering 200
+  // with sixteen bytes -- "error code: 522" -- labelled image/png and cached
+  // for seven days. 8 of the first 30 food banks sampled were serving it.
+  //
+  // The 522 was ours: the fallback fetched `https://www.givefood.org.uk/
+  // static/img/default_favicon.png`, a Worker asking the edge for its OWN
+  // zone, and the error page came back as the favicon body. That fetch is now
+  // a read through the ASSETS binding. This test covers the second half --
+  // the status being taken on trust -- which is what turned any failure into
+  // a week of broken icons.
+  it("404s rather than serving an error body as a PNG", async () => {
     gstatic = { status: 503, body: "", contentType: "text/html" };
     defaultAsset = { status: 404, body: "<!doctype html>not found" };
 
     const { res, body } = await get(FB_PATH);
     await drain();
 
-    expect(res.status).toBe(200);
-    expect(res.headers.get("Content-Type")).toBe("image/png");
-    expect(body).toBe("<!doctype html>not found");
-    expect(cachePuts[0]!.body).toBe("<!doctype html>not found");
-    expect(cachePuts[0]!.headers["cache-control"]).toBe(CACHE_CONTROL_WEEK);
-    expect(errorLogs).toEqual([]); // nothing anywhere records that this happened
+    expect(res.status).toBe(404);
+    expect(body).not.toContain("not found");
+    // NOT cached: a favicon that failed once may work on the next request,
+    // and a week is a long time to be wrong.
+    expect(cachePuts).toEqual([]);
+    // And it is no longer silent.
+    expect(errorLogs.join(" ")).toContain("favicon:");
   });
 
-  // The same shape, one layer worse: if the default asset ALSO rejects, the
-  // request 500s. Pinned so the two failure ladders are on the record
-  // together -- non-200 is silent, rejection is a 500, and neither is what
-  // the header comment describes.
-  it("SUSPECT: 500s when the default asset fetch itself rejects", async () => {
+  // The rung below the one above: a non-200 from the binding is now a 404,
+  // but a REJECTION still 500s, because a binding that throws is an internal
+  // fault rather than a missing icon and should reach index.ts's onError. The
+  // two rungs are pinned together so the ladder stays deliberate.
+  it("500s when the default asset read itself rejects", async () => {
     gstatic = { status: 503, body: "", contentType: "text/html" };
-    vi.stubGlobal("fetch", async (input: unknown) => {
-      fetchCalls.push(String(input));
-      if (String(input) === DEFAULT_FAVICON_URL) throw new TypeError("Network connection lost.");
-      return new Response("", { status: 503 });
-    });
+    assetsThrows = true;
 
     const { res } = await get(FB_PATH);
 
@@ -1046,7 +1059,7 @@ describe("wfbnFoodbankDonationpointFavicon", () => {
 
     expect(res.status).toBe(200);
     expect(body).toBe("BUNDLED-DEFAULT-BYTES");
-    expect(fetchCalls).toEqual([DEFAULT_FAVICON_URL]);
+    expect(fetchCalls).toEqual([DEFAULT_FAVICON_PATH]);
   });
 
   it("declares image/png and the week-long Cache-Control, same as the food bank route", async () => {

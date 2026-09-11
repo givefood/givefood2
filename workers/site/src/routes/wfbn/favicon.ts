@@ -24,7 +24,13 @@ import { dbSession } from "../../lib/session";
 // just a 301 to this same faviconV2 endpoint on t0.gstatic.com, so hitting
 // it straight away saves a redirect round trip on every cache miss.
 const GSTATIC_FAVICON_BASE_URL = "https://t0.gstatic.com/faviconV2";
-const DEFAULT_FAVICON_URL = "https://www.givefood.org.uk/static/img/default_favicon.png";
+// Read through the ASSETS binding, NOT fetched from our own public URL
+// (github issue: /needs/at/corby/favicon.png). `fetch("https://www.givefood
+// .org.uk/static/...")` from inside the Worker goes back out to the edge and
+// came back as Cloudflare's 522 page -- 16 bytes of "error code: 522" --
+// which was then served as image/png with a 200 and cached for a week. The
+// binding reads the bundled file directly and never leaves the isolate.
+const DEFAULT_FAVICON_PATH = "/static/img/default_favicon.png";
 const CACHE_CONTROL_WEEK = "public, max-age=604800"; // matches @cache_page(SECONDS_IN_WEEK)
 
 async function fetchFaviconFor(url: string | null): Promise<Response | null> {
@@ -54,7 +60,21 @@ async function servedFromCacheOrFetched(c: Context<AppEnv>, url: string | null):
   const cached = await cache.match(c.req.raw);
   if (cached) return cached;
 
-  const upstream = (await fetchFaviconFor(url)) ?? (await fetch(DEFAULT_FAVICON_URL));
+  const upstream =
+    (await fetchFaviconFor(url)) ??
+    (await c.env.ASSETS.fetch(new Request(new URL(DEFAULT_FAVICON_PATH, c.req.url))));
+
+  // THE FALLBACK'S STATUS IS CHECKED TOO. It used to be taken on trust, so
+  // whatever body came back -- an error page, an empty response -- was
+  // relabelled image/png, returned 200 and cached for a week. A favicon that
+  // cannot be produced is a 404: the browser then shows nothing, which is
+  // what a missing favicon should look like, instead of a broken image every
+  // visitor sees for seven days.
+  if (!upstream.ok) {
+    console.error(`favicon: no image for ${url ?? "(no url)"} -- fallback returned ${upstream.status}`);
+    return c.notFound(); // deliberately NOT cached: this may work on the next request
+  }
+
   const response = new Response(upstream.body, {
     headers: { "Content-Type": "image/png", "Cache-Control": CACHE_CONTROL_WEEK },
   });
