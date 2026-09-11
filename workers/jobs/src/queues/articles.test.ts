@@ -180,7 +180,7 @@ function d1Session(): unknown {
 // ---------------------------------------------------------------------------
 
 /** A modelled reply. An Error means the fetch itself rejected (DNS, TLS, abort). */
-type Reply = { status: number; body: string } | Error;
+type Reply = { status: number; body: string; contentType?: string } | Error;
 
 let feedReplies: Map<string, Reply[]>;
 let fetchCalls: Array<{ url: unknown; headers: Record<string, string>; signal: unknown }>;
@@ -214,7 +214,10 @@ function stubFetch(): void {
     if (!queue || queue.length === 0) throw new Error(`unmodelled fetch: ${url}`);
     const reply = queue.length === 1 ? queue[0]! : queue.shift()!;
     if (reply instanceof Error) throw reply;
-    return new Response(reply.body, { status: reply.status });
+    return new Response(reply.body, {
+      status: reply.status,
+      ...(reply.contentType ? { headers: { "Content-Type": reply.contentType } } : {}),
+    });
   });
 }
 
@@ -1056,6 +1059,82 @@ describe("feed-level failures close the crawl item and ack", () => {
     feedReplies.set(SALISBURY_FEED, [{ status: 404, body: rss(item("Would have been stored", "https://salisbury.example/1/")) }]);
 
     expectClosedCleanly(await run());
+  });
+
+  // THE REPORTED BUG (blackcountryfoodbank.org.uk/feed/). An anti-bot
+  // interstitial answers HTTP 202 -- which `res.ok` accepts, because ok is
+  // any 2xx -- with a 175-byte HTML meta-refresh to a captcha. The parser
+  // finds no <item>, so the crawl closed cleanly with zero articles and
+  // recorded NOTHING, eight times a day, for months. Black Country has 216
+  // articles, none newer than 2026-05-29.
+  //
+  // The body is the real challenge page, byte for byte, because the whole
+  // failure is that it is plausible: 2xx, a body, no items.
+  const SGCAPTCHA =
+    '<html><head><link rel="icon" href="data:;"><meta http-equiv="refresh" ' +
+    'content="0;/.well-known/sgcaptcha/?r=%2Ffeed%2F&y=ipc:147.12.158.48:1789128790.330"></meta></head></html>';
+
+  it("logs a 202 anti-bot challenge instead of counting it as no news", async () => {
+    feedReplies.set(SALISBURY_FEED, [{ status: 202, body: SGCAPTCHA, contentType: "text/html" }]);
+
+    // The OUTCOME is unchanged and still Django's -- nothing stored, item
+    // closed cleanly. Only the silence is gone.
+    expectClosedCleanly(await run());
+    expect(logs).toHaveLength(1);
+    expect(logs[0]).toContain(SALISBURY_FEED);
+    expect(logs[0]).toContain("202");
+    expect(logs[0]).toContain("not a feed");
+  });
+
+  // The other seven of the twenty: a 200 with a whole web page where the RSS
+  // should be. Same silence, different cause.
+  it("logs a 200 that returns HTML rather than a feed", async () => {
+    feedReplies.set(SALISBURY_FEED, [{ status: 200, body: "<!DOCTYPE html>\n<html><body>Our news page</body></html>", contentType: "text/html" }]);
+
+    expectClosedCleanly(await run());
+    expect(logs).toHaveLength(1);
+    expect(logs[0]).toContain("not a feed");
+  });
+
+  // AND THE HALF THAT MUST STAY QUIET. Twenty of the 470 feeds really are
+  // valid RSS with no items -- a food bank that has published nothing. That
+  // is not a failure and must not be logged, or the signal is worth nothing.
+  it("says nothing about a valid feed that is genuinely empty", async () => {
+    feedReplies.set(SALISBURY_FEED, [{ status: 200, body: rss(""), contentType: "application/rss+xml" }]);
+
+    expectClosedCleanly(await run());
+    expect(logs).toEqual([]);
+  });
+
+  // XHTML OPENS WITH AN XML DECLARATION. `<?xml version="1.0"?>` then a
+  // doctype, so a start-anchored "is it XML" test accepts a web page as a
+  // feed. Found by mutation-testing the detector: deleting its HTML guard
+  // changed nothing, because the cases above are rejected for other reasons.
+  it("rejects an XHTML page even though it starts with an XML declaration", async () => {
+    feedReplies.set(SALISBURY_FEED, [
+      {
+        status: 200,
+        body: '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0//EN">\n<html><body>News</body></html>',
+        contentType: "application/xhtml+xml",
+      },
+    ]);
+
+    expectClosedCleanly(await run());
+    expect(logs).toHaveLength(1);
+    expect(logs[0]).toContain("not a feed");
+  });
+
+  // A feed served with a wrong or missing content-type is still a feed. The
+  // check is on the BODY for exactly this reason -- plenty of real feeds come
+  // back as text/plain or text/html with perfectly good XML inside.
+  it("accepts a real feed served with an HTML content-type", async () => {
+    feedReplies.set(SALISBURY_FEED, [
+      { status: 200, body: rss(item("Served as text/html", "https://salisbury.example/1/")), contentType: "text/html" },
+    ]);
+
+    await run();
+    expect(logs).toEqual([]);
+    expect(articles().map((a) => a.title)).toContain("Served as text/html");
   });
 
   // DNS failure, TLS failure, connection reset: the fetch rejects. Django's
