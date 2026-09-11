@@ -1672,12 +1672,14 @@ describe("adminNeedCategorise -- POST", () => {
     expect(String(stored.modified)).toMatch(PY_TIMESTAMP);
   });
 
-  it("updates an existing line in place rather than adding a second", async () => {
+  it("re-categorising an existing line leaves one row, not two", async () => {
     seedLine(1, 10, "Tea", "Other", "Other");
 
     await post(`/admin/need/${REVIEW}/categorise/`, row(0, "Tea", "need", "Tea"));
 
     expect(storedLines(10)).toEqual([
+      // `created` is untouched: a line that is still in the submitted set is
+      // UPDATEd, not deleted and reinserted, so its id and created survive.
       { item: "Tea", type: "need", category: "Tea", group_name: "Drink", foodbank_id: 1, created: "2026-01-01 00:00:00.000000" },
     ]);
   });
@@ -1742,14 +1744,18 @@ describe("adminNeedCategorise -- POST", () => {
   // original, so correcting a line's text on a SECOND pass inserts a new row
   // beside the old one instead of renaming it the way Django's
   // `instance=need_line` does. First-time categorisation is unaffected.
-  it("SUSPECT: leaves a stale duplicate behind when a line's text is corrected", async () => {
+  // WAS "SUSPECT: leaves a stale duplicate behind when a line's text is
+  // corrected" -- it did, and this is the fix. Correcting a line's text now
+  // renames it, because the whole set is replaced rather than matched
+  // row-by-row on the text that just changed.
+  it("renames a line whose text is corrected instead of leaving a stale duplicate", async () => {
     await post(`/admin/need/${REVIEW}/categorise/`, row(0, "Tinned Tomatos", "need", "Tinned Tomatoes"));
     expect(storedLines(10)).toHaveLength(1);
 
     // Same rendered row, text corrected in the box.
     await post(`/admin/need/${REVIEW}/categorise/`, row(0, "Tinned Tomatos", "need", "Tinned Tomatoes", "Tinned Tomatoes"));
 
-    expect(storedLines(10).map((line) => line.item)).toEqual(["Tinned Tomatos", "Tinned Tomatoes"]);
+    expect(storedLines(10).map((line) => line.item)).toEqual(["Tinned Tomatoes"]);
   });
 
   // FoodbankChange.clean()'s invariant again: a line carries foodbank_id NOT
@@ -1779,7 +1785,13 @@ describe("adminNeedCategorise -- POST", () => {
   // Not reachable from the rendered form (need_categorise.njk:67-68 emits
   // only ITEM_CATEGORIES), but a page left open across a deploy that renamed
   // a category would post the old name.
-  it("SUSPECT: 500s on an unknown category, after writing the rows before it", async () => {
+  // WAS "SUSPECT: 500s on an unknown category, AFTER writing the rows before
+  // it". replaceNeedLines resolves every category before it writes anything,
+  // so the save is now all-or-nothing: an unknown category leaves no rows at
+  // all rather than a half-categorised need that looks untouched in the
+  // admin (the flag never got set either way, so the partial write was
+  // invisible).
+  it("500s on an unknown category without writing any row", async () => {
     const res = await post(`/admin/need/${REVIEW}/categorise/`, {
       ...row(0, "Tea", "need", "Tea"),
       ...row(1, "Coffee", "need", "Hot Drinks"), // not an ITEM_CATEGORY_GROUPS key
@@ -1787,9 +1799,74 @@ describe("adminNeedCategorise -- POST", () => {
 
     expect(res.status).toBe(500);
     expect(await res.text()).toContain("unknown item category: Hot Drinks");
-    // The partial write, and the flag that never got set.
-    expect(storedLines(10).map((line) => line.item)).toEqual(["Tea"]);
+    expect(storedLines(10)).toEqual([]);
     expect(storedNeed(REVIEW)!.is_categorised).toBeNull();
+  });
+
+  // THE DUPLICATION BUG, reported 2026-09-11: "if I load a need Categorise,
+  // post, and then reload the Categorise page and post again do the
+  // Categorised need lines go in twice?"
+  //
+  // Not for an untouched form -- both posts carry the same text, so the old
+  // upsert found its own row. The case that DID duplicate is an edited item,
+  // and it is reachable by ordinary use: correct a typo, come back later,
+  // save again. buildCategoriseLines renders from change_text ALWAYS, so the
+  // second page shows the food bank's original spelling and posts it, and
+  // nothing matched the row written under the corrected spelling.
+  it("does not duplicate lines when the same need is saved twice", async () => {
+    const body = { ...row(0, "Tea", "need", "Tea"), ...row(1, "Coffee", "need", "Coffee") };
+
+    await post(`/admin/need/${REVIEW}/categorise/`, body);
+    await post(`/admin/need/${REVIEW}/categorise/`, body);
+
+    expect(storedLines(10).map((line) => line.item)).toEqual(["Tea", "Coffee"]);
+  });
+
+  it("does not duplicate lines when a corrected item is re-saved as the text the form re-renders", async () => {
+    // Save 1: the reviewer fixes the spelling. `edited` is the box, `item`
+    // is the change_text line the page was rendered from.
+    await post(`/admin/need/${REVIEW}/categorise/`, row(0, "Tinned tomatos", "need", "Tinned Tomatoes", "Tinned tomatoes"));
+    expect(storedLines(10).map((line) => line.item)).toEqual(["Tinned tomatoes"]);
+
+    // Save 2: reload renders "Tinned tomatos" again (change_text is the only
+    // source), and the reviewer saves without re-correcting it. Before the
+    // rewrite this inserted a SECOND row and the need carried both spellings.
+    await post(`/admin/need/${REVIEW}/categorise/`, row(0, "Tinned tomatos", "need", "Tinned Tomatoes"));
+
+    expect(storedLines(10).map((line) => line.item)).toEqual(["Tinned tomatos"]);
+  });
+
+  // The flip side of replacing the set: a line whose category the reviewer
+  // CLEARS is dropped by the loop's `if (!category) continue`, so it is not
+  // in the replacement set and its row goes. That is the coherent reading of
+  // a form that posts every line of the need every time -- and the only way
+  // to un-categorise a line, which the old merge made impossible.
+  it("drops a line whose category the reviewer cleared", async () => {
+    await post(`/admin/need/${REVIEW}/categorise/`, {
+      ...row(0, "Tea", "need", "Tea"),
+      ...row(1, "Coffee", "need", "Coffee"),
+    });
+
+    await post(`/admin/need/${REVIEW}/categorise/`, {
+      ...row(0, "Tea", "need", "Tea"),
+      ...row(1, "Coffee", "need", ""),
+    });
+
+    expect(storedLines(10).map((line) => line.item)).toEqual(["Tea"]);
+  });
+
+  // Replacing is scoped to THIS need. A DELETE missing its `WHERE need_id`
+  // would wipe every other need's categorisation in the table and every
+  // assertion above would still pass.
+  it("leaves other needs' lines alone", async () => {
+    db.prepare(
+      "INSERT INTO foodbankchangeline (need_id, foodbank_id, item, type, category, group_name, created) VALUES (11, 1, 'Rice', 'need', 'Rice', 'Meal Food', '2024-03-01 00:00:00.000000')",
+    ).run();
+
+    await post(`/admin/need/${REVIEW}/categorise/`, row(0, "Tea", "need", "Tea"));
+
+    expect(storedLines(11).map((line) => line.item)).toEqual(["Rice"]);
+    expect(storedLines(10).map((line) => line.item)).toEqual(["Tea"]);
   });
 
   // The categorise route is one function serving GET and POST, and the GET

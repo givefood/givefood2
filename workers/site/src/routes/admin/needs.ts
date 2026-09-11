@@ -8,7 +8,6 @@ import {
   getTranslationCountForNeed,
   setNeedPublished,
   setNeedNonpertinent,
-  setNeedCategorised,
   deleteNeedByUuid,
   deleteNeedsByUuids,
   getFoodbankSlugById,
@@ -17,7 +16,8 @@ import {
   setCrawlSetExpected,
   getChangeLinesForNeed,
   getLatestLineForItem,
-  upsertNeedLine,
+  replaceNeedLines,
+  type NeedLineInput,
   ITEM_CATEGORIES,
   getAllTranslationsForNeed,
   updateNeedRawFields,
@@ -27,7 +27,7 @@ import {
   type FoodbankChangeRow,
   setNeedNotified,} from "@givefood/db";
 import { render } from "@givefood/templates";
-import { cleanFoodbankNeedText } from "@givefood/models";
+import { cleanFoodbankNeedText, pyNow } from "@givefood/models";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
 import { AGGREGATE_TAG, foodbankTag } from "@givefood/urls";
@@ -344,6 +344,13 @@ export async function adminNeedCategorise(c: Context<AppEnv>): Promise<Response>
     // may carry a correction. Falling back to `item_N` keeps a page served
     // before `orig_item_N` existed from breaking out at i=0 and categorising
     // nothing.
+    // COLLECTED, NOT WRITTEN, inside this loop. It used to await a per-line
+    // upsert here -- a SELECT then a write, sequentially, for every row --
+    // which cost 2N+1 D1 round trips (28 for the mean 13.4-line need, 205
+    // for the 102-line worst case in production) AND duplicated a need's
+    // lines when it was saved twice. replaceNeedLines does both jobs in one
+    // batch; see its comment for why replacing beats matching on text.
+    const lines: NeedLineInput[] = [];
     for (let i = 0; ; i++) {
       const origItem = body[`orig_item_${i}`] ?? body[`item_${i}`];
       if (origItem === undefined) break;
@@ -354,16 +361,22 @@ export async function adminNeedCategorise(c: Context<AppEnv>): Promise<Response>
       if (type !== "need" && type !== "excess") continue;
       // A cleared box is not a rename -- keep what was rendered.
       const item = typeof edited === "string" && edited !== "" ? edited : origItem;
-      // KNOWN GAP until upsertNeedLine takes the original as its lookup key
-      // (packages/db/src/needLines.ts, in the WP wiring notes): it matches on
-      // `item`, so re-categorising a need AND correcting a line's text inserts
-      // a second row rather than renaming the existing one in place, which is
-      // what `instance=need_line` does. First-time categorisation -- the
-      // common case, and every case where the text is left alone -- is
-      // unaffected.
-      await upsertNeedLine(db, { needId: need.id, foodbankId: need.foodbank_id, needCreated: need.created, item, type, category });
+      // `orig_item_N` is still posted and still read above, but it is no
+      // longer a lookup key -- replaceNeedLines replaces the whole set, so
+      // nothing needs to find the old row. It survives as the fallback for
+      // a cleared box, and because a form served before this change still
+      // posts it.
+      lines.push({ item, type, category });
     }
-    await setNeedCategorised(db, need.need_id);
+    // `is_categorised` is set inside the same batch as the lines, not
+    // awaited after them -- see replaceNeedLines. `modified` is stamped by
+    // the caller so the timestamp is this request's, exactly as
+    // setNeedCategorised's own pyNow() made it.
+    await replaceNeedLines(
+      db,
+      { needId: need.id, foodbankId: need.foodbank_id, needCreated: need.created, needUuid: need.need_id, modified: pyNow() },
+      lines,
+    );
     return c.redirect(`/admin/need/${need.need_id}/`, 302);
   }
 

@@ -241,8 +241,15 @@ export async function setNeedNonpertinent(session: Session, needId: string): Pro
   return { ...row, nonpertinent: true, modified: now };
 }
 
+// The statement, not the round trip: needLines.ts's upsertNeedLines puts
+// this in the same batch as the lines it flags as categorised, so the two
+// cannot disagree about which columns that means.
+export function needCategorisedStatement(session: Session, needId: string, modified: string) {
+  return session.prepare("UPDATE foodbankchange SET is_categorised = 1, modified = ? WHERE need_id = ?").bind(modified, needId);
+}
+
 export async function setNeedCategorised(session: Session, needId: string): Promise<void> {
-  await session.prepare("UPDATE foodbankchange SET is_categorised = 1, modified = ? WHERE need_id = ?").bind(pyNow(), needId).run();
+  await needCategorisedStatement(session, needId, pyNow()).run();
 }
 
 export async function setNeedNotified(session: Session, needId: string): Promise<void> {

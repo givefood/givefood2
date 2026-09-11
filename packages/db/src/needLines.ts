@@ -1,4 +1,5 @@
 import type { Session } from "./types";
+import { needCategorisedStatement } from "./needAdmin";
 
 // WP 6.4: FoodbankChangeLine (givefood/models/needs.py:362-380) -- the
 // per-item categorisation the admin's need_categorise page manually
@@ -104,39 +105,117 @@ export async function getLatestLineForItem(session: Session, item: string): Prom
   return row ?? null;
 }
 
-export interface UpsertNeedLineParams {
-  needId: number;
-  foodbankId: number;
-  needCreated: string; // FoodbankChangeLine.created is copied from need.created, not now() -- needs.py:374
+// One line as the categorise form submits it. `item` is post-edit text --
+// what the reviewer wants stored, not necessarily what change_text says.
+export interface NeedLineInput {
   item: string;
   type: NeedLineType;
   category: string;
 }
 
-// FoodbankChangeLine.save() (needs.py:372-376): foodbank/group/created are
-// always derived, never caller-supplied. Upsert-by-(need_id, item) --
-// there's no unique index enforcing this (matching Django, which dedupes
-// purely via the existing_need_lines prefetch-then-form-instance pattern,
-// not a DB constraint), so this does the same check-then-write instead of
-// relying on ON CONFLICT.
-export async function upsertNeedLine(session: Session, params: UpsertNeedLineParams): Promise<void> {
-  const group = ITEM_CATEGORY_GROUPS[params.category];
-  if (!group) throw new Error(`unknown item category: ${params.category}`);
+// D1 documents no cap on statements per batch, only the per-statement limits
+// (100 bound parameters, 100KB of SQL) that each of these is far inside.
+// Chunked anyway, because the POST body decides how many statements there
+// are: 50 keeps every real need a single batch -- the mean is 13.4 lines and
+// the largest in production is 102 -- while bounding what a hand-crafted POST
+// with thousands of item_N fields can build.
+const BATCH_SIZE = 50;
 
-  const existing = await session
-    .prepare("SELECT id FROM foodbankchangeline WHERE need_id = ? AND item = ?")
-    .bind(params.needId, params.item)
-    .first<{ id: number }>();
+// RECONCILES this need's lines against the set the form submitted: update
+// what is still there, insert what is new, delete what is gone, set
+// is_categorised -- one prefetch and one batch.
+//
+// TWO THINGS ARE WRONG WITH THE PER-LINE upsertNeedLine THIS REPLACES.
+//
+// 1. SPEED. The route awaited it in a loop, and each call was a SELECT and
+//    then a write, sequentially: 2N+1 D1 round trips per save. Needs average
+//    13.4 lines and run to 102 (measured across the 24,968 categorised needs
+//    in production, 2026-09-11), so that is 28 typically and 205 at the tail.
+//    Now it is 2, flat, whatever the line count.
+//
+// 2. DUPLICATES. It matched an existing row on `item`, so saving the same
+//    need twice could write its lines twice:
+//
+//      a. Reviewer corrects "Tinned tomatos" to "Tinned tomatoes" and saves.
+//         A row is written under the CORRECTED text.
+//      b. They reload. buildCategoriseLines renders from change_text, always
+//         -- the correction is not persisted back to change_text and cannot
+//         be -- so the box shows "Tinned tomatos" again.
+//      c. They save. Nothing matched, so a SECOND row was inserted. One line
+//         of one need, two categorised rows, both counted by every dashboard
+//         query that groups on category.
+//
+//    Keying on `orig_item` instead -- Django's own key, views.py:2071-2074 --
+//    does not fix it: after (a) the row's `item` has drifted away from the
+//    change_text line, so nothing derived from change_text can find it again.
+//    Deleting what the form did not submit is what closes it, and it closes
+//    the same way round: at (c) the stale "Tinned tomatoes" row is gone
+//    because it is not in the submitted set.
+//
+// UPDATE RATHER THAN DELETE-AND-REINSERT for a line that is still there, so
+// row ids survive a re-save. getLatestLineForItem ranks category suggestions
+// by `id DESC`, so reinserting every line would make whichever need was
+// edited most recently outrank genuinely newer categorisations of the same
+// item text.
+export async function replaceNeedLines(
+  session: Session,
+  params: { needId: number; foodbankId: number; needCreated: string; needUuid: string; modified: string },
+  lines: readonly NeedLineInput[],
+): Promise<void> {
+  // EVERY category resolved before anything is written. The per-line version
+  // threw from inside the loop, so an unknown category committed the lines
+  // before it and left the need unflagged -- a half-categorised need that
+  // looked untouched in the admin.
+  const groups = lines.map((line) => {
+    const group = ITEM_CATEGORY_GROUPS[line.category];
+    if (!group) throw new Error(`unknown item category: ${line.category}`);
+    return group;
+  });
 
-  if (existing) {
-    await session
-      .prepare("UPDATE foodbankchangeline SET category = ?, group_name = ? WHERE id = ?")
-      .bind(params.category, group, existing.id)
-      .run();
-  } else {
-    await session
-      .prepare("INSERT INTO foodbankchangeline (need_id, foodbank_id, item, type, category, group_name, created) VALUES (?, ?, ?, ?, ?, ?, ?)")
-      .bind(params.needId, params.foodbankId, params.item, params.type, params.category, group, params.needCreated)
-      .run();
+  // Two lines can carry the SAME item text -- duplicate lines in the food
+  // bank's own change_text, or a reviewer editing two boxes to match. Django
+  // inserted the first and then UPDATED it from the second, and its UPDATE
+  // touches category/group only, so the surviving row keeps the FIRST
+  // occurrence's type and the LAST occurrence's category. Collapsing here
+  // reproduces that; emitting both would leave two rows where Django left
+  // one, which is the duplication this function exists to stop.
+  const collapsed = new Map<string, { type: NeedLineType; category: string; group: string }>();
+  for (const [i, line] of lines.entries()) {
+    const first = collapsed.get(line.item);
+    collapsed.set(line.item, { type: first?.type ?? line.type, category: line.category, group: groups[i]! });
+  }
+
+  const existing = await getChangeLinesForNeed(session, params.needId);
+
+  const statements = [...collapsed].map(([item, line]) => {
+    const already = existing.get(item);
+    return already
+      ? session
+          .prepare("UPDATE foodbankchangeline SET category = ?, group_name = ? WHERE id = ?")
+          .bind(line.category, line.group, already.id)
+      : session
+          .prepare(
+            "INSERT INTO foodbankchangeline (need_id, foodbank_id, item, type, category, group_name, created) VALUES (?, ?, ?, ?, ?, ?, ?)",
+          )
+          .bind(params.needId, params.foodbankId, item, line.type, line.category, line.group, params.needCreated);
+  });
+
+  // Rows the form did not submit: a line whose text was corrected on an
+  // earlier save, or one whose category the reviewer has now cleared. Deleted
+  // BY ID, one statement each, rather than with a `WHERE item NOT IN (...)`
+  // -- D1 caps a statement at 100 bound parameters and a need can carry more
+  // lines than that. Normally there are none.
+  for (const [item, row] of existing) {
+    if (!collapsed.has(item)) statements.push(session.prepare("DELETE FROM foodbankchangeline WHERE id = ?").bind(row.id));
+  }
+
+  statements.push(needCategorisedStatement(session, params.needUuid, params.modified));
+
+  // Atomic per chunk rather than across all of them. A need long enough to
+  // split that fails between chunks is left unflagged, so it shows as
+  // uncategorised and re-saving it converges -- which is safe precisely
+  // because reconciling is idempotent.
+  for (let i = 0; i < statements.length; i += BATCH_SIZE) {
+    await session.batch(statements.slice(i, i + BATCH_SIZE));
   }
 }

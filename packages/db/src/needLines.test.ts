@@ -1,8 +1,8 @@
 import { DatabaseSync } from "node:sqlite";
 import { MIGRATIONS_SQL as SCHEMA } from "./schema.testkit";
-import { describe, expect, it } from "vitest";
-import { ITEM_CATEGORIES, ITEM_CATEGORY_GROUPS, getChangeLinesForNeed, getLatestLineForItem, upsertNeedLine } from "./needLines";
-import type { NeedLineRow, NeedLineType } from "./needLines";
+import { beforeEach, describe, expect, it } from "vitest";
+import { ITEM_CATEGORIES, ITEM_CATEGORY_GROUPS, getChangeLinesForNeed, getLatestLineForItem, replaceNeedLines } from "./needLines";
+import type { NeedLineInput, NeedLineRow, NeedLineType } from "./needLines";
 import type { Session } from "./types";
 
 // WP 6.4's FoodbankChangeLine layer -- the three statements behind
@@ -125,17 +125,64 @@ type Bindable = null | number | bigint | string | Uint8Array;
 // the real code through one adapter. Deliberately dumb -- it forwards the SQL
 // untouched and interprets nothing, so the engine decides which rows come
 // back, not this file.
+// D1 rejects a statement binding more than 100 values, with this message
+// (platform/limits: "Maximum bound parameters per query: 100"). node:sqlite
+// has no such cap, so the fake has to impose it or a statement that cannot
+// run in production passes here -- the same class of hole that let three
+// bugs ship green before (see the fakes-must-not-be-looser rule).
+const D1_MAX_BOUND_PARAMS = 100;
+
+// Round trips, which is the whole point of the batch. `queries` counts
+// prepare().first()/all()/run(); `batches` counts batch() calls, each of
+// which is ONE round trip however many statements it carries.
+const trips = { queries: 0, batches: 0, batchedStatements: 0 };
+
 function d1Session(db: DatabaseSync): Session {
   const statement = (sql: string, params: Bindable[]) => ({
+    sql,
+    params,
     bind: (...next: unknown[]) => statement(sql, next as Bindable[]),
-    first: async <T>() => (db.prepare(sql).get(...params) as T | undefined) ?? null,
-    all: async () => ({ results: db.prepare(sql).all(...params), success: true, meta: {} }),
+    first: async <T>() => {
+      trips.queries += 1;
+      return (db.prepare(sql).get(...params) as T | undefined) ?? null;
+    },
+    all: async () => {
+      trips.queries += 1;
+      return { results: db.prepare(sql).all(...params), success: true, meta: {} };
+    },
     run: async () => {
+      trips.queries += 1;
       db.prepare(sql).run(...params);
       return { success: true, meta: {} };
     },
   });
-  return { prepare: (sql: string) => statement(sql, []), getBookmark: () => null } as unknown as Session;
+  type Fake = ReturnType<typeof statement>;
+  return {
+    prepare: (sql: string) => statement(sql, []),
+    // ATOMIC, because D1's is: a batch runs in an implicit transaction and
+    // either all of it lands or none of it does. A fake that applied
+    // statements one at a time would let a half-written set pass a test that
+    // production would have rolled back.
+    batch: async (statements: Fake[]) => {
+      trips.batches += 1;
+      trips.batchedStatements += statements.length;
+      for (const s of statements) {
+        if (s.params.length > D1_MAX_BOUND_PARAMS) {
+          throw new Error(`D1_ERROR: too many SQL variables at offset 0: SQLITE_ERROR`);
+        }
+      }
+      db.exec("BEGIN");
+      try {
+        const results = statements.map((s) => ({ results: db.prepare(s.sql).all(...s.params), success: true, meta: {} }));
+        db.exec("COMMIT");
+        return results;
+      } catch (err) {
+        db.exec("ROLLBACK");
+        throw err;
+      }
+    },
+    getBookmark: () => null,
+  } as unknown as Session;
 }
 
 function freshDb(): DatabaseSync {
@@ -791,15 +838,76 @@ describe("getLatestLineForItem", () => {
   });
 });
 
-describe("upsertNeedLine", () => {
-  const params = {
-    needId: NEED,
-    foodbankId: SALISBURY,
-    needCreated: NEED_CREATED,
+describe("replaceNeedLines", () => {
+  // The need this file's fixtures belong to. `needUuid`/`modified` feed the
+  // is_categorised UPDATE that rides in the same batch; every other field is
+  // the same shape upsertNeedLine took.
+  const NEED_UUID = "11111111-2222-3333-4444-555555555555";
+  const MODIFIED = "2026-09-11 16:45:00.000000";
+  const base = { needId: NEED, foodbankId: SALISBURY, needCreated: NEED_CREATED, needUuid: NEED_UUID, modified: MODIFIED };
+
+  // One line, the shape the route builds. Most tests below submit exactly
+  // one, which under set semantics means "this need has exactly this line".
+  const one = (over: Partial<NeedLineInput> = {}): NeedLineInput => ({
     item: "Tinned Tomatoes",
-    type: "need" as NeedLineType,
+    type: "need",
     category: "Tinned Tomatoes",
-  };
+    ...over,
+  });
+
+  const save = (session: Session, lines: NeedLineInput[], over: Partial<typeof base> = {}) =>
+    replaceNeedLines(session, { ...base, ...over }, lines);
+
+  beforeEach(() => {
+    trips.queries = 0;
+    trips.batches = 0;
+    trips.batchedStatements = 0;
+  });
+
+  // THE REASON THIS IS PLURAL. The per-line predecessor did a SELECT and then
+  // a write per line, sequentially: 2N+1 round trips, so 28 for the mean
+  // 13.4-line need and 205 for the 102-line worst case in production. This
+  // asserts the shape that replaced it -- ONE prefetch and ONE batch -- and
+  // it is asserted at two very different line counts, because "2 round trips"
+  // is only interesting if it does not move with N.
+  it.each([1, 13, 40])("costs one query and one batch whatever the line count (%i lines)", async (n) => {
+    const db = freshDb();
+    const lines = Array.from({ length: n }, (_, i) => one({ item: `item-${i}` }));
+
+    await save(d1Session(db), lines);
+
+    expect(trips.queries).toBe(1); // getChangeLinesForNeed
+    expect(trips.batches).toBe(1);
+    expect(allLines(db)).toHaveLength(n);
+  });
+
+  // Above BATCH_SIZE it chunks, so the count goes up in steps rather than
+  // with N -- and the whole set still lands. 60 lines plus the flag is 61
+  // statements: two batches, not 61 round trips.
+  it("chunks rather than scaling round trips, and still writes every line", async () => {
+    const db = freshDb();
+    const lines = Array.from({ length: 60 }, (_, i) => one({ item: `item-${i}` }));
+
+    await save(d1Session(db), lines);
+
+    expect(trips.batches).toBe(2);
+    expect(trips.batchedStatements).toBe(61); // 60 inserts + the is_categorised UPDATE
+    expect(allLines(db)).toHaveLength(60);
+  });
+
+  // No statement here binds a variable-length list, so D1's 100-parameter cap
+  // is never approached however long the need. Asserted through the fake's
+  // own enforcement of that cap: a need with more lines than the limit still
+  // saves, where the `item__in` list Django built (views.py:2062-2067) would
+  // have exceeded it outright.
+  it("saves a need with more lines than D1's bound-parameter cap", async () => {
+    const db = freshDb();
+    const lines = Array.from({ length: 120 }, (_, i) => one({ item: `item-${i}` }));
+
+    await save(d1Session(db), lines);
+
+    expect(allLines(db)).toHaveLength(120);
+  });
 
   // Every column, by name, on the create path. Asserted as a whole row rather
   // than field by field because the failure this catches is a shifted VALUES
@@ -809,7 +917,7 @@ describe("upsertNeedLine", () => {
   // columns are TEXT NOT NULL and neither has a CHECK constraint.
   it("inserts a row with the derived group and the need's created", async () => {
     const db = freshDb();
-    await upsertNeedLine(d1Session(db), params);
+    await save(d1Session(db), [one()]);
 
     expect(allLines(db)).toEqual([
       {
@@ -825,6 +933,22 @@ describe("upsertNeedLine", () => {
     ]);
   });
 
+  // The flag the route used to set in a second, separate write. It is in the
+  // batch now, so it cannot be set for a need whose lines failed to land.
+  it("sets is_categorised and modified in the same batch as the lines", async () => {
+    const db = freshDb();
+    db.prepare(
+      "INSERT INTO foodbankchange (id, need_id, foodbank_id, change_text, input_method, created, modified) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    ).run(NEED, NEED_UUID, SALISBURY, "Tinned Tomatoes", "scrape", NEED_CREATED, NEED_CREATED);
+
+    await save(d1Session(db), [one()]);
+
+    const need = db.prepare("SELECT is_categorised, modified FROM foodbankchange WHERE need_id = ?").get(NEED_UUID) as Record<string, unknown>;
+    expect(need.is_categorised).toBe(1);
+    expect(need.modified).toBe(MODIFIED);
+    expect(trips.batches).toBe(1);
+  });
+
   // needs.py:372-376: `self.group = ITEM_CATEGORY_GROUPS[self.category]`, in
   // save(), on a field the ModelForm cannot reach (`editable=False`). The port
   // reproduces that by not taking a group parameter at all, which is the only
@@ -833,10 +957,9 @@ describe("upsertNeedLine", () => {
   // "return the category" or "return a constant" fails.
   it("derives group_name from the category and never from the caller", async () => {
     const db = freshDb();
-    const session = d1Session(db);
-    for (const [i, category] of ["Milk", "Nappies", "Crisps", "Washing Up Liquid", "Other"].entries()) {
-      await upsertNeedLine(session, { ...params, item: `item-${i}`, category });
-    }
+    const categories = ["Milk", "Nappies", "Crisps", "Washing Up Liquid", "Other"];
+
+    await save(d1Session(db), categories.map((category, i) => one({ item: `item-${i}`, category })));
 
     expect(allLines(db).map((row) => [row.category, row.group_name])).toEqual([
       ["Milk", "Drink"],
@@ -857,7 +980,7 @@ describe("upsertNeedLine", () => {
   it("copies created from the need, not from the clock, byte for byte", async () => {
     const db = freshDb();
     const historic = "2019-04-01 09:30:00.123456";
-    await upsertNeedLine(d1Session(db), { ...params, needCreated: historic });
+    await save(d1Session(db), [one()], { needCreated: historic });
 
     expect(allLines(db)[0]!.created).toBe(historic);
     // The mutant is `new Date().toISOString()`, whose shape is visibly
@@ -869,22 +992,38 @@ describe("upsertNeedLine", () => {
   // The allowlist is app-level, not a DB constraint (§4.5: every choices field
   // in this schema is), so this `throw` is the ONLY thing keeping an arbitrary
   // string out of the category column -- and out of the "by item" search that
-  // matches `category = ?`. Two halves, and the second is the one worth
-  // having: the guard runs BEFORE the SELECT, so a bad category cannot even
-  // clobber a good row that already exists.
+  // matches `category = ?`. The guard now runs over EVERY line before the
+  // first write, so one bad category rejects the whole save instead of
+  // committing the lines that happened to come before it.
   it("rejects an unknown category without touching the database", async () => {
     const db = freshDb();
     seedLine(db, { id: 10, need_id: NEED, item: "Tinned Tomatoes", category: "Tinned Tomatoes", group_name: "Meal Food" });
 
-    await expect(upsertNeedLine(d1Session(db), { ...params, category: "Tinned Unicorn" })).rejects.toThrow("unknown item category: Tinned Unicorn");
+    await expect(save(d1Session(db), [one({ category: "Tinned Unicorn" })])).rejects.toThrow("unknown item category: Tinned Unicorn");
     // Case matters: the dropdown's values are Title Case, and a client posting
     // a lower-case one is rejected rather than silently written.
-    await expect(upsertNeedLine(d1Session(db), { ...params, category: "milk" })).rejects.toThrow("unknown item category: milk");
-    await expect(upsertNeedLine(d1Session(db), { ...params, category: "" })).rejects.toThrow("unknown item category: ");
+    await expect(save(d1Session(db), [one({ category: "milk" })])).rejects.toThrow("unknown item category: milk");
+    await expect(save(d1Session(db), [one({ category: "" })])).rejects.toThrow("unknown item category: ");
 
     expect(allLines(db)).toEqual([
       { id: 10, need_id: NEED, foodbank_id: SALISBURY, item: "Tinned Tomatoes", type: "need", category: "Tinned Tomatoes", group_name: "Meal Food", created: NEED_CREATED },
     ]);
+    // Not even the prefetch ran: the guard is above it.
+    expect(trips.batches).toBe(0);
+  });
+
+  // A GOOD LINE BEFORE A BAD ONE. This is the case the per-line version got
+  // wrong -- it wrote "Tea" and then threw on "Hot Drinks", leaving a need
+  // half-categorised and, because the flag never got set, looking untouched
+  // in the admin. Validating every category up front makes it all-or-nothing.
+  it("writes nothing at all when a later line's category is unknown", async () => {
+    const db = freshDb();
+
+    await expect(save(d1Session(db), [one({ item: "Tea", category: "Tea" }), one({ item: "Coffee", category: "Hot Drinks" })])).rejects.toThrow(
+      "unknown item category: Hot Drinks",
+    );
+
+    expect(allLines(db)).toEqual([]);
   });
 
   // SUSPECT, PINNED AS-IS. `ITEM_CATEGORY_GROUPS[params.category]` is a bare
@@ -902,16 +1041,14 @@ describe("upsertNeedLine", () => {
   // than a message. The right fix is Object.hasOwn (or a null-prototype
   // table); it is not made here because tests pin current behaviour.
   //
-  // Reachability, stated honestly: the admin route only accepts a non-empty
-  // string for `category` (admin/needs.ts:353) and does not check it against
-  // ITEM_CATEGORIES first, so a hand-posted `category=constructor` gets here.
-  // The outcome is a 500, not a bad row -- but it is the wrong 500.
+  // One thing HAS improved: the throw now comes from inside a batch, so the
+  // transaction rolls back rather than leaving the statements before it.
   it("lets Object.prototype keys past the allowlist guard, and the NOT NULL constraint catches them", async () => {
     const db = freshDb();
     for (const category of ["constructor", "toString", "__proto__", "hasOwnProperty"]) {
       // Truthy, hence past `if (!group) throw` -- the guard's own premise.
       expect(Boolean(ITEM_CATEGORY_GROUPS[category])).toBe(true);
-      const rejection = upsertNeedLine(d1Session(db), { ...params, category });
+      const rejection = save(d1Session(db), [one({ category })]);
       await expect(rejection).rejects.toThrow();
       // Specifically NOT the clean error the caller would get for any other
       // string that is not a category.
@@ -920,22 +1057,21 @@ describe("upsertNeedLine", () => {
     expect(allLines(db)).toHaveLength(0);
   });
 
-  // The "upsert" half, and the mutant it kills is a transposed .bind(): swap
-  // needId and item and the existence check compares an INTEGER column to
-  // "Tinned Tomatoes", matches nothing, and every save appends instead of
-  // editing. The page still redirects, still looks right, and the table grows
-  // a new row on every visit -- which is precisely how a duplicate-item state
-  // (see the collapse test above) comes into existence.
+  // The mutant this kills is a transposed .bind() on the UPDATE: swap the
+  // category and group and every row gets a group in its category column.
+  // Re-saving must also keep ONE row -- appending on every visit is the bug
+  // the whole rewrite is about.
   it("updates in place on a second save rather than appending a row", async () => {
     const db = freshDb();
     const session = d1Session(db);
-    await upsertNeedLine(session, { ...params, category: "Baked Beans" });
-    await upsertNeedLine(session, { ...params, category: "Tinned Tomatoes" });
+    await save(session, [one({ category: "Baked Beans" })]);
+    await save(session, [one({ category: "Tinned Tomatoes" })]);
 
     const rows = allLines(db);
     expect(rows).toHaveLength(1);
-    // Same row: Django's `instance=need_line` semantics, so anything holding
-    // the id (a future FK, an audit log) still points at it.
+    // Same row: a line still in the submitted set is UPDATEd, not deleted and
+    // reinserted, so getLatestLineForItem's `id DESC` ranking does not get
+    // rewritten every time an old need is re-saved.
     expect(rows[0]!.id).toBe(1);
     expect(rows[0]!.category).toBe("Tinned Tomatoes");
     // The group is re-derived on the update path too, not left at the old
@@ -944,89 +1080,72 @@ describe("upsertNeedLine", () => {
     // uses a category whose group actually changes.
     expect(rows[0]!.group_name).toBe("Meal Food");
 
-    await upsertNeedLine(session, { ...params, category: "Shampoo" });
+    await save(session, [one({ category: "Shampoo" })]);
     expect(allLines(db)[0]!.group_name).toBe("Toiletries");
   });
 
-  // SUSPECT, PINNED AS-IS. The UPDATE sets `category` and `group_name` only,
-  // so `type`, `item`, `foodbank_id` and `created` on an existing row are
-  // frozen at whatever the first save wrote. Django diverges here:
-  // NeedLineForm is `fields = "__all__"` over a model whose need/foodbank/
-  // group/created are `editable=False` (needs.py:364-370), which leaves item,
-  // type and category editable, and `form.save()` then re-derives foodbank and
-  // created from the need every time.
+  // THE DUPLICATION BUG THIS FUNCTION EXISTS TO FIX, at its own tier.
+  // Reported 2026-09-11: load categorise, post, reload, post again.
   //
-  // So a line moved from the need list to the excess list keeps type='need'
-  // here and would have become 'excess' in Django. Consequence: the "by item"
-  // dashboards and fcl_type_idx queries count that item as still wanted.
-  // Pinned rather than fixed, per TESTING.md; reported.
-  it("updates only category and group_name, leaving type, foodbank_id and created frozen", async () => {
+  //   1. The reviewer corrects the spelling. A row lands under the CORRECTED
+  //      text.
+  //   2. The page re-renders from change_text -- always -- so it shows the
+  //      food bank's original spelling again, and posts that.
+  //   3. The old upsert matched on `item`, found nothing, and INSERTED. Two
+  //      rows for one line.
+  //
+  // Deleting what the form did not submit is what closes it. Note this also
+  // proves `orig_item` is not the answer: by step 2 the stored row's text has
+  // drifted away from change_text, so no text-matching key can find it.
+  it("leaves one row when a corrected line is re-saved under its original text", async () => {
     const db = freshDb();
-    seedLine(db, {
-      id: 10,
-      need_id: NEED,
-      foodbank_id: SALISBURY,
-      item: "Tinned Tomatoes",
-      type: "need",
-      category: "Baked Beans",
-      group_name: "Meal Food",
-      created: "2019-04-01 09:30:00.123456",
-    });
+    const session = d1Session(db);
+    await save(session, [one({ item: "Tinned tomatoes" })]); // step 1, corrected
+    await save(session, [one({ item: "Tinned tomatos" })]); // step 2, as re-rendered
 
-    await upsertNeedLine(d1Session(db), {
-      ...params,
-      type: "excess",
-      foodbankId: 99,
-      needCreated: "2026-09-05 15:00:00.000000",
-      category: "Shampoo",
-    });
+    expect(allLines(db).map((row) => row.item)).toEqual(["Tinned tomatos"]);
+  });
 
-    expect(allLines(db)).toEqual([
-      {
-        id: 10,
-        need_id: NEED,
-        foodbank_id: SALISBURY, // NOT 99
-        item: "Tinned Tomatoes",
-        type: "need", // NOT "excess"
-        category: "Shampoo",
-        group_name: "Toiletries",
-        created: "2019-04-01 09:30:00.123456", // NOT the value just passed
-      },
+  // The general form of the same rule: a row the form did not submit is gone.
+  // That is also the only way to UN-categorise a line, which the old merge
+  // made impossible -- clearing the dropdown did nothing at all.
+  it("deletes a row the submitted set no longer contains", async () => {
+    const db = freshDb();
+    const session = d1Session(db);
+    await save(session, [one({ item: "Tea", category: "Tea" }), one({ item: "Coffee", category: "Coffee" })]);
+
+    await save(session, [one({ item: "Tea", category: "Tea" })]);
+
+    expect(allLines(db).map((row) => row.item)).toEqual(["Tea"]);
+  });
+
+  // ...and the delete is scoped to THIS need. A DELETE that dropped its id
+  // binding, or one written `WHERE need_id <> ?`, would clear other needs'
+  // categorisation and every assertion above would still pass.
+  it("deletes only this need's rows, never another need's", async () => {
+    const db = freshDb();
+    seedLine(db, { id: 10, need_id: OTHER_NEED, item: "Rice", category: "Rice", group_name: "Meal Food" });
+
+    await save(d1Session(db), [one({ item: "Tea", category: "Tea" })]);
+
+    expect(allLines(db).map((row) => [row.need_id, row.item])).toEqual([
+      [OTHER_NEED, "Rice"],
+      [NEED, "Tea"],
     ]);
   });
 
-  // The same freeze, reached the way it actually happens: an item that appears
-  // in BOTH change_text and excess_change_text. The route loops the need lines
-  // and then the excess lines through this one function
-  // (admin/needs.ts:347-365) and the existence check is keyed on (need_id,
-  // item) with no `type`, so the second call updates the first call's row.
-  // Result: one row where the page rendered two, holding the excess
-  // categorisation under type='need'. Django ends up with one row too -- its
-  // existing_need_lines map is keyed by item alone as well -- but typed
-  // 'excess', because its form writes the field.
-  it("collapses a need line and an excess line of the same item into one row, typed by the first write", async () => {
-    const db = freshDb();
-    const session = d1Session(db);
-    await upsertNeedLine(session, { ...params, item: "Tinned Fruit", type: "need", category: "Tinned Fruit" });
-    await upsertNeedLine(session, { ...params, item: "Tinned Fruit", type: "excess", category: "Dessert" });
-
-    expect(allLines(db)).toHaveLength(1);
-    expect(allLines(db)[0]!.type).toBe("need");
-    expect(allLines(db)[0]!.category).toBe("Dessert");
-  });
-
-  // The existence check is scoped by need as well as item -- `WHERE need_id =
-  // ? AND item = ?`. Dropping the need_id half is the mutant that matters and
-  // it is invisible in any single-need fixture: with it dropped, categorising
-  // "Tinned Tomatoes" for this week's need REWRITES last week's line instead
-  // of creating one, so a food bank's history collapses into a single row that
-  // keeps changing category. Seeded across two needs of the same food bank so
-  // the mutant has something to hit.
+  // The existence check is scoped by need as well as item. Dropping the
+  // need_id half is the mutant that matters and it is invisible in any
+  // single-need fixture: with it dropped, categorising "Tinned Tomatoes" for
+  // this week's need REWRITES last week's line instead of creating one, so a
+  // food bank's history collapses into a single row that keeps changing
+  // category. Seeded across two needs of the same food bank so the mutant has
+  // something to hit.
   it("keeps each need's line separate, even for identical item text", async () => {
     const db = freshDb();
     const session = d1Session(db);
-    await upsertNeedLine(session, { ...params, needId: NEED, category: "Baked Beans" });
-    await upsertNeedLine(session, { ...params, needId: OTHER_NEED, category: "Tinned Tomatoes" });
+    await save(session, [one({ category: "Baked Beans" })], { needId: NEED });
+    await save(session, [one({ category: "Tinned Tomatoes" })], { needId: OTHER_NEED });
 
     const rows = allLines(db);
     expect(rows).toHaveLength(2);
@@ -1036,59 +1155,78 @@ describe("upsertNeedLine", () => {
     ]);
   });
 
-  // SUSPECT, PINNED AS-IS -- the other half of the duplicate story. When two
-  // rows already share (need_id, item), `.first()` on a statement with no
-  // ORDER BY takes whatever the plan yields first. Measured: the plan is
-  // `SEARCH ... USING INDEX foodbankchangeline_item_id_idx (item=?)`
-  // (0021_changeline_item_id_idx.sql:33), which walks id DESCENDING, so the
-  // HIGHEST id is updated.
+  // An item that appears in BOTH change_text and excess_change_text. The
+  // route submits both in one set, and they collapse to one row -- which is
+  // what Django ends up with too, its existing_need_lines map being keyed by
+  // item alone as well.
   //
-  // Note what that means alongside getChangeLinesForNeed, which surfaces the
-  // row the (need_id, category, type) index yields LAST: on a need with
-  // duplicates the form shows one row and the save writes to the other, so an
-  // admin can correct a category, be redirected, come back, and see the old
-  // value still there. And the index that decides this was added by migration
-  // 0021 for an unrelated performance reason -- i.e. a migration silently
-  // changed which row this statement edits.
-  it("updates the highest-id duplicate, which is the row the other read does not surface", async () => {
+  // SUSPECT, PINNED: the surviving row is typed by the FIRST occurrence and
+  // categorised by the LAST, because Django's UPDATE writes category and
+  // group only. So a line in both lists is counted as still wanted by
+  // fcl_type_idx and every "by item" dashboard. Django writes `type` on that
+  // update and would have ended at 'excess'.
+  it("collapses a need line and an excess line of the same item into one row, typed by the first", async () => {
+    const db = freshDb();
+
+    await save(d1Session(db), [
+      one({ item: "Tinned Fruit", type: "need", category: "Tinned Fruit" }),
+      one({ item: "Tinned Fruit", type: "excess", category: "Dessert" }),
+    ]);
+
+    expect(allLines(db)).toHaveLength(1);
+    expect(allLines(db)[0]!.type).toBe("need");
+    expect(allLines(db)[0]!.category).toBe("Dessert");
+  });
+
+  // PRE-EXISTING duplicates -- two rows already sharing (need_id, item),
+  // written by the old upsert before this rewrite. getChangeLinesForNeed
+  // keys its Map by item, so it surfaces ONE of them, and that is the row
+  // this updates: the same row the form rendered.
+  //
+  // The predecessor updated the OTHER one. Its existence check was a bare
+  // `.first()` with no ORDER BY, answered by foodbankchangeline_item_id_idx
+  // walking id DESCENDING, so it wrote to the highest id while the form had
+  // shown the lowest -- an admin could correct a category, come back, and
+  // see the old value still there. That is fixed here by construction.
+  //
+  // The other duplicate is left alone rather than cleaned up: it is not in
+  // the Map, so the delete pass never sees it. Recorded, not fixed -- these
+  // rows predate the rewrite and need a one-off sweep, not a write path that
+  // second-guesses its own prefetch.
+  it("updates the duplicate the form actually rendered, and leaves the other", async () => {
     const db = freshDb();
     seedLine(db, { id: 10, need_id: NEED, item: "Tinned Tomatoes", category: "Tinned Tomatoes", group_name: "Meal Food" });
     seedLine(db, { id: 11, need_id: NEED, item: "Tinned Tomatoes", category: "Baked Beans", group_name: "Meal Food" });
+    const rendered = (await getChangeLinesForNeed(d1Session(db), NEED)).get("Tinned Tomatoes")!.id;
 
-    await upsertNeedLine(d1Session(db), { ...params, category: "Shampoo" });
+    await save(d1Session(db), [one({ category: "Shampoo" })]);
 
-    expect(allLines(db).map((row) => [row.id, row.category])).toEqual([
-      [10, "Tinned Tomatoes"],
-      [11, "Shampoo"],
-    ]);
-    // ...and the form would have shown row 10's "Tinned Tomatoes", untouched.
-    expect((await getChangeLinesForNeed(d1Session(db), NEED)).get("Tinned Tomatoes")!.id).toBe(10);
+    const byId = new Map(allLines(db).map((row) => [row.id, row.category]));
+    expect(byId.get(rendered)).toBe("Shampoo");
+    expect(allLines(db)).toHaveLength(2);
   });
 
-  // The write half of the CRLF story the read tests pin, and a hole a mutation
-  // run found: making the existence check `.bind(params.needId,
-  // params.item.trim())` passes every other test here. It looks like a
-  // kindness and it is a duplicate-row generator -- the check would look for
-  // "Rice" while the INSERT (which does not trim) stored "Rice\r", so the
-  // second save of a CRLF-scraped need matches nothing and appends, and the
-  // third appends again. That is precisely the state the duplicate tests above
-  // describe as reachable; this is the edit that would make it routine.
+  // Making the lookup `params.item.trim()` passes almost everything else here
+  // and is a duplicate-row generator: the check would look for "Rice" while
+  // the INSERT (which does not trim) stored "Rice\r", so the second save of a
+  // CRLF-scraped need matches nothing and appends.
   //
   // Asserted in both directions, because a trim on ONE side is the dangerous
   // shape: the same item text round-trips to one row across repeated saves,
-  // and two items differing only in whitespace stay two rows. Neither the
-  // module nor SQLite normalises anything, and both halves have to keep
-  // agreeing about that.
+  // and two items differing only in whitespace stay two rows.
   it("neither trims nor normalises item text, so a CRLF item is its own row and updates in place", async () => {
     const db = freshDb();
     const session = d1Session(db);
-    await upsertNeedLine(session, { ...params, item: "Rice\r", category: "Rice" });
-    await upsertNeedLine(session, { ...params, item: "Rice\r", category: "Pasta" });
-    await upsertNeedLine(session, { ...params, item: "Rice", category: "Soup" });
-    await upsertNeedLine(session, { ...params, item: " Rice", category: "Dessert" });
+    const set = [
+      one({ item: "Rice\r", category: "Pasta" }),
+      one({ item: "Rice", category: "Soup" }),
+      one({ item: " Rice", category: "Dessert" }),
+    ];
+    await save(session, set);
+    // Saved AGAIN, unchanged: the round trip through the lookup has to land
+    // on the same three rows, not append three more.
+    await save(session, set);
 
-    // Three rows, not four and not one: the two "Rice\r" saves collapsed onto
-    // one row, and "Rice" / " Rice" are separate items from it and each other.
     expect(allLines(db).map((row) => [row.id, row.item, row.category])).toEqual([
       [1, "Rice\r", "Pasta"],
       [2, "Rice", "Soup"],
@@ -1107,7 +1245,7 @@ describe("upsertNeedLine", () => {
   it("stores an item longer than Django's max_length=250 without truncating it", async () => {
     const db = freshDb();
     const long = "Tinned Tomatoes ".repeat(25); // 400 characters
-    await upsertNeedLine(d1Session(db), { ...params, item: long });
+    await save(d1Session(db), [one({ item: long })]);
 
     expect(allLines(db)[0]!.item).toBe(long);
     expect(String(allLines(db)[0]!.item)).toHaveLength(400);
@@ -1124,7 +1262,7 @@ describe("upsertNeedLine", () => {
   it("binds item text rather than interpolating it", async () => {
     const db = freshDb();
     const nasty = "Sainsbury's \"own brand\" beans'); DROP TABLE foodbankchangeline; --";
-    await upsertNeedLine(d1Session(db), { ...params, item: nasty });
+    await save(d1Session(db), [one({ item: nasty })]);
 
     expect(allLines(db)).toHaveLength(1);
     expect(allLines(db)[0]!.item).toBe(nasty);
@@ -1134,17 +1272,19 @@ describe("upsertNeedLine", () => {
 
   // `type` is a plain TEXT column with no CHECK, and NeedLineType is erased at
   // runtime, so whatever the route hands over is what lands in the table.
-  // admin/needs.ts:354 is the only validation there is (`if (type !== "need"
-  // && type !== "excess") continue`). Recorded here so the next person to
-  // relax that route check knows there is no second line of defence -- and so
-  // that both legal values are proved to round-trip, since fcl_type_idx and
-  // every "still wanted" dashboard query filters on this column exactly.
+  // admin/needs.ts is the only validation there is (`if (type !== "need" &&
+  // type !== "excess") continue`). Recorded here so the next person to relax
+  // that route check knows there is no second line of defence -- and so that
+  // both legal values are proved to round-trip, since fcl_type_idx and every
+  // "still wanted" dashboard query filters on this column exactly.
   it("writes the type verbatim, with no normalisation and no database-level check", async () => {
     const db = freshDb();
-    const session = d1Session(db);
-    await upsertNeedLine(session, { ...params, item: "Rice", type: "need" });
-    await upsertNeedLine(session, { ...params, item: "Tinned Fruit", type: "excess" });
-    await upsertNeedLine(session, { ...params, item: "Soup", type: "NEED" as NeedLineType });
+
+    await save(d1Session(db), [
+      one({ item: "Rice", type: "need" }),
+      one({ item: "Tinned Fruit", type: "excess" }),
+      one({ item: "Soup", type: "NEED" as NeedLineType }),
+    ]);
 
     expect(allLines(db).map((row) => row.type)).toEqual(["need", "excess", "NEED"]);
   });
