@@ -55,10 +55,34 @@ async function fetchFaviconFor(url: string | null): Promise<Response | null> {
 // Cache-then-fetch-then-cache-write-back, using the Workers Cache API
 // directly (c.req.raw as the cache key -- query-string-free, so no
 // fragmentation risk the way media.ts's own ?size= comment warns about).
+// The eight-byte PNG signature. A favicon we would serve always starts with
+// it; Cloudflare's "error code: 522" page does not.
+const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+
+function looksLikePng(bytes: Uint8Array): boolean {
+  return bytes.length > PNG_SIGNATURE.length && PNG_SIGNATURE.every((b, i) => bytes[i] === b);
+}
+
 async function servedFromCacheOrFetched(c: Context<AppEnv>, url: string | null): Promise<Response> {
   const cache = caches.default;
   const cached = await cache.match(c.req.raw);
-  if (cached) return cached;
+  if (cached) {
+    // A CACHED ENTRY IS CHECKED, NOT TRUSTED. Returning it unread is how the
+    // 522 page survived its own fix: the bad bodies were written with a
+    // seven-day TTL, and a zone-wide purge_everything did not evict them --
+    // measured, the entries kept ageing normally afterwards. So there was no
+    // way to repair a poisoned URL except to wait a week.
+    //
+    // Verifying the signature makes the route self-healing instead: the first
+    // request after a deploy replaces the bad entry rather than serving it.
+    // The body has to be buffered to look at it, which is free here -- these
+    // are 2.5 KB icons, and it was going to be read by the client anyway.
+    const bytes = new Uint8Array(await cached.arrayBuffer());
+    if (looksLikePng(bytes)) {
+      return new Response(bytes, { headers: { "Content-Type": "image/png", "Cache-Control": CACHE_CONTROL_WEEK } });
+    }
+    console.error(`favicon: discarding a cached non-PNG for ${c.req.url} (${bytes.length} bytes)`);
+  }
 
   const upstream =
     (await fetchFaviconFor(url)) ??

@@ -202,10 +202,10 @@ function cachesStub(): unknown {
       match: async (request: Request): Promise<Response | undefined> => {
         cacheMatches.push({ key: request.url, method: request.method });
         const hit = cacheStore.get(`${request.method} ${request.url}`);
-        return hit ? new Response(hit.body, { headers: hit.headers }) : undefined;
+        return hit ? new Response(bin(hit.body), { headers: hit.headers }) : undefined;
       },
       put: async (request: Request, response: Response): Promise<void> => {
-        const body = await response.text();
+        const body = fromBin(new Uint8Array(await response.arrayBuffer()));
         cachePuts.push({
           key: request.url,
           method: request.method,
@@ -226,6 +226,40 @@ function cachesStub(): unknown {
 
 let fetchCalls: string[];
 /** Google's answer. "network-error" makes fetch REJECT, which is not the same as a non-200. */
+// The eight-byte PNG signature as a string, so a fixture body is a real image
+// as far as the route's check is concerned. Bodies used to be bare labels like
+// "GOOGLE-ICON-BYTES"; the route now validates what it reads back out of the
+// cache, and a fixture that cannot pass that check is not modelling a favicon.
+const PNG = "\x89PNG\r\n\x1a\n";
+
+/**
+ * One character to one byte, so a fixture string means what it says.
+ *
+ * The route reads the cached entry back and checks the eight-byte PNG
+ * signature. `new Response("\x89PNG...")` UTF-8-encodes that first character
+ * to 0xC2 0x89 -- two bytes, not one -- so a text-encoded fixture cannot look
+ * like an image no matter how it is spelled. Production caches bytes; the
+ * harness has to as well.
+ */
+function bin(text: string): Uint8Array {
+  const out = new Uint8Array(text.length);
+  for (let i = 0; i < text.length; i++) out[i] = text.charCodeAt(i) & 0xff;
+  return out;
+}
+
+/**
+ * The inverse of bin(): one byte to one character.
+ *
+ * NOT `new TextDecoder("latin1")` -- the Encoding spec aliases that to
+ * windows-1252, which maps 0x89 to U+2030 ("per mille"). The PNG signature
+ * would then read back as "‰PNG" and never compare equal to what was written.
+ */
+function fromBin(bytes: Uint8Array): string {
+  let out = "";
+  for (const b of bytes) out += String.fromCharCode(b);
+  return out;
+}
+
 let gstatic: { status: number; body: string; contentType: string } | "network-error";
 /** The bundled default, fetched over HTTP from /static/ rather than held in memory as Django holds it. */
 let defaultAsset: { status: number; body: string };
@@ -240,7 +274,7 @@ async function stubFetch(input: unknown): Promise<Response> {
     // throws in undici and in workerd alike, so the stub has to model that
     // rather than fabricate a 304 with bytes in it.
     const nullBody = gstatic.status === 204 || gstatic.status === 205 || gstatic.status === 304;
-    return new Response(nullBody ? null : gstatic.body, { status: gstatic.status, headers: { "Content-Type": gstatic.contentType } });
+    return new Response(nullBody ? null : bin(gstatic.body), { status: gstatic.status, headers: { "Content-Type": gstatic.contentType } });
   }
   throw new Error(`unexpected fetch: ${url}`);
 }
@@ -274,7 +308,7 @@ function env(): AppEnv["Bindings"] {
       fetch: async (req: Request) => {
         fetchCalls.push(new URL(req.url).pathname);
         if (assetsThrows) throw new TypeError("Network connection lost.");
-        return new Response(defaultAsset.body, { status: defaultAsset.status, headers: { "Content-Type": "image/png" } });
+        return new Response(bin(defaultAsset.body), { status: defaultAsset.status, headers: { "Content-Type": "image/png" } });
       },
     },
   } as unknown as AppEnv["Bindings"];
@@ -361,8 +395,8 @@ beforeEach(() => {
   cacheMatches = [];
   cachePuts = [];
   putThrows = false;
-  gstatic = { status: 200, body: "GOOGLE-ICON-BYTES", contentType: "image/x-icon" };
-  defaultAsset = { status: 200, body: "BUNDLED-DEFAULT-BYTES" };
+  gstatic = { status: 200, body: PNG + "GOOGLE-ICON-BYTES", contentType: "image/x-icon" };
+  defaultAsset = { status: 200, body: PNG + "BUNDLED-DEFAULT-BYTES" };
 
   vi.stubGlobal("fetch", stubFetch);
   vi.stubGlobal("caches", cachesStub());
@@ -382,7 +416,7 @@ interface Result {
 
 async function get(path: string, init: RequestInit = {}): Promise<Result> {
   const res = await app.fetch(new Request(`${ORIGIN}${path}`, init), env(), execCtx);
-  return { res, body: await res.text() };
+  return { res, body: fromBin(new Uint8Array(await res.arrayBuffer())) };
 }
 
 /** Every waitUntil promise settled, so the cache write is observable. allSettled: one of them rejects on purpose. */
@@ -417,14 +451,14 @@ describe("favicon routes: the registered URL set", () => {
     const { res, body } = await get(FB_PATH);
 
     expect(res.status).toBe(200);
-    expect(body).toBe("GOOGLE-ICON-BYTES");
+    expect(body).toBe(PNG + "GOOGLE-ICON-BYTES");
   });
 
   it("serves the donation point favicon at its own five-segment path", async () => {
     const { res, body } = await get(DP_PATH);
 
     expect(res.status).toBe(200);
-    expect(body).toBe("GOOGLE-ICON-BYTES");
+    expect(body).toBe(PNG + "GOOGLE-ICON-BYTES");
   });
 
   // The whole point of asserting these: index.ts:377-384 records the sibling
@@ -565,7 +599,7 @@ describe("wfbnFoodbankFavicon: domain extraction", () => {
     const { res, body } = await get("/needs/at/bare-domain/favicon.png");
 
     expect(res.status).toBe(200);
-    expect(body).toBe("BUNDLED-DEFAULT-BYTES");
+    expect(body).toBe(PNG + "BUNDLED-DEFAULT-BYTES");
     expect(fetchCalls).toEqual([DEFAULT_FAVICON_PATH]);
   });
 
@@ -593,7 +627,7 @@ describe("wfbnFoodbankFavicon: domain extraction", () => {
     const { res, body } = await get("/needs/at/no-website/favicon.png");
 
     expect(res.status).toBe(200);
-    expect(body).toBe("BUNDLED-DEFAULT-BYTES");
+    expect(body).toBe(PNG + "BUNDLED-DEFAULT-BYTES");
     expect(fetchCalls).toEqual([DEFAULT_FAVICON_PATH]);
   });
 });
@@ -608,11 +642,11 @@ describe("wfbnFoodbankFavicon: the response it builds", () => {
   // here on purpose: a route that forwarded the upstream type would serve an
   // .ico labelled as one, which most browsers cope with and Django never did.
   it("declares image/png whatever Google actually sent", async () => {
-    gstatic = { status: 200, body: "GOOGLE-ICON-BYTES", contentType: "image/x-icon" };
+    gstatic = { status: 200, body: PNG + "GOOGLE-ICON-BYTES", contentType: "image/x-icon" };
     const { res, body } = await get(FB_PATH);
 
     expect(res.headers.get("Content-Type")).toBe("image/png");
-    expect(body).toBe("GOOGLE-ICON-BYTES");
+    expect(body).toBe(PNG + "GOOGLE-ICON-BYTES");
   });
 
   // @cache_page(SECONDS_IN_WEEK) on both views. This is the ONLY thing making
@@ -655,11 +689,11 @@ describe("wfbnFoodbankFavicon: the response it builds", () => {
   ])("answers 200 when %s", async (_why, status, expectedBody) => {
     // The same bytes for every row, so the assertion is genuinely about which
     // SOURCE was used and not about which fixture string was set.
-    gstatic = { status, body: "UPSTREAM-BYTES", contentType: "text/html" };
+    gstatic = { status, body: PNG + "UPSTREAM-BYTES", contentType: "text/html" };
     const { res, body } = await get(FB_PATH);
 
     expect(res.status).toBe(200);
-    expect(body).toBe(expectedBody);
+    expect(body).toBe(PNG + expectedBody);
   });
 
   // `response.ok` is the guard, so a 3xx that fetch did not follow falls back
@@ -669,7 +703,7 @@ describe("wfbnFoodbankFavicon: the response it builds", () => {
     gstatic = { status: 304, body: "", contentType: "image/png" };
     const { body } = await get(FB_PATH);
 
-    expect(body).toBe("BUNDLED-DEFAULT-BYTES");
+    expect(body).toBe(PNG + "BUNDLED-DEFAULT-BYTES");
   });
 
   // The fallback fetch goes to the ASSET the site itself serves, hardcoded to
@@ -711,7 +745,7 @@ describe("wfbnFoodbankFavicon: the cache", () => {
     expect(cachePuts).toHaveLength(1);
     expect(cachePuts[0]!.key).toBe(`${ORIGIN}${FB_PATH}`);
     expect(cachePuts[0]!.status).toBe(200);
-    expect(cachePuts[0]!.body).toBe("GOOGLE-ICON-BYTES");
+    expect(cachePuts[0]!.body).toBe(PNG + "GOOGLE-ICON-BYTES");
     expect(cachePuts[0]!.headers["content-type"]).toBe("image/png");
     expect(cachePuts[0]!.headers["cache-control"]).toBe(CACHE_CONTROL_WEEK);
   });
@@ -727,7 +761,7 @@ describe("wfbnFoodbankFavicon: the cache", () => {
     const { res, body } = await get(FB_PATH);
 
     expect(res.status).toBe(200);
-    expect(body).toBe("GOOGLE-ICON-BYTES");
+    expect(body).toBe(PNG + "GOOGLE-ICON-BYTES");
     expect(fetchCalls).toEqual([]);
     expect(cachePuts).toHaveLength(1); // and no second write
   });
@@ -776,7 +810,7 @@ describe("wfbnFoodbankFavicon: the cache", () => {
     const { res, body } = await get(FB_PATH);
 
     expect(res.status).toBe(200);
-    expect(body).toBe("GOOGLE-ICON-BYTES");
+    expect(body).toBe(PNG + "GOOGLE-ICON-BYTES");
     expect(waited).toHaveLength(1);
   });
 
@@ -790,7 +824,7 @@ describe("wfbnFoodbankFavicon: the cache", () => {
     await drain();
 
     expect(res.status).toBe(200);
-    expect(body).toBe("GOOGLE-ICON-BYTES");
+    expect(body).toBe(PNG + "GOOGLE-ICON-BYTES");
     expect(cachePuts).toHaveLength(1);
   });
 
@@ -832,19 +866,19 @@ describe("wfbnFoodbankFavicon: the cache", () => {
   // bytes per food bank so a key collision shows up as the WRONG IMAGE rather
   // than as a missing one.
   it("keys per food bank, so one food bank's icon never serves as another's", async () => {
-    gstatic = { status: 200, body: "SALISBURY-ICON", contentType: "image/png" };
+    gstatic = { status: 200, body: PNG + "SALISBURY-ICON", contentType: "image/png" };
     await get(FB_PATH);
     await drain();
 
-    gstatic = { status: 200, body: "BATH-ICON", contentType: "image/png" };
+    gstatic = { status: 200, body: PNG + "BATH-ICON", contentType: "image/png" };
     const first = await get("/needs/at/bath/favicon.png");
     await drain();
 
     // and back to the first, which must still be its own bytes
     const second = await get(FB_PATH);
 
-    expect(first.body).toBe("BATH-ICON");
-    expect(second.body).toBe("SALISBURY-ICON");
+    expect(first.body).toBe(PNG + "BATH-ICON");
+    expect(second.body).toBe(PNG + "SALISBURY-ICON");
   });
 
   // SUSPECT, pinned not fixed. A favicon served entirely from the cache STILL
@@ -901,6 +935,53 @@ describe("wfbnFoodbankFavicon: what happens when things break", () => {
     await drain();
 
     expect(cachePuts).toEqual([]);
+  });
+
+  // SELF-HEALING. The 522 bodies were written with a seven-day TTL, and a
+  // zone-wide purge_everything did NOT evict them -- measured on production
+  // after the fix deployed: the entries kept ageing normally and kept being
+  // served. Without this check the only repair was to wait a week.
+  it("discards a cached entry that is not a PNG and re-fetches", async () => {
+    // A poisoned entry, exactly as the live bug left them.
+    cacheStore.set(`GET ${ORIGIN}${FB_PATH}`, { body: "error code: 522", headers: [["content-type", "image/png"]] });
+    gstatic = { status: 200, body: PNG + "FRESH-ICON", contentType: "image/png" };
+
+    const { res, body } = await get(FB_PATH);
+    await drain();
+
+    expect(res.status).toBe(200);
+    expect(body).toBe(PNG + "FRESH-ICON");
+    // It really went back to Google rather than trusting the cache.
+    expect(fetchCalls.some((u) => u.startsWith(GSTATIC_PREFIX))).toBe(true);
+    // And it replaced the bad entry, so the next request is clean too.
+    expect(cachePuts[0]!.body).toBe(PNG + "FRESH-ICON");
+    expect(errorLogs.join(" ")).toContain("discarding a cached non-PNG");
+  });
+
+  // The WHOLE signature, not just its first byte. "error code: 522" is
+  // rejected by any prefix check at all, so on its own it cannot tell a real
+  // check from a token one -- this body starts 0x89 and then diverges.
+  it("checks the whole PNG signature, not just the first byte", async () => {
+    cacheStore.set(`GET ${ORIGIN}${FB_PATH}`, { body: "\x89PNQ\r\n\x1a\nnot-really", headers: [["content-type", "image/png"]] });
+    gstatic = { status: 200, body: PNG + "FRESH-ICON", contentType: "image/png" };
+
+    const { res, body } = await get(FB_PATH);
+    await drain();
+
+    expect(res.status).toBe(200);
+    expect(body).toBe(PNG + "FRESH-ICON");
+  });
+
+  // The ordinary path must not pay for that: a good entry is still served
+  // straight from cache with no upstream call.
+  it("still serves a valid cached PNG without going upstream", async () => {
+    cacheStore.set(`GET ${ORIGIN}${FB_PATH}`, { body: PNG + "CACHED-ICON", headers: [["content-type", "image/png"]] });
+
+    const { res, body } = await get(FB_PATH);
+
+    expect(res.status).toBe(200);
+    expect(body).toBe(PNG + "CACHED-ICON");
+    expect(fetchCalls).toEqual([]);
   });
 
   // WAS "SUSPECT: an error body from the default asset is served as a PNG and
@@ -1058,7 +1139,7 @@ describe("wfbnFoodbankDonationpointFavicon", () => {
     const { res, body } = await get("/needs/at/salisbury/donationpoint/no-url-shop/favicon.png");
 
     expect(res.status).toBe(200);
-    expect(body).toBe("BUNDLED-DEFAULT-BYTES");
+    expect(body).toBe(PNG + "BUNDLED-DEFAULT-BYTES");
     expect(fetchCalls).toEqual([DEFAULT_FAVICON_PATH]);
   });
 
@@ -1073,7 +1154,7 @@ describe("wfbnFoodbankDonationpointFavicon", () => {
   // by URL -- so the donation point's entry must be its own. Different bytes
   // per entry so a collision is a wrong icon, not a missing one.
   it("caches per donation point URL, independently of its food bank's favicon", async () => {
-    gstatic = { status: 200, body: "SHOP-ICON", contentType: "image/png" };
+    gstatic = { status: 200, body: PNG + "SHOP-ICON", contentType: "image/png" };
     await get(DP_PATH);
     await drain();
 
@@ -1084,7 +1165,7 @@ describe("wfbnFoodbankDonationpointFavicon", () => {
     const shop = await get(DP_PATH);
 
     expect(fb.body).toBe("FOODBANK-ICON");
-    expect(shop.body).toBe("SHOP-ICON");
+    expect(shop.body).toBe(PNG + "SHOP-ICON");
     expect(cachePuts.map((p) => p.key)).toEqual([`${ORIGIN}${DP_PATH}`, `${ORIGIN}${FB_PATH}`]);
   });
 
@@ -1096,7 +1177,7 @@ describe("wfbnFoodbankDonationpointFavicon", () => {
     const { res, body } = await get(DP_PATH);
 
     expect(res.status).toBe(200);
-    expect(body).toBe("GOOGLE-ICON-BYTES");
+    expect(body).toBe(PNG + "GOOGLE-ICON-BYTES");
     expect(fetchCalls).toEqual([]);
   });
 });
