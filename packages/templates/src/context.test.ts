@@ -660,7 +660,7 @@ describe("the context as the templates read it", () => {
     expect(html).toContain("Language Cymraeg");
     expect(html).toContain("Language code cy");
     expect(html).toContain("Language direction ltr");
-    expect(html).toContain("Code version https://github.com/givefood/givefood/commit/9b11b27");
+    expect(html).toContain("Code version https://github.com/givefood/givefood2/commit/9b11b27");
   });
 
   it("drops the commit link when there is no commit, rather than linking to nothing", async () => {

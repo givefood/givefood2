@@ -248,7 +248,10 @@ describe("parsePoFile: multi-line strings from the real catalogues", () => {
     // newline counts, because this is the one place where an off-by-one in
     // either the escape decoder or the continuation loop would still produce
     // plausible-looking prose.
-    expect(ABOUT_US_MSGID.length).toBe(2247);
+    // 2248 since the repo link moved from givefood to givefood2 -- exactly
+    // one character longer, which is the whole point of pinning a length
+    // here rather than a shape.
+    expect(ABOUT_US_MSGID.length).toBe(2248);
     expect(ABOUT_US_MSGID.split("\n").length - 1).toBe(24);
     expect(ABOUT_US_MSGID.startsWith("\n                <p>Give Food is a UK charity that uses data to highlight ")).toBe(true);
     expect(ABOUT_US_MSGID.endsWith('<a href="mailto:mail@givefood.org.uk">mail@givefood.org.uk</a>\n                </p>\n\n            ')).toBe(
@@ -256,7 +259,7 @@ describe("parsePoFile: multi-line strings from the real catalogues", () => {
     );
 
     const welsh = cy[ABOUT_US_MSGID]!;
-    expect(welsh.length).toBe(2140);
+    expect(welsh.length).toBe(2141); // +1 with the repo link's move to givefood2, same as the msgid above
     // The Welsh translator collapsed most of the source's whitespace, so the
     // msgstr has 3 newlines where the msgid has 24. Asserted because it is a
     // real difference between the two sides of one entry -- a parser that

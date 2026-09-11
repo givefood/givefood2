@@ -109,7 +109,7 @@ Access any language via: ${domain}/{language-code}/
 
 - [API Overview](${domain}/api/): Introduction to the public API for accessing food bank data
 - [API v2 Documentation](${domain}/api/2/docs/): Interactive documentation with all endpoints and examples
-- [API Technical Guide](https://github.com/givefood/givefood/blob/main/gfapi2/README.md): Comprehensive technical documentation
+- [API v2 Source](https://github.com/givefood/givefood2/tree/main/workers/site/src/routes/api2): The handlers behind every v2 endpoint
 
 ## API Endpoints (v2)
 
@@ -157,19 +157,19 @@ API endpoints support multiple formats via \`?format=\` parameter:
 
 ## Source Code & Documentation
 
-- [Main Repository](https://github.com/givefood/givefood): Complete source code for the Give Food platform
-- [Project README](https://github.com/givefood/givefood/blob/main/README.md): Repository overview and architecture
-- [Testing Guide](https://github.com/givefood/givefood/blob/main/TESTING.md): How to run tests and contribute
-- [Development Guidelines](https://github.com/givefood/givefood/blob/main/.github/copilot-instructions.md): Coding conventions and best practices
-- [Languages Documentation](https://github.com/givefood/givefood/blob/main/docs/languages.md): Internationalization and translation info
+- [Main Repository](https://github.com/givefood/givefood2): Complete source code for the Give Food platform
+- [Project README](https://github.com/givefood/givefood2/blob/main/README.md): Repository overview and architecture
+- [Testing Guide](https://github.com/givefood/givefood2/blob/main/TESTING.md): How to run tests and contribute
+- [Architecture & Decisions](https://github.com/givefood/givefood2/blob/main/PLAN.md): Why the platform is built the way it is
+- [Templates & Translations](https://github.com/givefood/givefood2/tree/main/packages/templates): Nunjucks templates and the i18n catalogues
 
 ## Technical Components
 
-- [Public App](https://github.com/givefood/givefood/blob/main/givefood/README.md): Core framework and public-facing pages
-- [What Food Banks Need](https://github.com/givefood/givefood/blob/main/gfwfbn/README.md): Food bank search tool
-- [Dashboard](https://github.com/givefood/givefood/blob/main/gfdash/README.md): Data visualization components
-- [Write to MP](https://github.com/givefood/givefood/blob/main/gfwrite/README.md): MP contact functionality
-- [API v2](https://github.com/givefood/givefood/blob/main/gfapi2/README.md): Current production API
+- [Public Worker](https://github.com/givefood/givefood2/tree/main/workers/site): Every HTTP route the site serves
+- [What Food Banks Need](https://github.com/givefood/givefood2/tree/main/workers/site/src/routes/wfbn): Food bank search tool
+- [Dashboard](https://github.com/givefood/givefood2/tree/main/workers/site/src/routes/dashboards): Data visualization components
+- [Write to MP](https://github.com/givefood/givefood2/tree/main/workers/site/src/routes/write): MP contact functionality
+- [Background Jobs](https://github.com/givefood/givefood2/tree/main/workers/jobs): Crons, queue consumers and the daily dumps
 
 ## Key Features
 

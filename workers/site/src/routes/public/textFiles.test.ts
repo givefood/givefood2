@@ -500,11 +500,52 @@ function expectedLlmsTxt(domain: string, foodbanks: string, donationpoints: stri
   //    asserted directly in the link-crawl block below.
   text = replacing(text, `${domain}/needs/at/{slug}/subscribe/`, `${domain}/needs/at/{slug}/updates/subscribe/`);
 
+  // 6. The repository. Every link moved from givefood (the Django original)
+  //    to givefood2 (this port, which is what actually serves the site).
+  //    Django's document is the provenance for the LINE, so the edit belongs
+  //    here rather than in a copy of our own literal.
+  const G = "https://github.com/givefood/givefood";
+  const N = "https://github.com/givefood/givefood2";
+  const swaps: Array<[string, string]> = [
+    [`${G})`, `${N})`],
+    [`${G}/blob/main/README.md`, `${N}/blob/main/README.md`],
+    [`${G}/blob/main/TESTING.md`, `${N}/blob/main/TESTING.md`],
+  ];
+  for (const [from, to] of swaps) text = replacing(text, from, to);
+
+  // 7. And the seven links whose PATHS do not exist in the new repo. A host
+  //    swap alone would have shipped seven 404s in a document written for
+  //    machines to follow: gfapi2/, gfwfbn/, gfdash/, gfwrite/ and givefood/
+  //    are Django app directories, and docs/languages.md and
+  //    .github/copilot-instructions.md were never ported. Each is remapped to
+  //    the real equivalent in this repo's layout -- checked to exist, not
+  //    guessed -- which makes this a rewrite of the lines rather than a
+  //    rename, and why it is a separate numbered edit.
+  const remaps: Array<[string, string]> = [
+    [`- [API Technical Guide](${G}/blob/main/gfapi2/README.md): Comprehensive technical documentation`,
+     `- [API v2 Source](${N}/tree/main/workers/site/src/routes/api2): The handlers behind every v2 endpoint`],
+    [`- [Development Guidelines](${G}/blob/main/.github/copilot-instructions.md): Coding conventions and best practices`,
+     `- [Architecture & Decisions](${N}/blob/main/PLAN.md): Why the platform is built the way it is`],
+    [`- [Languages Documentation](${G}/blob/main/docs/languages.md): Internationalization and translation info`,
+     `- [Templates & Translations](${N}/tree/main/packages/templates): Nunjucks templates and the i18n catalogues`],
+    [`- [Public App](${G}/blob/main/givefood/README.md): Core framework and public-facing pages`,
+     `- [Public Worker](${N}/tree/main/workers/site): Every HTTP route the site serves`],
+    [`- [What Food Banks Need](${G}/blob/main/gfwfbn/README.md): Food bank search tool`,
+     `- [What Food Banks Need](${N}/tree/main/workers/site/src/routes/wfbn): Food bank search tool`],
+    [`- [Dashboard](${G}/blob/main/gfdash/README.md): Data visualization components`,
+     `- [Dashboard](${N}/tree/main/workers/site/src/routes/dashboards): Data visualization components`],
+    [`- [Write to MP](${G}/blob/main/gfwrite/README.md): MP contact functionality`,
+     `- [Write to MP](${N}/tree/main/workers/site/src/routes/write): MP contact functionality`],
+    [`- [API v2](${G}/blob/main/gfapi2/README.md): Current production API`,
+     `- [Background Jobs](${N}/tree/main/workers/jobs): Crons, queue consumers and the daily dumps`],
+  ];
+  for (const [from, to] of remaps) text = replacing(text, from, to);
+
   return text;
 }
 
 describe("GET /llms.txt -- the whole document", () => {
-  it("is Django's template with exactly the five recorded edits, byte for byte", async () => {
+  it("is Django's template with exactly the seven recorded edits, byte for byte", async () => {
     // THE TEST THIS HALF OF THE FILE EXISTS FOR, and the one that makes every
     // other assertion here a convenience. 140 lines of hand-maintained text
     // have exactly one failure mode -- someone edits a line -- and no reader,
