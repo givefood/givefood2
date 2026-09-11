@@ -47,27 +47,56 @@ function d1Session(db: DatabaseSync): Session {
   return { prepare: (sql: string) => statement(sql, []), getBookmark: () => null } as unknown as Session;
 }
 
-/** An R2 bucket that records what it was asked to store. */
+/**
+ * An R2 bucket that records what it was asked to store, and ENFORCES R2's own
+ * multipart rules.
+ *
+ * The rules are the point. A permissive fake accepted parts of differing
+ * lengths and every test passed, while the real bucket rejected the whole
+ * object at completion -- "All non-trailing parts must have the same length.
+ * (10048)" -- so the items dump never once appeared in production. Same
+ * failure as the D1 parameter cap: a harness looser than the real thing is
+ * worse than no harness, because it manufactures confidence.
+ */
 function fakeBucket() {
   const objects = new Map<string, { body: string; metadata: unknown }>();
   const multiparts: string[] = [];
+  const decoder = new TextDecoder();
+  const asText = (v: string | Uint8Array) => (typeof v === "string" ? v : decoder.decode(v));
   return {
     objects,
     multiparts,
-    async put(key: string, value: string, options: { httpMetadata?: unknown }) {
-      objects.set(key, { body: value, metadata: options?.httpMetadata });
+    async put(key: string, value: string | Uint8Array, options: { httpMetadata?: unknown }) {
+      objects.set(key, { body: asText(value), metadata: options?.httpMetadata });
       return {};
     },
     async createMultipartUpload(key: string, options: { httpMetadata?: unknown }) {
       multiparts.push(key);
-      const parts: string[] = [];
+      const parts: Array<string | Uint8Array> = [];
       return {
-        uploadPart: async (n: number, body: string) => {
+        uploadPart: async (n: number, body: string | Uint8Array) => {
           parts[n - 1] = body;
           return { partNumber: n, etag: `e${n}` };
         },
         complete: async () => {
-          objects.set(key, { body: parts.join(""), metadata: options?.httpMetadata });
+          const sizes = parts.map((p) => (typeof p === "string" ? new TextEncoder().encode(p).byteLength : p.byteLength));
+          const nonTrailing = sizes.slice(0, -1);
+          if (new Set(nonTrailing).size > 1) {
+            throw new Error("completeMultipartUpload: All non-trailing parts must have the same length. (10048)");
+          }
+          // R2's other rule: 5 MiB floor on every part but the last.
+          if (nonTrailing.some((n) => n < 5 * 1024 * 1024)) {
+            throw new Error("completeMultipartUpload: part smaller than the 5 MiB minimum (10048)");
+          }
+          // CONCATENATE BYTES, then decode once -- R2 stores the octet stream
+          // and a reader decodes the whole object. Decoding each part on its
+          // own instead reports a character that spans a boundary as U+FFFD
+          // and blames the writer for the harness's mistake.
+          const encoded = parts.map((pt) => (typeof pt === "string" ? new TextEncoder().encode(pt) : pt));
+          const joined = new Uint8Array(encoded.reduce((n, e) => n + e.byteLength, 0));
+          let at = 0;
+          for (const e of encoded) { joined.set(e, at); at += e.byteLength; }
+          objects.set(key, { body: new TextDecoder().decode(joined), metadata: options?.httpMetadata });
           return {};
         },
         abort: async () => {},
@@ -284,6 +313,51 @@ describe("R2 keys and metadata match the objects already in the bucket", () => {
     expect(results.map((r) => r.rows)).toEqual([1, 0, 0, 0]);
     // Small dumps take the single-PUT path, never multipart.
     expect(bucket.multiparts).toEqual([]);
+  });
+});
+
+describe("multipart uploads", () => {
+  // THE ONE THAT REACHED PRODUCTION TWICE. Needs >16 MiB so there are TWO
+  // non-trailing parts -- with one, "all non-trailing parts are the same
+  // length" is true by definition, which is exactly why the 8.4 MB foodbanks
+  // dump succeeded while the 63 MB items dump failed at completion.
+  it("emits equal-sized parts for a dump larger than one part", async () => {
+    seedFoodbank();
+    const filler = "x".repeat(5000);
+    const insert = db.prepare(
+      `INSERT INTO foodbankchangeline (id, need_id, foodbank_id, item, type, category, group_name, created)
+       VALUES (?, 1, 1, ?, 'need', 'Food', 'Tins', ?)`,
+    );
+    for (let i = 1; i <= 4000; i++) insert.run(i, `${filler}-${i}`, NOW);
+
+    const { bucket, results } = await runDumps();
+
+    // It really did go multipart, and really did complete.
+    expect(bucket.multiparts).toContain(dumpKey("items", "2026-09-10"));
+    const body = bodyOf(bucket, "items");
+    expect(results[1]!.rows).toBe(4000);
+    // Nothing lost or duplicated at the part boundaries.
+    expect(body.split("\r\n").filter(Boolean)).toHaveLength(4001);
+    expect(new TextEncoder().encode(body).byteLength).toBe(results[1]!.bytes);
+  });
+
+  // Multi-byte text spans part boundaries in the real data (thousands of
+  // rows carry it), and a boundary cut in CHARACTERS rather than bytes would
+  // split one in half and corrupt the object.
+  it("does not corrupt multi-byte text across a part boundary", async () => {
+    seedFoodbank();
+    const filler = "é£—".repeat(1700); // ~5 KB encoded, every char multi-byte
+    const insert = db.prepare(
+      `INSERT INTO foodbankchangeline (id, need_id, foodbank_id, item, type, category, group_name, created)
+       VALUES (?, 1, 1, ?, 'need', 'Food', 'Tins', ?)`,
+    );
+    for (let i = 1; i <= 4000; i++) insert.run(i, `${filler}-${i}`, NOW);
+
+    const { bucket } = await runDumps();
+    const body = bodyOf(bucket, "items");
+
+    expect(body).not.toContain("\uFFFD"); // no replacement characters
+    expect(body.split("\r\n").filter(Boolean)).toHaveLength(4001);
   });
 });
 
