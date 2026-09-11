@@ -62,7 +62,7 @@ import { robotsTxt } from "./robots";
 // locale loop; the two Disallow pushes swapped; "wfbn:get_location" changed
 // to "wfbn:index"; the per-locale sitemap push dropped; the blank line
 // between the two User-agent groups removed; the trailing newline dropped;
-// Crawl-delay changed to 1; the Cache-Control header dropped; a charset
+// Crawl-delay re-added; the Cache-Control header dropped; a charset
 // added to the Content-Type; "/at/*/hit/" quietly "corrected" to
 // "/needs/at/*/hit/"; and c.env.SITE_DOMAIN replaced by the same domain
 // hardcoded (which every whole-body assertion still accepts -- only the
@@ -123,7 +123,6 @@ Disallow: /gd/flag/
 
 User-agent: *
 Allow: /
-Crawl-delay: 2
 
 Sitemap: https://www.givefood.org.uk/sitemap.xml
 Sitemap: https://www.givefood.org.uk/cy/sitemap.xml
@@ -150,7 +149,7 @@ describe("GET /robots.txt -- the document itself", () => {
     expect(await res.text()).toBe(EXPECTED_BODY);
   });
 
-  it("emits 21 lines and a trailing newline -- 10 Disallow, 5 Sitemap", async () => {
+  it("emits 20 lines and a trailing newline -- 10 Disallow, 5 Sitemap", async () => {
     // The counts stated in robots.ts's own header comment ("Disallow: is 10
     // lines here, not Django's 44"), written down so that adding a fifth
     // locale to LOCALES is a visible, deliberate change to this file rather
@@ -161,8 +160,8 @@ describe("GET /robots.txt -- the document itself", () => {
     const body = await (await get("/robots.txt")).text();
     const lines = linesOf(body);
 
-    expect(lines).toHaveLength(22); // 21 lines + the empty string after the final "\n"
-    expect(lines[21]).toBe("");
+    expect(lines).toHaveLength(21); // 20 lines + the empty string after the final "\n"
+    expect(lines[20]).toBe("");
     expect(body.endsWith("\n")).toBe(true);
     expect(startingWith(body, "Disallow: ")).toHaveLength(10);
     expect(startingWith(body, "Sitemap: ")).toHaveLength(5);
@@ -176,14 +175,18 @@ describe("GET /robots.txt -- the document itself", () => {
     // parsers and starts a new record for others. Reproduced verbatim
     // rather than tidied, because "tidying" it is a behaviour change to a
     // file whose whole audience is other people's parsers.
-    const lines = linesOf(await (await get("/robots.txt")).text());
+    const body = await (await get("/robots.txt")).text();
+    const lines = linesOf(body);
 
     expect(lines[0]).toBe("User-agent: *");
     expect(lines[11]).toBe("");
     expect(lines[12]).toBe("User-agent: *");
     expect(lines[13]).toBe("Allow: /");
-    expect(lines[14]).toBe("Crawl-delay: 2");
-    expect(lines[15]).toBe("");
+    expect(lines[14]).toBe("");
+    // The directive is GONE, not merely moved: a re-added "Crawl-delay"
+    // anywhere in the body fails here, which a positional assertion on
+    // line 14 alone would not catch.
+    expect(body).not.toContain("Crawl-delay");
   });
 
   it("is pure ASCII, so the missing charset on the Content-Type cannot matter", async () => {

@@ -14,6 +14,16 @@ import type { AppEnv } from "../../types";
 // Disallow:/Sitemap: lists; this port loops LOCALES (4: en/cy/ga/gd, per
 // PLAN.md §2.7.1), so Disallow: is 10 lines here, not Django's 44.
 //
+// CRAWL-DELAY REMOVED, a deliberate divergence from Django's template
+// (maintainer decision 2026-09-11). Django emitted "Crawl-delay: 2" in the
+// second record. Google and Bing both ignore the directive outright --
+// Google documents it as unsupported and Bing takes its rate from
+// Webmaster Tools -- so the only crawlers it ever bound were the polite
+// minority that honour it, which are not the ones generating load. The
+// 404 flood that dominates this zone's traffic is Bing on stale URLs,
+// which Crawl-delay was never able to slow. The rest of the file stays
+// byte-for-byte Django's, including the two User-agent groups.
+//
 // sitemap_places_index is PERMANENTLY OMITTED from the Sitemap: list, not
 // just deferred: maintainer decision 2026-08-31 -- the `/needs/at/place/`
 // gazetteer pages (Django's `Place` model, 253,584 rows sourced from
@@ -40,7 +50,6 @@ export async function robotsTxt(c: Context<AppEnv>): Promise<Response> {
     "",
     "User-agent: *",
     "Allow: /",
-    "Crawl-delay: 2",
     "",
     ...sitemapUrls.map((s) => `Sitemap: ${c.env.SITE_DOMAIN}${s}`),
   ];
