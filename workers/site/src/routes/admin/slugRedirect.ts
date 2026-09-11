@@ -1,6 +1,7 @@
 import type { Context } from "hono";
 import { totalPages, getSlugRedirectsPage, getSlugRedirectById, slugRedirectOldSlugTaken, upsertSlugRedirect } from "@givefood/db";
 import { render } from "@givefood/templates";
+import { foodbankTag } from "@givefood/urls";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
 import { verifyCsrf } from "../../lib/csrf";
@@ -116,9 +117,41 @@ export async function adminSlugRedirectForm(c: Context<AppEnv>): Promise<Respons
     if (oldSlug === newSlug) return c.text("Old slug and new slug are the same", 400);
 
     await upsertSlugRedirect(db, { oldSlug, newSlug }, existing?.id);
-    // No cache to invalidate: middleware/slugRedirect.ts reads this table
+
+    // THE MIDDLEWARE MEMO IS NOT THE ONLY CACHE. This used to read "no
+    // cache to invalidate: middleware/slugRedirect.ts reads this table
     // directly, memoised 5 minutes per isolate, so a save is live within
-    // that window on its own.
+    // that window on its own" -- true of the memo, and wrong about the
+    // edge. `north-enfield` -> `enfield` was added on 2026-09-11 and
+    // /needs/at/north-enfield/ still served its own 200 page afterwards:
+    // that URL was already in the Cloudflare cache under
+    // `s-maxage=86400`, and as index.ts:131 says, "because wrangler.jsonc
+    // enables the Workers Cache a HIT never executes the Worker" -- so
+    // slugRedirect never ran. The redirect was correct all along and
+    // invisible for up to 24 hours.
+    //
+    // The old slug's pages are what must go: middleware/cacheTag.ts tags
+    // everything under /needs/at/<slug>/ with fb-<slug>, so one tag
+    // covers the page, locations, donation points, charity, news, RSS and
+    // GeoJSON. AGGREGATE_TAG is deliberately NOT purged -- a redirect
+    // changes no list, map or API collection, and purging the aggregates
+    // for it would evict the whole site's hot set to fix one URL.
+    //
+    // On an EDIT, the row's previous old_slug also needs purging: it is
+    // no longer redirected, and its 301 may itself be cached. `existing`
+    // is the pre-update row, so it still holds that value.
+    //
+    // waitUntil, not awaited, matching foodbank.ts:163 -- the admin gets
+    // its redirect immediately, and a failed enqueue must not turn a
+    // save that already committed into an error page.
+    const purgeTags = [foodbankTag(oldSlug)];
+    if (existing && existing.old_slug !== oldSlug) purgeTags.push(foodbankTag(existing.old_slug));
+    c.executionCtx.waitUntil(
+      c.env.PURGE_Q.send({ tags: purgeTags }).catch((err) =>
+        console.error("slug redirect save: purge enqueue failed", err),
+      ),
+    );
+
     return c.redirect("/admin/slug-redirects/", 302); // views.py:2300
   }
 

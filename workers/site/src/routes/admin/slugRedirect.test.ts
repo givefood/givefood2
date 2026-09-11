@@ -121,6 +121,11 @@ let db: DatabaseSync;
 let sessions: Map<string, string>;
 let app: Hono<AppEnv>;
 let env: AppEnv["Bindings"];
+// Every message routes/admin/slugRedirect.ts enqueued, in order. A save has
+// to purge the OLD slug's pages or the redirect is invisible behind the
+// edge cache for the full s-maxage=86400 -- the bug that made
+// `north-enfield` -> `enfield` look broken on 2026-09-11.
+let purged: { tags: string[] }[];
 
 // routes/admin/index.ts:83-85 and :225-229, reproduced exactly -- the same
 // five registrations behind the same requireAdminAuth, mounted at the same
@@ -177,6 +182,7 @@ beforeEach(() => {
     }),
   );
 
+  purged = [];
   env = {
     DB: { withSession: () => d1Session(db) },
     SESSIONS: {
@@ -187,6 +193,7 @@ beforeEach(() => {
     CSRF_SECRET,
     GMAP_STATIC_KEY: "",
     GMAP_GEOCODE_KEY: "",
+    PURGE_Q: { send: async (msg: { tags: string[] }) => void purged.push(msg) },
   } as unknown as AppEnv["Bindings"];
 
   app = buildApp();
@@ -1077,6 +1084,84 @@ describe("adminSlugRedirectForm (POST) -- editing", () => {
 // ===========================================================================
 // Refusals -- every one of these must leave the table exactly as it was
 // ===========================================================================
+
+describe("adminSlugRedirectForm (POST) -- cache purge", () => {
+  // THE BUG THIS FILE MISSED ENTIRELY. `north-enfield` -> `enfield` was
+  // added in the live admin on 2026-09-11 and /needs/at/north-enfield/ kept
+  // serving its own 200 page afterwards. The middleware was right -- the
+  // same URL with a cache-buster returned the 301 immediately -- but the
+  // plain URL was already in the Cloudflare cache under `s-maxage=86400`,
+  // and index.ts:131 spells out why that is fatal: "because wrangler.jsonc
+  // enables the Workers Cache a HIT never executes the Worker". The route
+  // carried a comment asserting there was "no cache to invalidate", which
+  // was true of the middleware's 5-minute memo and false of the edge.
+  //
+  // So the assertion is on the enqueued message, not on a 302: every save
+  // in this file already returned 302 while purging nothing at all.
+  it("purges the old slug's pages, or the redirect stays invisible behind the edge cache", async () => {
+    await post("/admin/slug-redirect/new/", { old_slug: "north-enfield", new_slug: "enfield" });
+
+    expect(purged).toEqual([{ tags: ["fb-north-enfield"] }]);
+  });
+
+  // The NEW slug is deliberately absent. Its pages are unchanged by a
+  // redirect -- /needs/at/enfield/ served the same bytes before and after --
+  // so purging it would evict a live page to no effect.
+  it("does not purge the new slug", async () => {
+    await post("/admin/slug-redirect/new/", { old_slug: "north-enfield", new_slug: "enfield" });
+
+    expect(purged[0]!.tags).not.toContain("fb-enfield");
+  });
+
+  // AGGREGATE_TAG covers the home page, the map, every API collection and
+  // every constituency page -- the site's hot set. A redirect changes none
+  // of them, and foodbank.ts purges it only because a food bank's DATA
+  // appears in those lists. Purging it here would turn a two-field admin
+  // save into a site-wide eviction.
+  it("does not purge the aggregates", async () => {
+    await post("/admin/slug-redirect/new/", { old_slug: "north-enfield", new_slug: "enfield" });
+
+    expect(purged[0]!.tags).not.toContain("fb-all");
+  });
+
+  // Editing old_slug strands the PREVIOUS one: it is no longer redirected,
+  // but its 301 may already be cached. `existing` is read before the UPDATE,
+  // so the route still has that value -- a handler that purged only the
+  // submitted slug would leave the old 301 serving forever.
+  it("also purges the previous old_slug when an edit moves it", async () => {
+    seedRedirect({ id: 7, old_slug: "north-enfield", new_slug: "enfield", created: T.mar2024 });
+
+    await post("/admin/slug-redirect/7/edit/", { old_slug: "enfield-north", new_slug: "enfield" });
+
+    expect(purged).toHaveLength(1);
+    expect(purged[0]!.tags.slice().sort()).toEqual(["fb-enfield-north", "fb-north-enfield"]);
+  });
+
+  // ...and does NOT double up when the edit leaves old_slug alone, which is
+  // what every other edit test in this file posts.
+  it("purges the slug once when an edit leaves old_slug unchanged", async () => {
+    seedRedirect({ id: 7, old_slug: "north-enfield", new_slug: "enfield", created: T.mar2024 });
+
+    await post("/admin/slug-redirect/7/edit/", { old_slug: "north-enfield", new_slug: "enfield-borough" });
+
+    expect(purged).toEqual([{ tags: ["fb-north-enfield"] }]);
+  });
+
+  // A rejected save wrote nothing, so there is nothing stale to evict. The
+  // guard matters because the enqueue sits after the validation block: move
+  // it above one of those early returns and every 400 starts purging.
+  it.each([
+    ["a clashing old_slug", { old_slug: "taken", new_slug: "somewhere" }],
+    ["old and new the same", { old_slug: "loop", new_slug: "loop" }],
+  ])("purges nothing when the save is rejected for %s", async (_label, body) => {
+    seedRedirect({ id: 9, old_slug: "taken", new_slug: "elsewhere", created: T.mar2024 });
+
+    const { res } = await post("/admin/slug-redirect/new/", body);
+
+    expect(res.status).toBe(400);
+    expect(purged).toEqual([]);
+  });
+});
 
 describe("adminSlugRedirectForm (POST) -- validation", () => {
   // The unique=True clash Django reports as "Slug redirect with this Old slug
