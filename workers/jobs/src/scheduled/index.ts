@@ -19,6 +19,7 @@ import {
 } from "@givefood/db";
 import { pyNow } from "@givefood/models";
 import { generateDumps, pruneDumps } from "../dumps";
+import { hitRollup } from "../hitRollup";
 import type { NeedcheckRenderMessage } from "../queues/needcheckRender";
 import type { ArticlesMessage } from "../queues/articles";
 import type { CharityMessage } from "../queues/charity";
@@ -43,6 +44,7 @@ export const HANDLERS: Record<string, (env: Env, scheduledTime: number) => Promi
   "10 3 * * *": crawlItemPrune,
   "*/5 * * * *": fragRefresh,
   "30 4 * * *": dumps,
+  "7 * * * *": hitRollup,
 };
 
 export async function handleScheduled(

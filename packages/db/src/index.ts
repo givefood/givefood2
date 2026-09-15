@@ -11,6 +11,7 @@ export * from "./foodbankDetail";
 export * from "./homepage";
 export * from "./subscribers";
 export * from "./frag";
+export * from "./hits";
 export * from "./dashboards";
 export * from "./needTranslations";
 export * from "./constituencySubscribers";
