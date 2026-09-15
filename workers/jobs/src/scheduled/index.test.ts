@@ -1,8 +1,10 @@
+import { readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
+import { fileURLToPath } from "node:url";
 import { MIGRATIONS_SQL as SCHEMA } from "@givefood/db/src/schema.testkit";
 import { findCrawlSetByRunId, insertCrawlSet, type Session } from "@givefood/db";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { getOrCreateCrawlSet } from "./index";
+import { getOrCreateCrawlSet, handleScheduled, HANDLERS } from "./index";
 
 // getOrCreateCrawlSet -- the fan-out crons' shared CrawlSet claim.
 //
@@ -210,5 +212,46 @@ describe("getOrCreateCrawlSet -- a write that genuinely failed", () => {
     await settled;
 
     expect(calls).toBe(3);
+  });
+});
+
+// DISPATCH IS BY EXACT STRING, so the two lists must be the same strings.
+// Cloudflare sets `controller.cron` to the trigger text as configured, and a
+// cron with no HANDLERS entry only logs. days_between_needs shipped keyed
+// "30 3 * * 0" against wrangler's "30 3 * * SUN" and silently never ran on
+// Workers -- found 2026-09-15, when every quiet open food bank still held the
+// value Django computed on 2026-08-30. A handler with no trigger is dead code
+// that looks scheduled, so the check runs both ways.
+describe("cron dispatch", () => {
+  function declaredCrons(): string[] {
+    // `.href`, as workers/site/src/routes/admin/jobs.test.ts does: this
+    // package typechecks against workers-types, whose URL is not node:url's.
+    const path = fileURLToPath(new URL("../../wrangler.jsonc", import.meta.url).href);
+    const block = /"crons"\s*:\s*\[([\s\S]*?)\]/.exec(readFileSync(path, "utf8"));
+    if (!block) throw new Error(`no "crons" array in ${path}`);
+    // Line comments first: they quote the rejected "30 3 * * 0".
+    return (block[1]!
+      .split("\n")
+      .map((line) => line.replace(/\/\/.*$/, ""))
+      .join("\n")
+      .match(/"([^"]*)"/g) ?? []).map((quoted) => quoted.slice(1, -1));
+  }
+
+  it("has a handler for every cron wrangler.jsonc declares, and no others", () => {
+    const declared = declaredCrons();
+    expect(declared.length).toBeGreaterThan(0);
+    expect([...declared].sort()).toEqual(Object.keys(HANDLERS).sort());
+  });
+
+  // The key comparison above cannot tell WHICH handler sits under a key, so
+  // pin the one that was lost.
+  it("runs days_between_needs under the Sunday string Cloudflare sends", async () => {
+    expect(HANDLERS["30 3 * * SUN"]?.name).toBe("daysBetweenNeeds");
+    const waitUntil = vi.fn();
+    const env = { DB: { withSession: () => ({ prepare: () => ({ run: async () => ({ success: true, meta: {} }) }) }) } };
+    await handleScheduled({ cron: "30 3 * * SUN", scheduledTime: 0 } as ScheduledController, env as never, { waitUntil } as unknown as ExecutionContext);
+    expect(waitUntil).toHaveBeenCalledOnce();
+    await waitUntil.mock.calls[0]![0];
+    expect(console.error).not.toHaveBeenCalled();
   });
 });

@@ -26,13 +26,20 @@ import type { CharityMessage } from "../queues/charity";
 // One handler per cron in wrangler.jsonc's triggers.crons, dispatched by
 // the exact cron expression. See PLAN.md §10 (delivery plan) and §8.5
 // (needcheck, in forensic detail) for what each becomes.
-const HANDLERS: Record<string, (env: Env, scheduledTime: number) => Promise<void>> = {
+//
+// KEYS MUST BE THE WRANGLER STRINGS CHARACTER FOR CHARACTER. Cloudflare sets
+// `controller.cron` to the configured trigger text, and a miss here is only a
+// console.error. days_between_needs was keyed "30 3 * * 0" after wrangler had
+// moved to "30 3 * * SUN", so it never ran on Workers: on 2026-09-15 every
+// quiet open food bank still held the value Django computed on 2026-08-30.
+// Exported for index.test.ts, which compares these keys with wrangler.jsonc.
+export const HANDLERS: Record<string, (env: Env, scheduledTime: number) => Promise<void>> = {
   "0 15 * * *": needcheck,
   "20 8-22/2 * * *": getArticles,
   "30 5 * * *": charityInfo,
   // dump's "30 4 * * *" slot deliberately gone, not repurposed -- WP 5.6,
   // maintainer decision 2026-09-02: PLAN.md §8.8.
-  "30 3 * * 0": daysBetweenNeeds,
+  "30 3 * * SUN": daysBetweenNeeds,
   "10 3 * * *": crawlItemPrune,
   "*/5 * * * *": fragRefresh,
   "30 4 * * *": dumps,
