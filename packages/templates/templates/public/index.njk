@@ -52,7 +52,7 @@
               <li><a href="{{ url('write:index') }}">{{ _("Write to your MP") }}</a>{% if language_code != 'en' %} ({{ _("English") }}){% endif %}</li>
             {% endif %}
             <li><a href="{{ url('donate') }}">{{ _("Donate") }}</a></li>
-            <li><a href="{{ url('services') }}">{% blocktrans %}Services for food banks{% endblocktrans %}</a></li>
+            <li><a href="{{ url('register_foodbank') }}">{% blocktrans %}Register a foodbank{% endblocktrans %}</a></li>
             <li><a href="{{ url('about_us') }}">{% blocktrans %}About us{% endblocktrans %}</a></li>
         </ul>
 
@@ -125,8 +125,8 @@
     </div>
     <div class="column">
       <h3>{{ _("Food banks") }}</h3>
-      <p>{{ _("Free websites, entry in our data and open data services to support your important work.") }}</p>
-      <a href="{{ url('services') }}">{{ _("Services for food banks") }}&nbsp;<svg viewBox="0 0 10 10" fill="none" aria-hidden="true"><path d="M1 1l4 4-4 4"></path></svg></a>
+      <p>{{ _("Register a food bank to be included in our database and allow users to find you and what you need.") }}</p>
+      <a href="{{ url('register_foodbank') }}">{{ _("Register a food bank") }}&nbsp;<svg viewBox="0 0 10 10" fill="none" aria-hidden="true"><path d="M1 1l4 4-4 4"></path></svg></a>
     </div>
     <div class="column">
       <h3>{{ _("Media") }}</h3>

@@ -15,7 +15,7 @@ import type { AppEnv } from "../../types";
 //   * IT IS A CONTENT PAGE OUTSIDE i18n_patterns. givefood/urls.py:67 puts it
 //     in the "Untranslated pages" block, so it has no /cy/, /ga/ or /gd/ form,
 //     and the handler passes NEITHER a locale to buildPageContext NOR one to
-//     render() -- as services.ts and apiDocs.ts also do, and as every other
+//     render() -- as apiDocs.ts also does, and as every other
 //     file in this directory (contentPages.ts, donate.ts, news.ts, country.ts)
 //     does not. So "make privacy.ts look like its neighbours" is a plausible
 //     tidy-up, and it produces a 200 advertising four hreflang URLs, three of

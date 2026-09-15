@@ -64,7 +64,6 @@ export const ROUTES: Record<string, string> = {
   human: "/human/",
   whatsapp_hook: "/whatsapp_hook/",
   "write:index": "/write/",
-  services: "/services/",
   news: "/news/",
   md_index: "/md/",
   bot: "/bot/",

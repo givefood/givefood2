@@ -61,7 +61,6 @@ describe("ROUTES", () => {
     expect(ROUTES.sitemap).toBe("/sitemap.xml");
     // ...and these from the "Untranslated pages" list below it.
     expect(ROUTES.privacy).toBe("/privacy/");
-    expect(ROUTES.services).toBe("/services/");
     expect(ROUTES.whatsapp_hook).toBe("/whatsapp_hook/"); // underscore, not a hyphen
     expect(ROUTES.md_index).toBe("/md/");
     expect(ROUTES.md_sitemap).toBe("/md/sitemap.xml");
@@ -651,18 +650,17 @@ describe("I18N_SCOPED", () => {
 
   it("leaves exactly Django's untranslated root pages unscoped", () => {
     // The root app is the mixed one: most of its names live inside
-    // i18n_patterns, five do not. routes.ts's header still warns that the
+    // i18n_patterns, four do not. routes.ts's header still warns that the
     // root-app names "aren't marked yet" -- they since were, so the whole
     // unnamespaced set is now classified and this asserts the split rather
-    // than the leftovers. Each of the five below is on the "Untranslated
+    // than the leftovers. Each of the four below is on the "Untranslated
     // pages" list in givefood/urls.py:
     //   privacy/         -- the confirmed i18n_patterns exception
-    //   services/        -- untranslated
     //   whatsapp_hook/   -- a webhook, not a page
     //   md/, md/sitemap.xml -- the "Markdown versions" block
     const unnamespaced = ALL_NAMES.filter((name) => !name.includes(":"));
     const unscoped = unnamespaced.filter((name) => !I18N_SCOPED.has(name)).sort();
-    expect(unscoped).toEqual(["md_index", "md_sitemap", "privacy", "services", "whatsapp_hook"]);
+    expect(unscoped).toEqual(["md_index", "md_sitemap", "privacy", "whatsapp_hook"]);
   });
 
   it("scopes the names page.njk emits on every single page", () => {

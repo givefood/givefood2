@@ -7,8 +7,8 @@ import type { AppEnv } from "../types";
 // public route files -- the API, geojson, /aac/, favicons, screenshots and
 // a handful of others -- and nothing at all on HTML, RSS or Markdown.
 //
-// routes/public/services.ts records the reasoning: "edge caching for the
-// cached pages is a Cloudflare Cache Rule, not per-route code". That is
+// The port's original reasoning was that "edge caching for the cached
+// pages is a Cloudflare Cache Rule, not per-route code". That is
 // still true and is not being reversed here. The Cache Rule works -- a food
 // bank page comes back HIT with age=3092 -- but a Cache Rule is an EDGE
 // mechanism, and it cannot put a header in the response. So no browser

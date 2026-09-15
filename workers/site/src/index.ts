@@ -41,7 +41,6 @@ import { humanRelay } from "./routes/human";
 import { whatsappHook } from "./routes/whatsappHook";
 import { publicIndex } from "./routes/public";
 import { publicAboutUs, publicApps, publicBot } from "./routes/public/contentPages";
-import { publicServices } from "./routes/public/services";
 import { publicPrivacy } from "./routes/public/privacy";
 import { publicDonate } from "./routes/public/donate";
 import { publicNews } from "./routes/public/news";
@@ -413,14 +412,13 @@ for (const locale of LOCALES) {
 }
 
 // WP 4.1: the givefood root app's content pages -- all i18n-patterned
-// (givefood/urls.py's "Translated pages" block) except services/privacy,
-// which sit in the "Untranslated pages" block and so get no locale loop.
+// (givefood/urls.py's "Translated pages" block) except privacy,
+// which sits in the "Untranslated pages" block and so get no locale loop.
 app.get("/about-us/", publicAboutUs);
 app.get("/apps/", publicApps);
 app.get("/bot/", publicBot);
 app.get("/donate/", publicDonate);
 app.get("/news/", publicNews);
-app.get("/services/", publicServices);
 app.get("/privacy/", publicPrivacy);
 app.get("/aac/", addressAutocomplete);
 // Ticket 8: the speculative half of the autocomplete -- results for the

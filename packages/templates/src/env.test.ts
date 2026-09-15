@@ -163,14 +163,14 @@ describe("the precompiled loader", () => {
     expect(xml.trimEnd().endsWith("</rss>")).toBe(true);
   });
 
-  it("holds all 150 templates the build script emitted, so a real name is never a typo away from missing", async () => {
+  it("holds all 149 templates the build script emitted, so a real name is never a typo away from missing", async () => {
     // Guards the assumption every other test in this file makes. If
     // precompile.ts ever stopped walking a subdirectory, the tests below
     // that render by name would fail with "template not found" and the ones
     // that inject would keep passing -- so this states the real count once,
     // where it is obvious what changed.
     const realNames = Object.keys(precompiledTemplates).filter((name) => !name.startsWith(INJECTED_PREFIX));
-    expect(realNames).toHaveLength(150);
+    expect(realNames).toHaveLength(149);
     expect(realNames).toContain("wfbn/rss.njk");
     expect(realNames).toContain("emails/need_notification_txt.njk");
     // Nested include paths are keyed by their path relative to templates/,
