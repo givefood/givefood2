@@ -13,6 +13,7 @@ import {
   insertFoodbankDiscrepancy,
   pruneCrawlItems,
   pruneCrawlSets,
+  refreshSiteStats,
   setCrawlSetExpected,
   updateDaysBetweenNeeds,
   type Session,
@@ -45,6 +46,7 @@ export const HANDLERS: Record<string, (env: Env, scheduledTime: number) => Promi
   "*/5 * * * *": fragRefresh,
   "30 4 * * *": dumps,
   "7 * * * *": hitRollup,
+  "37 * * * *": siteStatsRefresh,
 };
 
 export async function handleScheduled(
@@ -374,6 +376,16 @@ async function crawlItemPrune(env: Env): Promise<void> {
   const setsDeleted = await pruneCrawlSets(session);
   await finishStaleCrawlSets(session);
   console.log(`crawlItemPrune: deleted ${itemsDeleted} crawlitem(s), ${setsDeleted} crawlset(s)`);
+}
+
+// The homepage, /llms.txt and /md/ totals (site_stats). Their only writer
+// was the Postgres extraction tool, so they froze at 2026-09-05 -- see
+// refreshSiteStats. Hourly per PLAN.md's Tier 2 table; :37 keeps it clear of
+// the :07 hit rollup and the */5 frag refresh's heavier ticks.
+async function siteStatsRefresh(env: Env): Promise<void> {
+  const session = env.DB.withSession("first-unconstrained");
+  await refreshSiteStats(session, pyNow());
+  console.log("siteStatsRefresh: done");
 }
 
 // WP 4.4: precomputes the two expensive /frag/ values (last-updated,

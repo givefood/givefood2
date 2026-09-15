@@ -111,7 +111,10 @@
       // PLAN.md §10.7.3's Analytics Engine -> D1 foodbankhit rollup, missing
       // until 2026-09-15 ("most viewed" went empty). Hourly over yesterday
       // and today -- see src/hitRollup/index.ts. :07 to stay off the hour.
-      "7 * * * *"         // hit rollup
+      "7 * * * *",        // hit rollup
+      // site_stats (homepage totals). Only the Postgres extraction tool ever
+      // wrote it, so it froze at 2026-09-05 -- packages/db/src/homepage.ts.
+      "37 * * * *"        // site stats refresh
     ]
   },
 

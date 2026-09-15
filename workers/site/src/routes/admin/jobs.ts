@@ -53,6 +53,7 @@ const CRON_JOBS: { schedule: string; name: string; description: string; crawl_ty
   { schedule: "*/5 * * * *", name: "frag refresh", description: "/frag/ payload refresh into KV", crawl_type: null },
   { schedule: "30 4 * * *", name: "dump", description: "Daily CSV dumps to R2 (github #59)", crawl_type: null },
   { schedule: "7 * * * *", name: "hit rollup", description: "Analytics Engine hits into foodbankhit, hourly", crawl_type: null },
+  { schedule: "37 * * * *", name: "site stats", description: "Homepage totals recomputed into site_stats, hourly", crawl_type: null },
 ];
 
 export async function adminJobsList(c: Context<AppEnv>): Promise<Response> {

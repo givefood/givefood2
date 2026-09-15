@@ -23,6 +23,41 @@ export async function getSiteStats(session: Session): Promise<SiteStatsRow | nul
   return row as SiteStatsRow | null;
 }
 
+// The writer for the row above, run hourly by workers/jobs (PLAN.md's Tier 2
+// table: "3600 s, refreshed by cron"). Until 2026-09-15 the ONLY writer was
+// tools/pg-to-d1/extract_core.py's load_site_stats(), so the homepage,
+// /llms.txt and /md/ figures froze at its last run on 2026-09-05.
+//
+// extract_core.py's SITE_STATS_SQL, clause for clause, against the D1 tables
+// that now hold the same data -- including its double-counting of delivery
+// addresses in both totals and its inclusion of closed food banks, which are
+// get_site_stats()'s own definitions, not mistakes to tidy here. `meals` is
+// int(calories / 500); integer division is the same floor for a non-negative
+// sum. Verified on production 2026-09-15: meals identical to the ETL's row,
+// the other three matching a live count; 349k rows read, ~390ms.
+//
+// One statement, so the row is never half-updated. `computedAt` comes from
+// the caller (pyNow()) to keep the ETL's microsecond text format.
+export async function refreshSiteStats(session: Session, computedAt: string): Promise<void> {
+  await session
+    .prepare(
+      `INSERT OR REPLACE INTO site_stats (id, foodbanks, donationpoints, items, meals, computed_at)
+       SELECT 1,
+         (SELECT COUNT(*) FROM foodbank) +
+         (SELECT COUNT(*) FROM foodbank WHERE delivery_address IS NOT NULL AND delivery_address != '') +
+         (SELECT COUNT(*) FROM foodbanklocation),
+         (SELECT COUNT(*) FROM foodbankdonationpoint) +
+         (SELECT COUNT(*) FROM foodbank WHERE address_is_administrative = 0) +
+         (SELECT COUNT(*) FROM foodbank WHERE delivery_address IS NOT NULL AND delivery_address != '') +
+         (SELECT COUNT(*) FROM foodbanklocation WHERE is_donation_point = 1),
+         (SELECT COUNT(*) FROM foodbankchangeline),
+         (SELECT COALESCE(SUM(calories), 0) FROM orders) / 500,
+         ?`,
+    )
+    .bind(computedAt)
+    .run();
+}
+
 export interface RecentlyUpdatedRow {
   foodbank_name: string;
 }
