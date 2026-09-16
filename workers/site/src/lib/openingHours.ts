@@ -7,6 +7,20 @@
 // replace -- cleaner given this codebase's render()-time translate
 // function, same rendered *text*.
 //
+// EVERY CLOCK AND CALENDAR READ HERE IS Europe/London, NOT UTC.
+// `opening_hours` holds what is written on the shop door -- Google Places'
+// weekdayDescriptions for a UK place, or an admin typing the same thing by
+// hand -- so "7:00 AM" means 7am in Farnborough, never 7am UTC. Workers run
+// in UTC, which is the same clock only between the October and March
+// transitions; through British Summer Time a UTC read is an hour early. That
+// is issue #60: Morrisons Southwood, open 7:00 AM - 10:00 PM, badged "Closed"
+// in a screenshot taken at 07:39 BST, and shut-looking every BST morning
+// until 8am local. The same offset moved the seven-row rotation onto the
+// wrong day for the first hour of each BST day (00:30 BST is 23:30 UTC the
+// day before), which mislabels all seven rows and shifts the bank-holiday
+// banners with them. Winter answers are unchanged, because Europe/London IS
+// UTC then.
+//
 // DELIBERATE DIVERGENCE on `is_closed`: Django computes it from the
 // ALREADY-TRANSLATED text (`opening_hours.replace("Closed", _("Closed"))`
 // happens before the `"Closed" in day_text` check) -- on cy/ga/gd, where
@@ -60,6 +74,49 @@ function pythonWeekday(d: Date): number {
   return (d.getUTCDay() + 6) % 7;
 }
 
+// One formatter, built once: constructing an Intl.DateTimeFormat is the
+// expensive part, and this one is stateless.
+const LONDON = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "Europe/London",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23", // midnight is 00:xx, not 24:xx
+});
+
+interface LondonTime {
+  year: number;
+  month: number; // 1-12, as Intl reports it
+  day: number;
+  minutes: number; // since London midnight
+}
+
+// The London wall-clock fields for an instant. Throws RangeError("Invalid
+// time value") on an invalid Date -- Intl's own behaviour, and by luck
+// exactly the error `openingHoursDays` already raised there, so that
+// function's pinned contract is unchanged.
+function londonTime(now: Date): LondonTime {
+  const parts = LONDON.formatToParts(now);
+  const field = (type: string) => Number(parts.find((p) => p.type === type)!.value);
+  return {
+    year: field("year"),
+    month: field("month"),
+    day: field("day"),
+    minutes: field("hour") * 60 + field("minute"),
+  };
+}
+
+// The London calendar date re-expressed as a UTC midnight. The rest of this
+// module's date arithmetic -- pythonWeekday, the whole-day steps, the
+// toISOString() holiday key -- is written against UTC calendar fields, so
+// handing it a UTC stand-in for the London date keeps all of it correct
+// without a second timezone conversion per row.
+function londonMidnightUtc(t: LondonTime): number {
+  return Date.UTC(t.year, t.month - 1, t.day);
+}
+
 // `opening_hours_days()`. Django's `False` no-hours sentinel is `null`
 // here; the caller (wfbnFoodbankDonationpointOpeninghours) already 404s
 // before this runs, so that branch is unreached in practice.
@@ -67,7 +124,7 @@ export function openingHoursDays(openingHours: string | null, country: string | 
   if (!openingHours) return null;
   const days = openingHours.split("\n");
   const holidays = bankHolidaysForCountry(country);
-  const todayUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const todayUtc = londonMidnightUtc(londonTime(now));
 
   const result: OpeningHoursDay[] = [];
   for (let offset = 0; offset < 7; offset++) {
@@ -98,12 +155,16 @@ function parseClockTime(text: string): number | null {
   return hour * 60 + minute;
 }
 
-// `is_open` property. `now`'s tz matches formatRfc2822's own reasoning in
-// env.ts: Workers run in UTC, and Django's timezone.now() is UTC-aware too.
+// `is_open` property, answered on the London clock -- see the module header.
 export function isOpen(openingHours: string | null, now: Date = new Date()): boolean | null {
   if (!openingHours) return null;
+  // "Cannot tell" for an unusable clock, as for every other unusable input
+  // here. Explicit because londonTime() would throw on it, where the old
+  // getUTCDay()-of-NaN route degraded by accident.
+  if (Number.isNaN(now.getTime())) return null;
   const days = openingHours.split("\n");
-  const dayText = days[pythonWeekday(now)] ?? "";
+  const today = londonTime(now);
+  const dayText = days[pythonWeekday(new Date(londonMidnightUtc(today)))] ?? "";
   if (dayText.includes("Closed")) return false;
 
   const { hours } = splitDayLine(dayText);
@@ -114,7 +175,7 @@ export function isOpen(openingHours: string | null, now: Date = new Date()): boo
   const closeMin = parseClockTime(parts[1]!);
   if (openMin === null || closeMin === null) return null;
 
-  const currentMin = now.getUTCHours() * 60 + now.getUTCMinutes();
+  const currentMin = today.minutes;
   if (closeMin <= openMin) return currentMin >= openMin; // crosses midnight
   return currentMin >= openMin && currentMin < closeMin;
 }

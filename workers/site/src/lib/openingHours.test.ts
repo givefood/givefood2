@@ -35,6 +35,8 @@ const LABELLED = ["L0: h0", "L1: h1", "L2: h2", "L3: h3", "L4: h4", "L5: h5", "L
 
 // Fixed instants, chosen so the weekday is stated once here and not
 // re-derived (wrongly) in each test. Verified against the real calendar.
+// Noon deliberately: it is the same calendar day in UTC and in London
+// whatever the season, so these say "a Saturday" and nothing about zones.
 const SATURDAY = new Date("2026-09-05T12:00:00Z");
 const SUNDAY = new Date("2026-09-06T12:00:00Z");
 const MONDAY = new Date("2026-09-07T12:00:00Z");
@@ -53,12 +55,11 @@ const NBSP = " ";
 
 // A Date whose LOCAL-time accessors throw. The suite runs with TZ=UTC
 // (vitest.config.mts), so getHours() and getUTCHours() return the same number
-// and no ordinary fixture can tell a local-time read from a UTC one -- a
-// regression to getHours() would stay green here and be an hour out for the
-// whole of British Summer Time on the live site. Passing one of these proves
-// the module touched only the getUTC* family, which is the invariant the
-// module header claims ("Workers run in UTC, and Django's timezone.now() is
-// UTC-aware too").
+// and no ordinary fixture can tell a host-local read from a UTC one. The
+// module must do neither: it answers in Europe/London, via Intl, from the
+// instant alone. Passing one of these proves it never reached for the host's
+// clock -- a getHours() regression would be right on a UTC server, wrong on
+// a developer's laptop, and silently so in both.
 class UtcOnlyDate extends Date {
   override getHours(): never {
     throw new Error("read local getHours()");
@@ -381,28 +382,56 @@ describe("openingHoursDays", () => {
     });
   });
 
-  // The contract is that the seven rows are a function of the UTC DATE, not
-  // of the instant: a reader at 00:00 and a reader at 23:59:59.999 get an
-  // identical list, holiday banners included. (The Date.UTC() truncation to
-  // midnight is belt-and-braces rather than the thing that achieves it --
-  // adding whole days to any instant lands on the same calendar dates in
-  // UTC. The invariant is still worth pinning, because it is the one a
-  // future "just use now.getTime() + a rolling 24h window" rewrite breaks,
-  // and it breaks it invisibly: the page would simply differ by the hour the
-  // reader happened to arrive.)
-  it("produces the same seven days at any time of the stored UTC day", () => {
-    const early = openingHoursDays(WEEK, "England", new Date("2026-12-25T00:00:00.000Z"))!;
-    const late = openingHoursDays(WEEK, "England", new Date("2026-12-25T23:59:59.999Z"))!;
+  // The contract is that the seven rows are a function of the LONDON DATE,
+  // not of the instant: a reader at 00:00 and a reader at 23:59:59.999 get an
+  // identical list, holiday banners included. (The truncation to midnight is
+  // belt-and-braces rather than the thing that achieves it -- adding whole
+  // days to any instant lands on the same calendar dates. The invariant is
+  // still worth pinning, because it is the one a future "just use
+  // now.getTime() + a rolling 24h window" rewrite breaks, and it breaks it
+  // invisibly: the page would simply differ by the hour the reader happened
+  // to arrive.)
+  it("produces the same seven days at any time of the London day", () => {
+    const early = openingHoursDays(WEEK, "England", new Date("2026-12-25T00:00:00.000+00:00"))!;
+    const late = openingHoursDays(WEEK, "England", new Date("2026-12-25T23:59:59.999+00:00"))!;
     expect(late).toEqual(early);
     expect(early[0]!.holiday?.title).toBe("Christmas Day");
     expect(early[3]!.holiday?.title).toBe("Boxing Day"); // Mon 28th, three days on
   });
 
-  // See UtcOnlyDate: TZ=UTC in the harness hides a local-time read, so the
-  // only way to prove getUTCFullYear/getUTCMonth/getUTCDate/getUTCDay are
-  // what the rotation and the holiday dates are built from is to make the
-  // local-time accessors fatal.
-  it("builds the window from UTC calendar fields only", () => {
+  // The other half of issue #60. The London day turns over an hour before the
+  // UTC one for the whole of BST, so between midnight and 1am every summer
+  // night a UTC rotation is still showing YESTERDAY: all seven rows shifted
+  // by a day, each labelled with the wrong weekday's hours, and the bank
+  // holiday banners dragged along with them. 00:30 BST on the Summer bank
+  // holiday is the sharpest version -- the visitor is told the holiday is
+  // tomorrow while standing in it.
+  it("rolls over to the new day at London midnight, not an hour later", () => {
+    const justAfterMidnight = new Date("2026-08-31T00:30:00+01:00"); // 23:30Z on the 30th
+    const days = openingHoursDays(WEEK, "England", justAfterMidnight)!;
+    expect(days.map((d) => d.day_name)).toEqual([
+      "Monday",
+      "Tuesday",
+      "Wednesday",
+      "Thursday",
+      "Friday",
+      "Saturday",
+      "Sunday",
+    ]);
+    expect(days[0]).toMatchObject({ hours: "9:00 AM - 5:00 PM", is_today: true });
+    expect(days[0]!.holiday?.title).toBe("Summer bank holiday");
+    // Half an hour earlier is genuinely still Sunday, so the rotation must
+    // NOT have simply been shifted a day forward for everyone.
+    const beforeMidnight = openingHoursDays(WEEK, "England", new Date("2026-08-30T23:30:00+01:00"))!;
+    expect(beforeMidnight[0]!.day_name).toBe("Sunday");
+    expect(beforeMidnight[1]!.holiday?.title).toBe("Summer bank holiday");
+  });
+
+  // See UtcOnlyDate: TZ=UTC in the harness hides a host-local read, so the
+  // only way to prove the rotation and the holiday dates come from the
+  // London calendar rather than the machine's is to make the local-time
+  // accessors fatal.
+  it("builds the window from London calendar fields, never the host's", () => {
     const days = openingHoursDays(WEEK, "England", new UtcOnlyDate("2026-12-25T00:00:00Z"))!;
     expect(days.map((d) => d.day_name)).toEqual([
       "Friday",
@@ -520,14 +549,16 @@ describe("openingHoursDays", () => {
     expect(openingHoursDays(LABELLED, "England", new Date(0))![0]!.day_name).toBe("L3"); // Thu 1 Jan 1970
   });
 
-  // The one input that DOES throw. `Date.UTC(NaN, ...)` is NaN, and
-  // `new Date(NaN).toISOString()` raises RangeError, so an unparseable date
-  // 500s the fragment rather than degrading like every other malformed input
-  // above. Production callers always pass a real clock, so this is a latent
-  // trap rather than a live fault -- pinned here so that anyone who reuses
+  // The one input that DOES throw. Intl's formatToParts raises
+  // RangeError("Invalid time value") on an unparseable date, so this 500s the
+  // fragment rather than degrading like every other malformed input above.
+  // Production callers always pass a real clock, so it is a latent trap
+  // rather than a live fault -- pinned here so that anyone who reuses
   // openingHoursDays with a user-supplied date knows to validate it first,
-  // and so the asymmetry with isOpen (which returns null for the same input)
-  // is on the record.
+  // and so the asymmetry with isOpen (which guards explicitly and returns
+  // null for the same input) is on the record. The error is unchanged from
+  // the UTC implementation, which threw the same RangeError out of
+  // toISOString().
   it("throws RangeError on an invalid Date, unlike every other bad input", () => {
     expect(() => openingHoursDays(WEEK, "England", new Date("not a date"))).toThrow(RangeError);
     expect(() => openingHoursDays(WEEK, "England", new Date(NaN))).toThrow(/Invalid time value/);
@@ -559,25 +590,27 @@ describe("isOpen", () => {
   // Same Monday=0..Sunday=6 mapping as above, checked one day at a time.
   // 2026-09-07 is a Monday, so offset i is the i-th stored line. Each day's
   // window is unique, so reading the wrong line is always wrong -- there is
-  // no index that accidentally agrees.
+  // no index that accidentally agrees. The base is LONDON midnight (BST, so
+  // 23:00Z the evening before): the windows are London wall-clock hours from
+  // it, because that is the clock the stored hours are written in.
   it("reads today's line using Python's Monday=0 weekday", () => {
     for (let i = 0; i < 7; i++) {
-      const date = new Date(Date.UTC(2026, 8, 7 + i));
-      const inWindow = new Date(date.getTime() + (i + 1) * 3600000 + 30 * 60000);
-      const outOfWindow = new Date(date.getTime() + (i + 2) * 3600000 + 30 * 60000);
+      const midnight = new Date(`2026-09-${String(7 + i).padStart(2, "0")}T00:00:00+01:00`);
+      const inWindow = new Date(midnight.getTime() + (i + 1) * 3600000 + 30 * 60000);
+      const outOfWindow = new Date(midnight.getTime() + (i + 2) * 3600000 + 30 * 60000);
       expect(isOpen(oneHourPerDay, inWindow)).toBe(true);
       expect(isOpen(oneHourPerDay, outOfWindow)).toBe(false);
     }
   });
 
   it("is open inside the window and shut outside it", () => {
-    expect(isOpen(WEEK, new Date("2026-09-07T12:00:00Z"))).toBe(true); // Monday lunchtime
-    expect(isOpen(WEEK, new Date("2026-09-07T08:59:00Z"))).toBe(false); // before opening
-    expect(isOpen(WEEK, new Date("2026-09-07T17:30:00Z"))).toBe(false); // after closing
+    expect(isOpen(WEEK, new Date("2026-09-07T12:00:00+01:00"))).toBe(true); // Monday lunchtime
+    expect(isOpen(WEEK, new Date("2026-09-07T08:59:00+01:00"))).toBe(false); // before opening
+    expect(isOpen(WEEK, new Date("2026-09-07T17:30:00+01:00"))).toBe(false); // after closing
     // Wednesday's 10-4 is narrower than Monday's 9-5: 9:30am on Wednesday is
     // shut, which only holds if the right line was read.
-    expect(isOpen(WEEK, new Date("2026-09-09T09:30:00Z"))).toBe(false);
-    expect(isOpen(WEEK, new Date("2026-09-09T10:30:00Z"))).toBe(true);
+    expect(isOpen(WEEK, new Date("2026-09-09T09:30:00+01:00"))).toBe(false);
+    expect(isOpen(WEEK, new Date("2026-09-09T10:30:00+01:00"))).toBe(true);
   });
 
   // Django: `open_time <= current_time < close_time` -- inclusive at the
@@ -585,18 +618,18 @@ describe("isOpen", () => {
   // wrong is the one that matters: it tells someone standing outside at
   // 5:00pm that the door is still open.
   it("is open at the opening minute and shut at the closing minute", () => {
-    expect(isOpen(WEEK, new Date("2026-09-07T09:00:00Z"))).toBe(true);
-    expect(isOpen(WEEK, new Date("2026-09-07T08:59:59Z"))).toBe(false);
-    expect(isOpen(WEEK, new Date("2026-09-07T16:59:59Z"))).toBe(true);
-    expect(isOpen(WEEK, new Date("2026-09-07T17:00:00Z"))).toBe(false);
+    expect(isOpen(WEEK, new Date("2026-09-07T09:00:00+01:00"))).toBe(true);
+    expect(isOpen(WEEK, new Date("2026-09-07T08:59:59+01:00"))).toBe(false);
+    expect(isOpen(WEEK, new Date("2026-09-07T16:59:59+01:00"))).toBe(true);
+    expect(isOpen(WEEK, new Date("2026-09-07T17:00:00+01:00"))).toBe(false);
   });
 
   // Seconds are dropped (minute resolution), so 17:00:59 is still "17:00".
   it("compares at whole-minute resolution", () => {
-    expect(isOpen(WEEK, new Date("2026-09-07T09:00:59Z"))).toBe(true);
-    expect(isOpen(WEEK, new Date("2026-09-07T17:00:59Z"))).toBe(false);
+    expect(isOpen(WEEK, new Date("2026-09-07T09:00:59+01:00"))).toBe(true);
+    expect(isOpen(WEEK, new Date("2026-09-07T17:00:59+01:00"))).toBe(false);
     // ...and 08:59:59.999 has not yet become 09:00.
-    expect(isOpen(WEEK, new Date("2026-09-07T08:59:59.999Z"))).toBe(false);
+    expect(isOpen(WEEK, new Date("2026-09-07T08:59:59.999+01:00"))).toBe(false);
   });
 
   // A "Closed" day is definitively false, and is checked BEFORE the hours
@@ -617,10 +650,10 @@ describe("isOpen", () => {
   // precedence is pinned rather than left to reading order.
   it("lets a 'Closed' substring override an otherwise valid window", () => {
     const lunch = everyDay("Monday: 9:00 AM - 5:00 PM (Closed for lunch)");
-    expect(isOpen(lunch, new Date("2026-09-07T10:00:00Z"))).toBe(false);
-    expect(isOpen(lunch, new Date("2026-09-07T12:00:00Z"))).toBe(false);
+    expect(isOpen(lunch, new Date("2026-09-07T10:00:00+01:00"))).toBe(false);
+    expect(isOpen(lunch, new Date("2026-09-07T12:00:00+01:00"))).toBe(false);
     // Even when the word is in the day name rather than the hours.
-    expect(isOpen(everyDay("Closed Mondays: 9:00 AM - 5:00 PM"), new Date("2026-09-07T12:00:00Z"))).toBe(false);
+    expect(isOpen(everyDay("Closed Mondays: 9:00 AM - 5:00 PM"), new Date("2026-09-07T12:00:00+01:00"))).toBe(false);
   });
 
   it("is case-sensitive about 'Closed', matching Python's `in`", () => {
@@ -650,7 +683,7 @@ describe("isOpen", () => {
   // reported as unknown rather than half-guessed -- three parts, not two.
   it("returns null when the range does not split into exactly two times", () => {
     const split = everyDay("Monday: 9:00 AM - 12:00 PM, 1:00 PM - 5:00 PM");
-    expect(isOpen(split, new Date("2026-09-07T10:00:00Z"))).toBeNull();
+    expect(isOpen(split, new Date("2026-09-07T10:00:00+01:00"))).toBeNull();
     expect(isOpen(everyDay("Monday: 9:00 AM"), MONDAY)).toBeNull();
     // A trailing dash makes an empty third part -- still not two.
     expect(isOpen(everyDay("Monday: 9:00 AM - 5:00 PM -"), MONDAY)).toBeNull();
@@ -672,8 +705,8 @@ describe("isOpen", () => {
       "9:00 AM\t-\t5:00 PM",
     ]) {
       const hours = everyDay(`Monday: ${range}`);
-      expect(isOpen(hours, new Date("2026-09-07T12:00:00Z"))).toBe(true);
-      expect(isOpen(hours, new Date("2026-09-07T18:00:00Z"))).toBe(false);
+      expect(isOpen(hours, new Date("2026-09-07T12:00:00+01:00"))).toBe(true);
+      expect(isOpen(hours, new Date("2026-09-07T18:00:00+01:00"))).toBe(false);
     }
   });
 
@@ -683,24 +716,24 @@ describe("isOpen", () => {
   // because "just add more separators" is a tempting change that would alter
   // live answers for stored data nobody has re-read.
   it("does not accept a minus sign or a written 'to' as the range separator", () => {
-    expect(isOpen(everyDay("Monday: 9:00 AM − 5:00 PM"), new Date("2026-09-07T12:00:00Z"))).toBeNull();
-    expect(isOpen(everyDay("Monday: 9:00 AM to 5:00 PM"), new Date("2026-09-07T12:00:00Z"))).toBeNull();
+    expect(isOpen(everyDay("Monday: 9:00 AM − 5:00 PM"), new Date("2026-09-07T12:00:00+01:00"))).toBeNull();
+    expect(isOpen(everyDay("Monday: 9:00 AM to 5:00 PM"), new Date("2026-09-07T12:00:00+01:00"))).toBeNull();
   });
 
   // %I/%p semantics: 12 AM is midnight (00:xx) and 12 PM is noon (12:xx).
   // The classic off-by-twelve turns "12:00 AM - 6:00 AM" into an evening.
   it("reads 12 AM as midnight and 12 PM as noon", () => {
     const overnight = everyDay("Monday: 12:00 AM - 6:00 AM");
-    expect(isOpen(overnight, new Date("2026-09-07T00:00:00Z"))).toBe(true); // the opening minute itself
-    expect(isOpen(overnight, new Date("2026-09-07T00:30:00Z"))).toBe(true);
-    expect(isOpen(overnight, new Date("2026-09-07T06:30:00Z"))).toBe(false);
-    expect(isOpen(overnight, new Date("2026-09-07T12:30:00Z"))).toBe(false); // not a 12:00-18:00 shift
+    expect(isOpen(overnight, new Date("2026-09-07T00:00:00+01:00"))).toBe(true); // the opening minute itself
+    expect(isOpen(overnight, new Date("2026-09-07T00:30:00+01:00"))).toBe(true);
+    expect(isOpen(overnight, new Date("2026-09-07T06:30:00+01:00"))).toBe(false);
+    expect(isOpen(overnight, new Date("2026-09-07T12:30:00+01:00"))).toBe(false); // not a 12:00-18:00 shift
 
     const afternoon = everyDay("Monday: 12:00 PM - 11:00 PM");
-    expect(isOpen(afternoon, new Date("2026-09-07T12:00:00Z"))).toBe(true);
-    expect(isOpen(afternoon, new Date("2026-09-07T12:30:00Z"))).toBe(true);
-    expect(isOpen(afternoon, new Date("2026-09-07T11:30:00Z"))).toBe(false);
-    expect(isOpen(afternoon, new Date("2026-09-07T00:30:00Z"))).toBe(false); // not a 00:00-23:00 shift
+    expect(isOpen(afternoon, new Date("2026-09-07T12:00:00+01:00"))).toBe(true);
+    expect(isOpen(afternoon, new Date("2026-09-07T12:30:00+01:00"))).toBe(true);
+    expect(isOpen(afternoon, new Date("2026-09-07T11:30:00+01:00"))).toBe(false);
+    expect(isOpen(afternoon, new Date("2026-09-07T00:30:00+01:00"))).toBe(false); // not a 00:00-23:00 shift
   });
 
   // Django's overnight rule: when close <= open the range is assumed to
@@ -710,13 +743,13 @@ describe("isOpen", () => {
   // quirk, but it is upstream's quirk and the port reproduces it exactly.
   it("treats close <= open as crossing midnight, reporting open only from the opening time", () => {
     const overnight = everyDay("Monday: 9:00 PM - 2:00 AM");
-    expect(isOpen(overnight, new Date("2026-09-07T22:00:00Z"))).toBe(true);
-    expect(isOpen(overnight, new Date("2026-09-07T23:59:00Z"))).toBe(true);
-    expect(isOpen(overnight, new Date("2026-09-07T21:00:00Z"))).toBe(true); // opening minute
-    expect(isOpen(overnight, new Date("2026-09-07T20:59:00Z"))).toBe(false);
+    expect(isOpen(overnight, new Date("2026-09-07T22:00:00+01:00"))).toBe(true);
+    expect(isOpen(overnight, new Date("2026-09-07T23:59:00+01:00"))).toBe(true);
+    expect(isOpen(overnight, new Date("2026-09-07T21:00:00+01:00"))).toBe(true); // opening minute
+    expect(isOpen(overnight, new Date("2026-09-07T20:59:00+01:00"))).toBe(false);
     // Inside the shift by the clock, but false -- Django does the same.
-    expect(isOpen(overnight, new Date("2026-09-07T01:00:00Z"))).toBe(false);
-    expect(isOpen(overnight, new Date("2026-09-07T00:00:00Z"))).toBe(false);
+    expect(isOpen(overnight, new Date("2026-09-07T01:00:00+01:00"))).toBe(false);
+    expect(isOpen(overnight, new Date("2026-09-07T00:00:00+01:00"))).toBe(false);
   });
 
   // Equal open and close hits the same `close <= open` branch, so a
@@ -726,11 +759,11 @@ describe("isOpen", () => {
   // and report shut all day.
   it("treats an identical open and close time as the midnight-crossing case", () => {
     const allDay = everyDay("Monday: 9:00 AM - 9:00 AM");
-    expect(isOpen(allDay, new Date("2026-09-07T09:00:00Z"))).toBe(true);
-    expect(isOpen(allDay, new Date("2026-09-07T23:00:00Z"))).toBe(true);
-    expect(isOpen(allDay, new Date("2026-09-07T08:00:00Z"))).toBe(false);
+    expect(isOpen(allDay, new Date("2026-09-07T09:00:00+01:00"))).toBe(true);
+    expect(isOpen(allDay, new Date("2026-09-07T23:00:00+01:00"))).toBe(true);
+    expect(isOpen(allDay, new Date("2026-09-07T08:00:00+01:00"))).toBe(false);
     // Midnight-to-midnight is the same shape and is open from 00:00 on.
-    expect(isOpen(everyDay("Monday: 12:00 AM - 12:00 AM"), new Date("2026-09-07T00:00:00Z"))).toBe(true);
+    expect(isOpen(everyDay("Monday: 12:00 AM - 12:00 AM"), new Date("2026-09-07T00:00:00+01:00"))).toBe(true);
   });
 
   // The module comment cites a confirmed strptime detail: "%M", like "%I",
@@ -738,14 +771,14 @@ describe("isOpen", () => {
   // A \d{2} on the minute group would reject real stored values.
   it("accepts single-digit hours and minutes, like Python's strptime", () => {
     const sloppy = everyDay("Monday: 9:5 AM - 5:0 PM");
-    expect(isOpen(sloppy, new Date("2026-09-07T09:04:00Z"))).toBe(false);
-    expect(isOpen(sloppy, new Date("2026-09-07T09:05:00Z"))).toBe(true);
-    expect(isOpen(sloppy, new Date("2026-09-07T16:59:00Z"))).toBe(true);
-    expect(isOpen(sloppy, new Date("2026-09-07T17:00:00Z"))).toBe(false);
+    expect(isOpen(sloppy, new Date("2026-09-07T09:04:00+01:00"))).toBe(false);
+    expect(isOpen(sloppy, new Date("2026-09-07T09:05:00+01:00"))).toBe(true);
+    expect(isOpen(sloppy, new Date("2026-09-07T16:59:00+01:00"))).toBe(true);
+    expect(isOpen(sloppy, new Date("2026-09-07T17:00:00+01:00"))).toBe(false);
     // Two digits with a leading zero, which "%I"/"%M" also take.
     const padded = everyDay("Monday: 09:05 AM - 05:00 PM");
-    expect(isOpen(padded, new Date("2026-09-07T09:05:00Z"))).toBe(true);
-    expect(isOpen(padded, new Date("2026-09-07T09:04:00Z"))).toBe(false);
+    expect(isOpen(padded, new Date("2026-09-07T09:05:00+01:00"))).toBe(true);
+    expect(isOpen(padded, new Date("2026-09-07T09:04:00+01:00"))).toBe(false);
   });
 
   // Python's strptime builds its regex with re.IGNORECASE, so "%p" matches
@@ -754,8 +787,8 @@ describe("isOpen", () => {
   it("accepts lower-case and mixed-case am/pm", () => {
     for (const range of ["9:00 am - 5:00 pm", "9:00 Am - 5:00 pM", "9:00 aM - 5:00 Pm"]) {
       const hours = everyDay(`Monday: ${range}`);
-      expect(isOpen(hours, new Date("2026-09-07T12:00:00Z"))).toBe(true);
-      expect(isOpen(hours, new Date("2026-09-07T18:00:00Z"))).toBe(false);
+      expect(isOpen(hours, new Date("2026-09-07T12:00:00+01:00"))).toBe(true);
+      expect(isOpen(hours, new Date("2026-09-07T18:00:00+01:00"))).toBe(false);
     }
   });
 
@@ -806,10 +839,10 @@ describe("isOpen", () => {
   // shown a real answer here and "unknown" on the Django site.
   it("accepts a missing space before AM/PM, which Django's strptime rejects", () => {
     const tight = everyDay("Monday: 9:00AM - 5:00PM");
-    expect(isOpen(tight, new Date("2026-09-07T12:00:00Z"))).toBe(true);
-    expect(isOpen(tight, new Date("2026-09-07T18:00:00Z"))).toBe(false);
+    expect(isOpen(tight, new Date("2026-09-07T12:00:00+01:00"))).toBe(true);
+    expect(isOpen(tight, new Date("2026-09-07T18:00:00+01:00"))).toBe(false);
     // And a non-breaking space there, for the same Word-paste reason.
-    expect(isOpen(everyDay(`Monday: 9:00${NBSP}AM - 5:00${NBSP}PM`), new Date("2026-09-07T12:00:00Z"))).toBe(true);
+    expect(isOpen(everyDay(`Monday: 9:00${NBSP}AM - 5:00${NBSP}PM`), new Date("2026-09-07T12:00:00+01:00"))).toBe(true);
   });
 
   // Both ends are trimmed before parsing, which is what makes a value stored
@@ -817,29 +850,72 @@ describe("isOpen", () => {
   // split("\n") lands at the end of the closing time.
   it("tolerates surrounding whitespace, including a CRLF leftover \\r", () => {
     const crlf = Array(7).fill("Monday: 9:00 AM - 5:00 PM").join("\r\n");
-    expect(isOpen(crlf, new Date("2026-09-07T12:00:00Z"))).toBe(true);
-    expect(isOpen(crlf, new Date("2026-09-07T18:00:00Z"))).toBe(false);
-    expect(isOpen(everyDay("Monday:  9:00 AM  -  5:00 PM "), new Date("2026-09-07T12:00:00Z"))).toBe(true);
+    expect(isOpen(crlf, new Date("2026-09-07T12:00:00+01:00"))).toBe(true);
+    expect(isOpen(crlf, new Date("2026-09-07T18:00:00+01:00"))).toBe(false);
+    expect(isOpen(everyDay("Monday:  9:00 AM  -  5:00 PM "), new Date("2026-09-07T12:00:00+01:00"))).toBe(true);
     // A CRLF "Closed" day still reads as closed, not as unparseable.
     expect(isOpen(Array(7).fill("Monday: Closed").join("\r\n"), MONDAY)).toBe(false);
   });
 
-  // Workers run in UTC and Django's timezone.now() was UTC-aware, so the
-  // clock must be read with getUTCHours/getUTCMinutes. TZ=UTC in the harness
-  // makes an ordinary fixture blind to the difference, so UtcOnlyDate is
-  // what actually holds the line: a getHours() regression -- an hour out for
-  // the whole of British Summer Time, reporting a 5pm-closing food bank as
-  // open until 6 -- throws here instead of passing.
-  it("reads the clock in UTC, not local time", () => {
-    expect(isOpen(WEEK, new UtcOnlyDate("2026-07-06T16:30:00Z"))).toBe(true); // Monday, deep in BST
-    expect(isOpen(WEEK, new UtcOnlyDate("2026-07-06T17:30:00Z"))).toBe(false);
-    expect(isOpen(oneHourPerDay, new UtcOnlyDate("2026-09-07T01:30:00Z"))).toBe(true);
-    // A UTC instant given with an offset is the same instant: 18:30+02:00 is
-    // 16:30Z and still inside a 9-5 UTC day.
-    expect(isOpen(WEEK, new Date("2026-09-07T18:30:00+02:00"))).toBe(true);
-    expect(isOpen(WEEK, new Date("2026-09-07T19:30:00+02:00"))).toBe(false);
-    // 23:30 UTC is still the same UTC weekday, not tomorrow's line.
-    expect(isOpen(WEEK, new Date("2026-09-06T23:30:00Z"))).toBe(false); // Sunday: Closed
+  // ISSUE #60, the whole point of the Europe/London read. Stored hours are UK
+  // wall-clock, so a UTC clock is an hour early for the entire of BST: this
+  // is the real Morrisons Southwood line, at the real time on the screenshot,
+  // which the UTC version badged "Closed" because 07:39 BST is 06:39Z.
+  it("answers on the London clock, not UTC, through British Summer Time", () => {
+    const supermarket = everyDay("Wednesday: 7:00 AM - 10:00 PM");
+    expect(isOpen(supermarket, new Date("2026-09-16T07:39:00+01:00"))).toBe(true);
+    // The hour either side of the boundary, which is where UTC and London
+    // disagree: open from 7am local, still shut at 6:59am local even though
+    // UTC has already ticked past 7.
+    expect(isOpen(supermarket, new Date("2026-09-16T07:00:00+01:00"))).toBe(true);
+    expect(isOpen(supermarket, new Date("2026-09-16T06:59:00+01:00"))).toBe(false);
+    // ...and the closing end, an hour later than a UTC reader would have it.
+    expect(isOpen(supermarket, new Date("2026-09-16T21:59:00+01:00"))).toBe(true);
+    expect(isOpen(supermarket, new Date("2026-09-16T22:00:00+01:00"))).toBe(false);
+    // In GMT the two clocks agree, so winter answers are untouched by this.
+    expect(isOpen(everyDay("Monday: 9:00 AM - 5:00 PM"), new Date("2026-12-07T09:00:00Z"))).toBe(true);
+    expect(isOpen(everyDay("Monday: 9:00 AM - 5:00 PM"), new Date("2026-12-07T08:59:00Z"))).toBe(false);
+  });
+
+  // The transitions come from the tz database, not from a hand-rolled "last
+  // Sunday in March" rule -- which is the tempting way to avoid Intl, and
+  // gets both of these wrong. A 1am-2am Sunday shop is NEVER open on the
+  // spring-forward Sunday, because the wall clock goes 00:59 -> 02:00 and
+  // that hour does not exist; on the autumn Sunday it is open TWICE, because
+  // 01:30 happens once in BST and again in GMT. Asserted on real instants an
+  // hour apart, so an implementation that added a fixed offset for "summer"
+  // fails on at least one of them.
+  it("follows the real BST transitions, including the hour that is skipped and the one that repeats", () => {
+    const smallHours = everyDay("Sunday: 1:00 AM - 2:00 AM");
+    // Spring forward, 29 March 2026: 01:00 GMT becomes 02:00 BST.
+    expect(isOpen(smallHours, new Date("2026-03-29T00:59:00Z"))).toBe(false); // 00:59 GMT
+    expect(isOpen(smallHours, new Date("2026-03-29T01:00:00Z"))).toBe(false); // already 02:00 BST
+    expect(isOpen(smallHours, new Date("2026-03-29T01:30:00Z"))).toBe(false); // 02:30 BST
+    // Fall back, 25 October 2026: 02:00 BST becomes 01:00 GMT.
+    expect(isOpen(smallHours, new Date("2026-10-25T00:30:00Z"))).toBe(true); // 01:30 BST
+    expect(isOpen(smallHours, new Date("2026-10-25T01:30:00Z"))).toBe(true); // 01:30 again, GMT
+    expect(isOpen(smallHours, new Date("2026-10-25T02:30:00Z"))).toBe(false); // 02:30 GMT
+  });
+
+  // The offset is applied to the INSTANT, never to the literal: 18:30+02:00
+  // is 17:30 in London and therefore shut, where a naive "strip the offset
+  // and read the digits" would call it 18:30 and, before that, 16:30Z.
+  it("normalises an instant given in another offset to London time", () => {
+    expect(isOpen(WEEK, new Date("2026-09-07T17:30:00+02:00"))).toBe(true); // 16:30 London
+    expect(isOpen(WEEK, new Date("2026-09-07T18:30:00+02:00"))).toBe(false); // 17:30 London
+    // 23:30 London is still the same London weekday, not tomorrow's line.
+    expect(isOpen(WEEK, new Date("2026-09-06T23:30:00+01:00"))).toBe(false); // Sunday: Closed
+  });
+
+  // TZ=UTC in the harness (vitest.config.mts) makes an ordinary fixture blind
+  // to a getHours()/getUTCHours() mix-up, so UtcOnlyDate is what holds that
+  // line: the module must read the instant through Intl, never through the
+  // host's local-time accessors, or it would answer in whatever zone the
+  // machine happens to sit in rather than in London.
+  it("never reads the host's local-time accessors", () => {
+    expect(isOpen(WEEK, new UtcOnlyDate("2026-07-06T16:30:00+01:00"))).toBe(true); // Monday, deep in BST
+    expect(isOpen(WEEK, new UtcOnlyDate("2026-07-06T17:30:00+01:00"))).toBe(false);
+    expect(isOpen(oneHourPerDay, new UtcOnlyDate("2026-09-07T01:30:00+01:00"))).toBe(true);
   });
 
   // Same graceful-degradation divergence as openingHoursDays: Django's
@@ -865,11 +941,11 @@ describe("isOpen", () => {
   // asserts the actual answer instead of "it returned one of three values".
   it("defaults to the current time when no clock is supplied", () => {
     vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-09-07T12:00:00Z")); // Monday lunchtime
+    vi.setSystemTime(new Date("2026-09-07T12:00:00+01:00")); // Monday lunchtime
     expect(isOpen(WEEK)).toBe(true);
-    vi.setSystemTime(new Date("2026-09-07T18:00:00Z")); // Monday evening
+    vi.setSystemTime(new Date("2026-09-07T18:00:00+01:00")); // Monday evening
     expect(isOpen(WEEK)).toBe(false);
-    vi.setSystemTime(new Date("2026-09-05T12:00:00Z")); // Saturday: Closed
+    vi.setSystemTime(new Date("2026-09-05T12:00:00+01:00")); // Saturday: Closed
     expect(isOpen(WEEK)).toBe(false);
     expect(isOpen(everyDay("Monday: By appointment only"))).toBeNull();
   });
