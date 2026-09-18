@@ -1,6 +1,8 @@
 {# gfadmin/views.py foodbank_needsorders_tab -- lazy-loaded fragment, no page shell. #}
 <div class="columns">
   <div class="column">
+    {# foodbank.html:461 #}
+    <a href="/admin/need/new/?foodbank={{ foodbank_slug }}" class="button is-link is-light">New Need</a>
     {% if needs.length %}
     <table class="table is-fullwidth is-hoverable">
       <thead>
@@ -36,6 +38,11 @@
   </div>
 
   <div class="column">
+    {# foodbank.html:509 -- shown unconditionally, unlike the detail page's
+       own New Order shortcut, which only appears while there are no orders
+       (foodbank_detail.njk:61). This is the way into /admin/order/new/ for
+       a food bank that already has some. #}
+    <a href="/admin/order/new/?foodbank={{ foodbank_slug }}" class="button is-link is-light">New Order</a>
     {% if orders.length %}
     <table class="table is-fullwidth is-hoverable">
       <thead>
