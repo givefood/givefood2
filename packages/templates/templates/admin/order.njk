@@ -6,10 +6,10 @@
 <div class="columns">
   <div class="column is-two-fifths">
 
-    {# routes/admin/orderForm.ts redirects here with ?job=<id> after a save --
-       the order's lines and totals are parsed by a queue job, so a
-       just-saved order legitimately reads 0 items / £0.00 for a few seconds.
-       Without this the page looks like the save silently lost everything. #}
+    {# routes/admin/orderForm.ts redirects here with ?job=<id> after a save,
+       having parsed the items text into lines on the way. This says whether
+       that worked. The in-progress branch only shows for a job still on the
+       queue from before the parse moved into the save. #}
     {% if job_status %}
       {% if job_status == "failed" %}
       <div class="notification is-danger is-light">

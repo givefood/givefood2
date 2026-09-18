@@ -230,7 +230,6 @@ const GOOGLE_PLACE_DETAILS = "https://maps.googleapis.com/maps/api/place/details
 const GOOGLE_PLACE_PHOTO = "https://maps.googleapis.com/maps/api/place/photo";
 const GOOGLE_TRANSLATE = "https://translation.googleapis.com/language/translate/v2";
 const GEMINI_FLASH_25 = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
-const GEMINI_FLASH_20 = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent";
 const GRAPH_MESSAGES = "https://graph.facebook.com/v24.0/890504590819478/messages";
 const SALISBURY_HOMEPAGE = "https://salisburyfoodbank.example/";
 
@@ -897,7 +896,7 @@ describe("order-lines", () => {
   // aggregates land on that order, and the admin_job named in the message --
   // and only that one -- moves to done.
   it("routes to the order-lines handler and writes lines, aggregates and the job row", async () => {
-    reply(GEMINI_FLASH_20, geminiReply([{ name: "Beans 400g", quantity: 2, item_cost: 95, weight: 400 }]));
+    reply(GEMINI_FLASH_25, geminiReply([{ name: "Beans 400g", quantity: 2, item_cost: 95, weight: 400 }]));
 
     const message = await runOne({ type: "order-lines", jobId: "job-lines", orderRowId: ORDER_ROW });
 

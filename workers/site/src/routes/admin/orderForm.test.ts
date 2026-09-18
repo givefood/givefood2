@@ -1,6 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { Hono } from "hono";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { schemaFor } from "@givefood/db/src/schema.testkit";
 import { adminOrderForm } from "./orderForm";
 import { requireAdminAuth } from "../../middleware/adminAuth";
 import { hmacSha256Hex } from "../../lib/hmac";
@@ -32,8 +33,13 @@ import type { AppEnv } from "../../types";
 // getNeedOptionsForFoodbank, getOrderGroupOptions and getOrderForEdit all run
 // their real SQL against a real in-memory SQLite seeded from the real
 // migrations' DDL, behind a real Hono app at the production paths
-// (routes/admin/index.ts:179-180, :259-260). The only stub is JOBS_Q.send --
-// the one thing in this handler that leaves the machine.
+// (routes/admin/index.ts:179-180, :259-260). The only stub is `fetch`, for
+// the Gemini call that parses items_text -- the one thing in this handler
+// that leaves the machine. The parse itself (packages/ai's runOrderLinesJob)
+// runs for real against the same database; its arithmetic is covered in
+// depth by workers/jobs/src/adminJobs/orderLines.test.ts, so this suite only
+// asserts the handoff: that a save parses, against the right row, and that a
+// failed parse still lands on the saved order.
 //
 // This handler is also where an admin's typing is most expensive to lose:
 // items_text is a pasted supermarket order of dozens of lines, and losing it
@@ -55,7 +61,7 @@ import type { AppEnv } from "../../types";
 //   re-render a REJECTED form from EMPTY_FORM_DATA       4
 //   leave `country` blank for an assigned order          3
 //   validate delivery_date by regex shape alone          2
-//   put order_id in the queue message instead of the pk  1
+//   parse the order_id instead of the pk                 1
 //   build delivery_datetime at midnight                  2
 //   drop renderForm's since-closed food bank append      2
 //   drop isValidUrl's http/https protocol check          4
@@ -75,8 +81,8 @@ import type { AppEnv } from "../../types";
 //   the UPDATE never writes delivery_provider             (edit path only)
 //   the UPDATE swaps the need_id / order_group_id binds   (edit path only)
 //   the UPDATE swaps the source_url / provider_id binds   (edit path only)
-//   an EDIT enqueues no admin_job
-//   an EDIT sends no queue message
+//   an EDIT records no admin_job
+//   an EDIT never parses its items text
 //   the admin_job is stamped with the order's PRE-save id
 //   an assigned order's id uses "" for a null provider, not "none"
 //   a rejected save re-renders the delivery hour unselected
@@ -88,7 +94,7 @@ import type { AppEnv } from "../../types";
 // the CREATE path and two or three on the EDIT path, so an UPDATE that had
 // lost a column or transposed a pair of binds was invisible -- #34's exact
 // shape, one statement over. "rewrites every column on an edit" below is the
-// fix, and the three edit-side queue tests are the same omission in the
+// fix, and the three edit-side parse tests are the same omission in the
 // handoff that follows the write.
 //
 // The csrf_token survivor is #12's failure mode wearing a different hat: the
@@ -173,7 +179,7 @@ CREATE TABLE admin_job (
   created TEXT NOT NULL,
   finished TEXT
 );
-`;
+` + schemaFor("orderline", "orderitem");
 
 type Bindable = null | number | bigint | string | Uint8Array;
 
@@ -256,7 +262,25 @@ const TYPED: Record<string, string> = {
 const TYPED_ORDER_ID = "gf-salisbury-sainsburys-2026-03-04";
 
 let db: DatabaseSync;
-let jobsSend: ReturnType<typeof vi.fn>;
+let geminiFetch: ReturnType<typeof vi.fn>;
+
+// What the stubbed model "returns" for TYPED.items_text -- per-item cost and
+// weight, as the prompt asks for. Line totals: 800 g + 1000 g + 6000 g, and
+// 110p + 120p + 570p.
+const AI_LINES = [
+  { name: "Baked Beans 400g", quantity: 2, item_cost: 55, weight: 400 },
+  { name: "Long Grain Rice 1kg", quantity: 1, item_cost: 120, weight: 1000 },
+  { name: "UHT Milk 1l", quantity: 6, item_cost: 95, weight: 1000 },
+];
+
+// Gemini's success envelope: the JSON arrives as a STRING in the first part.
+function geminiEnvelope(payload: unknown): Response {
+  return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify(payload) }] } }] }), { status: 200 });
+}
+
+function orderLines(): { order_id: number; name: string; quantity: number; weight: number; line_cost: number }[] {
+  return db.prepare("SELECT order_id, name, quantity, weight, line_cost FROM orderline ORDER BY id").all() as never;
+}
 
 interface OrderRow {
   id: number;
@@ -391,14 +415,24 @@ beforeEach(() => {
   seedNeed(NEED_ORPHAN);
   db.prepare("INSERT INTO ordergroup (id, name, slug) VALUES (?, ?, ?)").run(GROUP_WINTER.id, GROUP_WINTER.name, GROUP_WINTER.slug);
   db.prepare("INSERT INTO ordergroup (id, name, slug) VALUES (?, ?, ?)").run(GROUP_ALPHA.id, GROUP_ALPHA.name, GROUP_ALPHA.slug);
-  jobsSend = vi.fn(async () => {});
+  // Any URL other than Gemini's throws, so an outbound call this handler
+  // grows later fails here instead of being absorbed by a permissive stub.
+  geminiFetch = vi.fn(async (url: string) => {
+    if (!url.startsWith("https://generativelanguage.googleapis.com/")) throw new Error(`unmodelled fetch: ${url}`);
+    return geminiEnvelope(AI_LINES);
+  });
+  vi.stubGlobal("fetch", geminiFetch);
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
 });
 
 function env(): AppEnv["Bindings"] {
   return {
     DB: { withSession: () => d1Session(db) },
     CSRF_SECRET,
-    JOBS_Q: { send: jobsSend },
+    GEMINI_API_KEY: "test-gemini-key",
     SESSIONS: {
       get: async () => null,
       put: async () => {},
@@ -578,7 +612,7 @@ describe("adminOrderForm GET /admin/order/new/", () => {
 
     expect(orders()).toHaveLength(0);
     expect(adminJobs()).toHaveLength(0);
-    expect(jobsSend).not.toHaveBeenCalled();
+    expect(geminiFetch).not.toHaveBeenCalled();
   });
 
   // KILLS THE MUTANT: adminPageContext(c, "orders") -> adminPageContext(c,
@@ -874,7 +908,7 @@ describe("adminOrderForm GET /admin/order/:orderId/edit/", () => {
 
     expect(onlyOrder()).toEqual(before);
     expect(adminJobs()).toHaveLength(0);
-    expect(jobsSend).not.toHaveBeenCalled();
+    expect(geminiFetch).not.toHaveBeenCalled();
   });
 
   // SUSPECT, pinned as-is: the ?foodbank= lookup runs before the method branch
@@ -925,11 +959,15 @@ describe("adminOrderForm POST /admin/order/new/ -- a successful create", () => {
     // orders.py:110-116's naive datetime, written in the migrated
     // "YYYY-MM-DD HH:MM:SS.ffffff" shape order_delivery_datetime_idx sorts on.
     expect(row.delivery_datetime).toBe("2026-03-04 14:00:00.000000");
-    // orders.py:118-122 zeroes all five on every save; the queue job fills
-    // them in afterwards.
-    expect([row.weight, row.calories, row.cost, row.no_lines, row.no_items]).toEqual([0, 0, 0, 0, 0]);
+    // orders.py:118-122 zeroes all five and the parse that follows fills
+    // them in -- within this same request now. Calories are 0 because no
+    // orderitem row carries these names.
+    expect([row.weight, row.calories, row.cost, row.no_lines, row.no_items]).toEqual([7800, 0, 800, 3, 9]);
     expect(row.notification_email_sent).toBeNull();
-    expect(row.created).toBe(row.modified);
+    // The parse restamps `modified` when it writes the aggregates, a moment
+    // after the INSERT stamped both -- as Django's second save() does.
+    expect(row.created).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{6}$/);
+    expect(row.modified >= row.created).toBe(true);
   });
 
   // orderWrite.ts's d1Timestamp, and the reason it exists rather than the
@@ -967,10 +1005,10 @@ describe("adminOrderForm POST /admin/order/new/ -- a successful create", () => {
   });
 
   // views.py:472 redirects to admin:order with the order_id. `?job=` is the
-  // port's own addition so the page can show the AI parse's progress instead
-  // of an order that looks empty -- and the id in it must be the id of the
-  // admin_job row that was actually written, or the page polls forever.
-  it("redirects to the new order with the job id it just enqueued", async () => {
+  // port's own addition so the page can say how the AI parse went -- and the
+  // id in it must be the id of the admin_job row that was actually written,
+  // or the page has no outcome to show.
+  it("redirects to the new order with the id of the job that parsed it", async () => {
     const { res } = await post("/admin/order/new/", TYPED);
 
     const jobs = adminJobs();
@@ -978,20 +1016,27 @@ describe("adminOrderForm POST /admin/order/new/ -- a successful create", () => {
     expect(res.headers.get("Location")).toBe(`/admin/order/${TYPED_ORDER_ID}/?job=${jobs[0]!.id}`);
   });
 
-  // The AI half of Django's Order.save() (orders.py:130-216) runs in
-  // workers/jobs, not here -- GEMINI_API_KEY is bound only to that Worker. The
-  // handoff is one admin_job row plus one queue message, and the message must
-  // carry the ROW id (the job re-reads the order by primary key), not the
-  // human-readable order_id.
-  it("enqueues the order-lines job against the row's primary key", async () => {
+  // The AI half of Django's Order.save() (orders.py:130-216) runs during the
+  // save, as Django's does. It used to be a queue job, and the `jobs` queue's
+  // 30 s batch timeout meant the admin landed on an empty order and waited.
+  // By the time the redirect goes out the lines must exist, against the ROW
+  // id (orderline.order_id is the integer pk, not the human-readable id), and
+  // the job must already say `done`.
+  it("parses the items text into lines before it redirects", async () => {
     await post("/admin/order/new/", TYPED);
 
     const job = adminJobs()[0]!;
     expect(job.kind).toBe("order-lines");
     expect(job.target).toBe(TYPED_ORDER_ID);
-    expect(job.status).toBe("queued");
-    expect(jobsSend).toHaveBeenCalledTimes(1);
-    expect(jobsSend).toHaveBeenCalledWith({ type: "order-lines", jobId: job.id, orderRowId: onlyOrder().id });
+    expect(job.status).toBe("done");
+    expect(geminiFetch).toHaveBeenCalledTimes(1);
+    expect(String(geminiFetch.mock.calls[0]![0])).toContain("/models/gemini-2.5-flash:generateContent");
+    expect(orderLines()).toEqual([
+      { order_id: onlyOrder().id, name: "Baked Beans 400g", quantity: 2, weight: 800, line_cost: 110 },
+      { order_id: onlyOrder().id, name: "Long Grain Rice 1kg", quantity: 1, weight: 1000, line_cost: 120 },
+      { order_id: onlyOrder().id, name: "UHT Milk 1l", quantity: 6, weight: 6000, line_cost: 570 },
+    ]);
+    expect(onlyOrder()).toMatchObject({ no_lines: 3, no_items: 9, weight: 7800, cost: 800 });
   });
 
   // orders.py:214-216 -- MAX(delivery_date) over that food bank's orders. The
@@ -1252,18 +1297,17 @@ describe("adminOrderForm POST /admin/order/:orderId/edit/", () => {
   });
 
   // KILLS TWO MUTANTS: `if (isNew)` in front of insertAdminJob, and the same
-  // in front of JOBS_Q.send. Both survived everything else here, because the
+  // in front of the parse. Both survived everything else here, because the
   // job assertions all lived on the create path -- and an edit is the save
   // that MOST needs the parse, since editing items_text is the whole reason to
   // reopen the form. Without the row the redirect's `?job=` names a job that
-  // does not exist and the order page polls it forever; without the message
-  // the lines keep describing the previous paste, with a "queued" banner
-  // sitting over them saying otherwise.
+  // does not exist; without the parse the lines keep describing the previous
+  // paste.
   //
-  // The queue message must also carry the ROW id on this path -- the job
-  // re-reads the order by primary key, and on an edit the pk is the seeded
-  // one rather than a freshly inserted one.
-  it("enqueues the line parse on an edit too, against the existing row's pk", async () => {
+  // The parse must also target the ROW id on this path -- it re-reads the
+  // order by primary key, and on an edit the pk is the seeded one rather than
+  // a freshly inserted one.
+  it("parses on an edit too, against the existing row's pk", async () => {
     seedOrder({ id: 55, order_id: "gf-salisbury-tesco-2026-02-10" });
 
     const { res } = await post("/admin/order/gf-salisbury-tesco-2026-02-10/edit/", { ...TYPED, delivery_provider: "Tesco", delivery_date: "2026-02-10" });
@@ -1272,9 +1316,9 @@ describe("adminOrderForm POST /admin/order/:orderId/edit/", () => {
     expect(jobs).toHaveLength(1);
     expect(jobs[0]!.kind).toBe("order-lines");
     expect(jobs[0]!.target).toBe("gf-salisbury-tesco-2026-02-10");
-    expect(jobs[0]!.status).toBe("queued");
-    expect(jobsSend).toHaveBeenCalledTimes(1);
-    expect(jobsSend).toHaveBeenCalledWith({ type: "order-lines", jobId: jobs[0]!.id, orderRowId: 55 });
+    expect(jobs[0]!.status).toBe("done");
+    expect(geminiFetch).toHaveBeenCalledTimes(1);
+    expect(orderLines().map((line) => line.order_id)).toEqual([55, 55, 55]);
     expect(res.headers.get("Location")).toBe(`/admin/order/gf-salisbury-tesco-2026-02-10/?job=${jobs[0]!.id}`);
   });
 
@@ -1286,7 +1330,7 @@ describe("adminOrderForm POST /admin/order/:orderId/edit/", () => {
   // only clue to which order a queued parse belongs. Stamped with the
   // pre-save id, the job names an order_id nothing holds any more: orphaned in
   // the jobs list, unfindable by the lookup, and pointing the maintainer at a
-  // 404 when a parse fails. The enqueue test above cannot see it, because that
+  // 404 when a parse fails. The parse test above cannot see it, because that
   // edit deliberately keeps the id the same.
   it("stamps the job with the order's NEW id when the save renames it", async () => {
     seedOrder({ id: 55, order_id: "gf-salisbury-tesco-2026-02-10" });
@@ -1351,20 +1395,18 @@ describe("adminOrderForm POST /admin/order/:orderId/edit/", () => {
   });
 
   // orders.py:118-122 re-zeroes the five aggregates before the AI reparse
-  // regenerates them, and upsertOrder does the same on UPDATE. So between the
-  // redirect and the queue job finishing, an order legitimately reads as 0
-  // items / 0g / £0.00 -- the visible cost of moving the parse off the
-  // request. Asserted from non-zero seeds so that "they were zeroed" is a real
-  // observation rather than a column that was never written.
-  it("re-zeroes the five derived aggregates on every save", async () => {
+  // regenerates them. Asserted from non-zero seeds so that "they were
+  // replaced" is a real observation rather than a column that was never
+  // written.
+  it("replaces the five derived aggregates on every save", async () => {
     seedOrder({ id: 55, order_id: "gf-salisbury-tesco-2026-02-10", weight: 12400, calories: 33100, cost: 2750, no_lines: 8, no_items: 19 });
 
     await post("/admin/order/gf-salisbury-tesco-2026-02-10/edit/", { ...TYPED, delivery_provider: "Tesco", delivery_date: "2026-02-10" });
 
     const row = onlyOrder();
-    expect([row.weight, row.calories, row.cost, row.no_lines, row.no_items]).toEqual([0, 0, 0, 0, 0]);
+    expect([row.weight, row.calories, row.cost, row.no_lines, row.no_items]).toEqual([7800, 0, 800, 3, 9]);
     // actual_cost is the admin's own field, not an aggregate -- it must NOT be
-    // caught up in the zeroing.
+    // caught up in the recompute.
     expect(row.actual_cost).toBe(4325);
   });
 
@@ -1639,9 +1681,9 @@ describe("adminOrderForm POST -- validation failures", () => {
       expect(res.status).toBe(200);
       expect(orders()).toHaveLength(0);
       expect(adminJobs()).toHaveLength(0);
-      // A paid Gemini parse queued for an order that does not exist would burn
-      // money and leave a job the order page can never resolve.
-      expect(jobsSend).not.toHaveBeenCalled();
+      // A paid Gemini parse for an order that was never saved would burn
+      // money on lines with nowhere to go.
+      expect(geminiFetch).not.toHaveBeenCalled();
     });
   }
 
@@ -1723,7 +1765,7 @@ describe("adminOrderForm POST -- validation failures", () => {
     expect(res.status).toBe(200);
     expect(errorBanner(html)).toBe("Items text is required.");
     expect(orders()).toHaveLength(0);
-    expect(jobsSend).not.toHaveBeenCalled();
+    expect(geminiFetch).not.toHaveBeenCalled();
   });
 
   // The rejected value itself has to come back too, not be blanked "helpfully"
@@ -1843,7 +1885,7 @@ describe("adminOrderForm POST -- validation failures", () => {
     expect(res.status).toBe(404);
     expect(html).not.toContain(TYPED.items_text);
     expect(orders()).toHaveLength(0);
-    expect(jobsSend).not.toHaveBeenCalled();
+    expect(geminiFetch).not.toHaveBeenCalled();
   });
 
   // The same guard on the edit path, and the ORDER it runs in: the row lookup
@@ -1875,7 +1917,7 @@ describe("adminOrderForm POST -- CSRF", () => {
     expect(res.status).toBe(403);
     expect(html).toBe("Forbidden");
     expect(orders()).toHaveLength(0);
-    expect(jobsSend).not.toHaveBeenCalled();
+    expect(geminiFetch).not.toHaveBeenCalled();
   });
 
   it("refuses a POST whose token does not match the cookie", async () => {
@@ -2009,41 +2051,41 @@ describe("adminOrderForm -- authentication", () => {
 });
 
 // ---------------------------------------------------------------------------
-// The queue handoff's failure mode
+// When the parse fails
 // ---------------------------------------------------------------------------
 
-describe("adminOrderForm POST -- when the queue send fails", () => {
-  // SUSPECT, pinned as-is. The order row, the last_order recompute and the
-  // admin_job row are all committed BEFORE c.env.JOBS_Q.send(), and there is
-  // no try/catch around it -- so a queue outage gives the admin the 500 page
-  // for a save that DID happen, with a "queued" admin_job nothing will ever
-  // pick up. The plausible next move is to press Save again: on an assigned
-  // order that re-saves the same row harmlessly, but on an UNASSIGNED one the
-  // unique_together check cannot fire (orders.py:54-56) and a second order is
-  // created. Asserted rather than fixed, per this suite's convention.
-  it("leaves the order saved and the job stuck at 'queued' behind a 500", async () => {
-    jobsSend.mockRejectedValueOnce(new Error("queue unavailable"));
+describe("adminOrderForm POST -- when the parse fails", () => {
+  // The parse records its failure on the admin_job row and does not throw, so
+  // the save still redirects to the order it DID write, and the banner there
+  // carries the reason. A 500 here would invite a second press of Save, which
+  // on an UNASSIGNED order creates a duplicate (orders.py:54-56's
+  // unique_together cannot fire with a null food bank).
+  it("still redirects to the saved order, with the error on the job", async () => {
+    // Every attempt, not Once: geminiJsonCall retries a failed call.
+    geminiFetch.mockImplementation(async () => new Response('{"error":{"message":"model not found"}}', { status: 404 }));
 
-    const { res, html } = await post("/admin/order/new/", TYPED);
+    const { res } = await post("/admin/order/new/", TYPED);
 
-    expect(res.status).toBe(500);
-    expect(html).toContain("queue unavailable");
-    // The save is not rolled back -- there is no transaction spanning it.
-    expect(orders()).toHaveLength(1);
-    expect(onlyOrder().order_id).toBe(TYPED_ORDER_ID);
-    expect(adminJobs()).toHaveLength(1);
-    expect(adminJobs()[0]!.status).toBe("queued");
+    expect(res.status).toBe(302);
+    const job = db.prepare("SELECT id, status, error FROM admin_job").get() as { id: string; status: string; error: string };
+    expect(res.headers.get("Location")).toBe(`/admin/order/${TYPED_ORDER_ID}/?job=${job.id}`);
+    expect(job.status).toBe("failed");
+    expect(job.error).toContain("model not found");
+    expect(onlyOrder().items_text).toBe(TYPED.items_text);
+    expect(orderLines()).toHaveLength(0);
     expect(foodbankRow(SALISBURY.id).last_order).toBe("2026-03-04");
   });
 
-  // The second press, on the unassigned path where nothing stops it.
-  it("creates a SECOND unassigned order if the admin retries after that 500", async () => {
-    jobsSend.mockRejectedValueOnce(new Error("queue unavailable"));
+  // Delete-then-insert happens only once the model has answered, so a failed
+  // re-parse leaves the previous lines rather than an empty order.
+  it("keeps an edited order's previous lines when the re-parse fails", async () => {
+    seedOrder({ id: 55, order_id: "gf-salisbury-tesco-2026-02-10" });
+    db.prepare("INSERT INTO orderline (order_id, name, quantity, item_cost, line_cost, weight, calories, category, group_name, delivery_date) VALUES (55, 'Old Line', 1, 10, 10, 100, 0, '', '', '2026-02-10')").run();
+    geminiFetch.mockImplementation(async () => new Response("bad request", { status: 400 }));
 
-    await post("/admin/order/new/", { ...TYPED, foodbank: "" });
-    const { res } = await post("/admin/order/new/", { ...TYPED, foodbank: "" });
+    await post("/admin/order/gf-salisbury-tesco-2026-02-10/edit/", { ...TYPED, delivery_provider: "Tesco", delivery_date: "2026-02-10" });
 
-    expect(res.status).toBe(302);
-    expect(orders()).toHaveLength(2);
+    expect(orderLines().map((line) => line.name)).toEqual(["Old Line"]);
+    expect(adminJobs()[0]!.status).toBe("failed");
   });
 });

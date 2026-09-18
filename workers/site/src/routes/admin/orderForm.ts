@@ -18,6 +18,7 @@ import {
   type OrderEditRow,
   type Session,
 } from "@givefood/db";
+import { runOrderLinesJob } from "@givefood/ai";
 import { djangoDate, render } from "@givefood/templates";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
@@ -29,14 +30,12 @@ import { adminPageContext } from "./pageContext";
 // /admin/order/:orderId/edit/, same shape as adminDonationPointForm.
 //
 // The AI half of Django's Order.save() (models/orders.py:130-216: one
-// Gemini JSON call to parse items_text into order lines, plus up to one
-// more per never-before-seen item name to categorise it) does NOT run
-// here. This handler validates, writes the `orders` row with zeroed
-// aggregates, and enqueues an "order-lines" admin_job that workers/jobs
-// picks up -- GEMINI_API_KEY is bound only to that Worker (PLAN.md 3.1's
-// secret blast-radius split), and 1+N sequential paid AI calls do not
-// belong in a request the admin's browser is holding open. See
-// packages/db/src/orderWrite.ts's header for the full split.
+// Gemini JSON call to parse items_text into order lines) runs inline at the
+// end of the save, as it does in Django: packages/ai's runOrderLinesJob,
+// recorded on an admin_job row the order page's banner reads. It used to be
+// a queue job in workers/jobs, which made every save wait out the `jobs`
+// queue's 30 s batch timeout before the parse even started -- the same
+// measurement that brought the food bank check inline (github #38).
 //
 // Django accepts GET and POST on one view and selects the save branch with
 // `if request.POST:` -- the truthiness of a QueryDict, so a genuinely
@@ -329,12 +328,10 @@ async function handlePost(c: Context<AppEnv>, db: Session, order: OrderEditRow |
 
   // orders.py:107 destroys every existing line here, BEFORE the parse that
   // regenerates them -- so in Django a Gemini failure loses the lot with no
-  // way back. Not ported: the delete lives in the queue consumer instead
-  // (workers/jobs/src/adminJobs/orderLines.ts), immediately before the
-  // insert, so a failed or unconfigured parse leaves the previous lines
-  // intact. The cost is that the order page can show the old lines for the
-  // few seconds the job is in flight; the job banner says so, and stale
-  // lines beat destroyed ones.
+  // way back. Not ported: the delete lives in runOrderLinesJob
+  // (packages/ai/src/orderLines.ts), immediately before the insert, so a
+  // failed or unconfigured parse leaves the previous lines intact, and the
+  // failure banner says so.
 
   const saved = await upsertOrder(
     db,
@@ -368,15 +365,17 @@ async function handlePost(c: Context<AppEnv>, db: Session, order: OrderEditRow |
   if (foodbankId !== null) await recomputeFoodbankLastOrder(db, foodbankId);
   if (previousFoodbankId !== null && previousFoodbankId !== foodbankId) await recomputeFoodbankLastOrder(db, previousFoodbankId);
 
-  // The AI line parse, as an admin_job the order page polls -- the whole
-  // reason this handler can return in milliseconds. Same enqueue shape as
-  // adminFoodbankCheck (foodbankCheck.ts:53-56).
+  // The AI line parse, inline. It records its own outcome on the admin_job
+  // row and never throws, so a failed parse still redirects to the saved
+  // order -- with the error in the banner, rather than a 500 for a save that
+  // did happen. 2 s / 25 s are runFoodbankCheck's numbers: the worst case
+  // (attempt, sleep, attempt) stays inside Cloudflare's ~100 s edge timeout.
   const jobId = crypto.randomUUID();
   await insertAdminJob(db, { id: jobId, kind: "order-lines", target: finalOrderId });
-  await c.env.JOBS_Q.send({ type: "order-lines", jobId, orderRowId: saved.id });
+  await runOrderLinesJob(db, c.env.GEMINI_API_KEY, jobId, saved.id, { retryDelayMs: 2_000, timeoutMs: 25_000 });
 
   // views.py:472 redirects to admin:order with the (possibly regenerated)
-  // order_id; `?job=` is this port's addition, so the page can show the
-  // parse's progress instead of an order that looks empty.
+  // order_id; `?job=` is this port's addition, so the page can say whether
+  // the parse worked.
   return c.redirect(`/admin/order/${encodeURIComponent(finalOrderId)}/?job=${jobId}`, 302);
 }

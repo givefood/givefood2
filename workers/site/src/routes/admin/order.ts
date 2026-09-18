@@ -45,10 +45,10 @@ export async function adminOrderDetail(c: Context<AppEnv>): Promise<Response> {
     delivery_provider_url: deliveryProviderUrl,
     notification_email_sent_timesince: order.notification_email_sent ? `${timesince(order.notification_email_sent)} ago` : null,
     // routes/admin/orderForm.ts redirects here with ?job=<id> after a save.
-    // The order's lines and aggregates are produced by a queue job
-    // (workers/jobs/src/adminJobs/orderLines.ts), so without this the page
-    // shows a just-saved order as 0 items / £0.00 and looks like the save
-    // threw the data away. The id is only ever used to look a row up by
+    // The save parsed the items text into lines (packages/ai's
+    // runOrderLinesJob) and recorded the outcome on this admin_job row; a
+    // failed parse is otherwise invisible -- the order just shows its old
+    // lines, or none. The id is only ever used to look a row up by
     // primary key, so an unknown or malformed one simply yields null.
     job_id: jobId,
     job_status: job?.status ?? null,

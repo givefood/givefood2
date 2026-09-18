@@ -273,16 +273,15 @@ const sleptMs = () => Date.now() - FROZEN.getTime();
 
 describe("the request that goes to Google", () => {
   it("posts to v1beta generateContent for the model it was given", async () => {
-    // The two callers ask for DIFFERENT models -- foodbankCheck.ts:181 wants
-    // gemini-2.5-flash (gfadmin/views.py:1147) and orderLines.ts:122 wants
-    // gemini-2.0-flash, which is a deliberate divergence from Django's
-    // default. A hard-coded model here would typecheck, pass a schema, return
-    // plausible JSON and quietly bill the wrong model for every order parse.
+    // The model is the caller's choice. Both callers currently ask for
+    // gemini-2.5-flash, so this uses a different one: a hard-coded model here
+    // would otherwise pass unnoticed. (The order parse used to ask for
+    // gemini-2.0-flash; Google retired it and every parse failed.)
     const fetchMock = stubFetch(answers("[]"));
-    await settle(geminiJsonCall(params({ model: "gemini-2.0-flash" })));
+    await settle(geminiJsonCall(params({ model: "gemini-2.5-flash-lite" })));
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(requestUrl(fetchMock)).toBe(`${ENDPOINT}/gemini-2.0-flash:generateContent?key=${API_KEY}`);
+    expect(requestUrl(fetchMock)).toBe(`${ENDPOINT}/gemini-2.5-flash-lite:generateContent?key=${API_KEY}`);
   });
 
   it("authenticates with a ?key= query parameter and no auth header", async () => {

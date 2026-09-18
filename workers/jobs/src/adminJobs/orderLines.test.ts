@@ -847,13 +847,13 @@ describe("handleOrderLinesJob -- malformed and orphaned messages", () => {
 // ===========================================================================
 
 describe("handleOrderLinesJob -- the request that leaves the machine", () => {
-  it("posts to the gemini-2.0-flash generateContent endpoint with the key percent-encoded", async () => {
+  it("posts to the gemini-2.5-flash generateContent endpoint with the key percent-encoded", async () => {
     const h = harness();
 
     await handleOrderLinesJob(h.env, JOB, ORDER_ROW);
 
     expect(h.fetches).toHaveLength(1);
-    expect(h.fetches[0]!.url).toBe(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${ENCODED_KEY}`);
+    expect(h.fetches[0]!.url).toBe(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${ENCODED_KEY}`);
     expect(h.fetches[0]!.method).toBe("POST");
     expect(h.fetches[0]!.headers).toEqual({ "Content-Type": "application/json" });
   });
