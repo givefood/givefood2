@@ -1840,7 +1840,7 @@ describe("handleOrderLinesJob -- redelivery", () => {
   // `error`, so the row ends up `done` and carrying the previous failure's
   // sentence at the same time. Harmless TODAY only because both renderers gate
   // on status -- templates/admin/order.njk:13-19 shows the danger banner for
-  // `failed` and a plain "Order lines parsed." for `done`, and
+  // `failed` and nothing at all for `done`, and
   // routes/admin/foodbankCheck.ts:140-147 redirects rather than rendering the
   // error. Anything that starts showing `job.error` whenever it is present
   // would report a succeeded parse as a failed one. Pinned, and reported.

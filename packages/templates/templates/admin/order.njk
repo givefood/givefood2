@@ -7,17 +7,15 @@
   <div class="column is-two-fifths">
 
     {# routes/admin/orderForm.ts redirects here with ?job=<id> after a save,
-       having parsed the items text into lines on the way. This says whether
-       that worked. The in-progress branch only shows for a job still on the
+       having parsed the items text into lines on the way. Only a failure is
+       worth a banner; a parse that worked shows as the lines. The in-progress branch only shows for a job still on the
        queue from before the parse moved into the save. #}
     {% if job_status %}
       {% if job_status == "failed" %}
       <div class="notification is-danger is-light">
         The items text could not be parsed into order lines{% if job_error %}: {{ job_error }}{% endif %}
       </div>
-      {% elif job_status == "done" %}
-      <div class="notification is-success is-light">Order lines parsed.</div>
-      {% else %}
+      {% elif job_status != "done" %}
       <div class="notification is-info is-light" hx-get="/admin/job/{{ job_id }}/" hx-trigger="every 2s" hx-swap="outerHTML">
         Parsing the items text into order lines&hellip;
       </div>
