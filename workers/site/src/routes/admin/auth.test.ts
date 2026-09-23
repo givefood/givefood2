@@ -394,6 +394,13 @@ describe("adminSignIn -- GET /auth/", () => {
     expect(html).toContain("<title></title>");
   });
 
+  it("leaves the fivebar tally off the sign-in page", async () => {
+    const html = await (await request("/auth/")).text();
+
+    expect(html).not.toContain("fiveb.ar");
+    expect(html).toContain("plausible.io");
+  });
+
   // safeNextPath is Django's url_has_allowed_host_and_scheme() stand-in, and
   // this is the first of the three places its output is user-visible. An
   // off-site `next` surviving to here would be rendered into a link the admin
