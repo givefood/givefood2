@@ -183,7 +183,17 @@ export async function getTranslationCountForNeed(session: Session, needId: numbe
 // a food bank's current latest_need leaves latest_need/last_need stale
 // there. Fixed here, not ported: this is exactly the kind of drift WP 6.3
 // already established this phase corrects rather than reproduces.
-export async function recomputeFoodbankNeedFields(session: Session, foodbankId: number): Promise<void> {
+//
+// `publicChange` also stamps the food bank's `modified`, and callers pass it
+// whenever a PUBLISHED need was involved (published, unpublished, edited or
+// deleted). Django got this for free: a published need's save() ran the full
+// `foodbank.save()`, whose TimestampedModel auto_now bumped `modified`. That
+// column is what the site-wide "Last updated" footer reads (frag.ts's
+// getLastModifiedFoodbank), so without it publishing needs every day left the
+// footer showing the last food bank form edit, days old. Rejecting or
+// deleting an unpublished need changes nothing the public can see, so those
+// leave `modified` alone.
+export async function recomputeFoodbankNeedFields(session: Session, foodbankId: number, publicChange = false): Promise<void> {
   const [lastNeed, latestPublished] = await Promise.all([
     session.prepare("SELECT created FROM foodbankchange WHERE foodbank_id = ? ORDER BY created DESC LIMIT 1").bind(foodbankId).first<{ created: string }>(),
     session
@@ -191,9 +201,11 @@ export async function recomputeFoodbankNeedFields(session: Session, foodbankId: 
       .bind(foodbankId)
       .first<{ id: number; created: string }>(),
   ]);
+  const values = [lastNeed?.created ?? null, latestPublished?.id ?? null];
+  if (publicChange) values.push(pyNow());
   await session
-    .prepare("UPDATE foodbank SET last_need = ?, latest_need_id = ? WHERE id = ?")
-    .bind(lastNeed?.created ?? null, latestPublished?.id ?? null, foodbankId)
+    .prepare(`UPDATE foodbank SET last_need = ?, latest_need_id = ?${publicChange ? ", modified = ?" : ""} WHERE id = ?`)
+    .bind(...values, foodbankId)
     .run();
 }
 
@@ -220,7 +232,7 @@ export async function setNeedPublished(session: Session, needId: string, publish
 
   const now = pyNow();
   await session.prepare("UPDATE foodbankchange SET published = ?, modified = ? WHERE need_id = ?").bind(publish ? 1 : 0, now, needId).run();
-  if (row.foodbank_id !== null) await recomputeFoodbankNeedFields(session, row.foodbank_id);
+  if (row.foodbank_id !== null) await recomputeFoodbankNeedFields(session, row.foodbank_id, publish || row.published);
 
   return { ...row, published: publish, modified: now };
 }
@@ -236,7 +248,7 @@ export async function setNeedNonpertinent(session: Session, needId: string): Pro
 
   const now = pyNow();
   await session.prepare("UPDATE foodbankchange SET nonpertinent = 1, modified = ? WHERE need_id = ?").bind(now, needId).run();
-  if (row.foodbank_id !== null) await recomputeFoodbankNeedFields(session, row.foodbank_id);
+  if (row.foodbank_id !== null) await recomputeFoodbankNeedFields(session, row.foodbank_id, row.published);
 
   return { ...row, nonpertinent: true, modified: now };
 }
@@ -268,10 +280,13 @@ export async function setNeedNotified(session: Session, needId: string): Promise
 // orphaned line/translation row pointing at a deleted need_id is existing,
 // accepted behaviour, not something this port introduces.
 export async function deleteNeedByUuid(session: Session, needId: string): Promise<boolean> {
-  const need = await session.prepare("SELECT foodbank_id FROM foodbankchange WHERE need_id = ?").bind(needId).first<{ foodbank_id: number | null }>();
+  const need = await session
+    .prepare("SELECT foodbank_id, published FROM foodbankchange WHERE need_id = ?")
+    .bind(needId)
+    .first<{ foodbank_id: number | null; published: number }>();
   if (!need) return false;
   await session.prepare("DELETE FROM foodbankchange WHERE need_id = ?").bind(needId).run();
-  if (need.foodbank_id !== null) await recomputeFoodbankNeedFields(session, need.foodbank_id);
+  if (need.foodbank_id !== null) await recomputeFoodbankNeedFields(session, need.foodbank_id, need.published === 1);
   return true;
 }
 
@@ -290,7 +305,10 @@ export interface UpdateNeedRawFieldsParams {
 }
 
 export async function updateNeedRawFields(session: Session, needId: string, params: UpdateNeedRawFieldsParams): Promise<boolean> {
-  const need = await session.prepare("SELECT foodbank_id FROM foodbankchange WHERE need_id = ?").bind(needId).first<{ foodbank_id: number | null }>();
+  const need = await session
+    .prepare("SELECT foodbank_id, published FROM foodbankchange WHERE need_id = ?")
+    .bind(needId)
+    .first<{ foodbank_id: number | null; published: number }>();
   if (!need) return false;
 
   const now = pyNow();
@@ -299,8 +317,12 @@ export async function updateNeedRawFields(session: Session, needId: string, para
     .bind(params.changeText, params.excessChangeText, params.published ? 1 : 0, params.foodbankId, now, needId)
     .run();
 
-  const affected = new Set([need.foodbank_id, params.foodbankId].filter((id): id is number => id !== null));
-  for (const foodbankId of affected) await recomputeFoodbankNeedFields(session, foodbankId);
+  // Food bank id -> whether its public needs changed: the old one if the
+  // need was published there, the new one if it is published now.
+  const affected = new Map<number, boolean>();
+  if (need.foodbank_id !== null) affected.set(need.foodbank_id, need.published === 1);
+  if (params.foodbankId !== null) affected.set(params.foodbankId, (affected.get(params.foodbankId) ?? false) || params.published);
+  for (const [foodbankId, publicChange] of affected) await recomputeFoodbankNeedFields(session, foodbankId, publicChange);
   return true;
 }
 
@@ -310,7 +332,7 @@ export async function updateNeedRawFields(session: Session, needId: string, para
 // affected food bank at all (confirmed, WP 6.4 research). Fixed here: every
 // distinct foodbank_id among the deleted rows gets recomputed once, not
 // once per deleted need -- a queue backlog often holds several stale needs
-// for the same food bank, and Set() dedupes that down to one write each.
+// for the same food bank, and the Map dedupes that down to one write each.
 // CHUNKED AT 90 IDS, because D1 caps a statement at 100 bound parameters.
 // This used to bind the whole list into one `need_id IN (?, ?, ...)`, which
 // worked until the review queue grew past 100 and then 500'd -- reported
@@ -332,20 +354,25 @@ const DELETE_CHUNK = 90;
 export async function deleteNeedsByUuids(session: Session, needIds: readonly string[]): Promise<void> {
   if (needIds.length === 0) return;
 
-  const affectedFoodbanks = new Set<number>();
+  // Food bank id -> whether any of its deleted needs was published.
+  const affectedFoodbanks = new Map<number, boolean>();
   for (let i = 0; i < needIds.length; i += DELETE_CHUNK) {
     const chunk = needIds.slice(i, i + DELETE_CHUNK);
     const placeholders = chunk.map(() => "?").join(", ");
     const affected = await session
-      .prepare(`SELECT DISTINCT foodbank_id FROM foodbankchange WHERE need_id IN (${placeholders}) AND foodbank_id IS NOT NULL`)
+      .prepare(
+        `SELECT foodbank_id, MAX(published) AS published FROM foodbankchange WHERE need_id IN (${placeholders}) AND foodbank_id IS NOT NULL GROUP BY foodbank_id`,
+      )
       .bind(...chunk)
-      .all<{ foodbank_id: number }>();
-    for (const { foodbank_id } of affected.results) affectedFoodbanks.add(foodbank_id);
+      .all<{ foodbank_id: number; published: number }>();
+    for (const { foodbank_id, published } of affected.results) {
+      affectedFoodbanks.set(foodbank_id, (affectedFoodbanks.get(foodbank_id) ?? false) || published === 1);
+    }
     await session.prepare(`DELETE FROM foodbankchange WHERE need_id IN (${placeholders})`).bind(...chunk).run();
   }
 
   // Deduped across chunks and recomputed once per food bank: a bulk delete
   // routinely hits the same food bank several times, and this is the
   // expensive half (two queries plus an UPDATE each).
-  for (const foodbankId of affectedFoodbanks) await recomputeFoodbankNeedFields(session, foodbankId);
+  for (const [foodbankId, publicChange] of affectedFoodbanks) await recomputeFoodbankNeedFields(session, foodbankId, publicChange);
 }

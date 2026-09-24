@@ -79,7 +79,7 @@ const {
 // suites share schema.testkit.ts instead; workers/site's do not import across
 // that boundary).
 //
-//   foodbank                    0001_core.sql:10-46, reduced to the seven
+//   foodbank                    0001_core.sql:10-46, reduced to the nine
 //                               columns these routes read or write. Every
 //                               query against it here is `SELECT *` or names
 //                               a column explicitly, and coerceBooleans
@@ -112,7 +112,7 @@ CREATE TABLE foodbank (
   id INTEGER PRIMARY KEY,
   name TEXT NOT NULL, slug TEXT NOT NULL,
   url TEXT NOT NULL, shopping_list_url TEXT NOT NULL, rss_url TEXT,
-  latest_need_id INTEGER, last_need TEXT
+  latest_need_id INTEGER, last_need TEXT, modified TEXT
 );
 CREATE UNIQUE INDEX foodbank_slug_uniq ON foodbank(slug);
 
@@ -1045,6 +1045,16 @@ describe("adminNeedPublish", () => {
     await post(`/admin/need/${UNPUB}/publish/`, {});
     expect(storedFoodbank(1).latest_need_id).toBe(15);
     expect(storedFoodbank(1).last_need).toBe("2026-05-01 00:00:00.000000");
+  });
+
+  // The site-wide "Last updated" footer is MAX(foodbank.modified), so the
+  // Publish button has to stamp it -- as Django's need.save() -> foodbank.save()
+  // did. Without it the footer drifted to the last food bank form edit.
+  it("stamps the food bank's modified, which the site's Last updated footer reads", async () => {
+    await post(`/admin/need/${REVIEW}/publish/`, {});
+    // Seeded NULL, so any Django-format timestamp here is the publish's own.
+    const { modified } = db.prepare("SELECT modified FROM foodbank WHERE id = 1").get() as { modified: string | null };
+    expect(modified).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{6}$/);
   });
 
   // needs.py:305-317's `do_translate = self.published`. Django enqueued these

@@ -95,7 +95,8 @@ import type { AppEnv } from "../../types";
 //
 // `foodbank` is deliberately REDUCED to the columns this path touches -- the
 // five getOpenFoodbankOptions selects, `url` (which decides the preview pane),
-// and the two cached columns the recompute writes. getFoodbankBySlug does
+// and the three columns the recompute writes (`modified` only when the new
+// need is published). getFoodbankBySlug does
 // SELECT *, so a narrow table is a truthful stand-in for a wide one; the full
 // 70-column definition would add nothing to any assertion here. The two UNIQUE
 // indexes are kept because the seeds rely on slugs being unique, which is what
@@ -108,7 +109,8 @@ CREATE TABLE foodbank (
   url TEXT NOT NULL,
   is_closed INTEGER NOT NULL,
   latest_need_id INTEGER,
-  last_need TEXT
+  last_need TEXT,
+  modified TEXT
 );
 CREATE UNIQUE INDEX foodbank_name_uniq ON foodbank(name);
 CREATE UNIQUE INDEX foodbank_slug_uniq ON foodbank(slug);

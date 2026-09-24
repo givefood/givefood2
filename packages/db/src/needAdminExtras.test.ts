@@ -449,6 +449,19 @@ describe("insertAdminNeed: the foodbank recompute", () => {
     expect(foodbank.latest_need_id).toBe(900);
   });
 
+  // The site-wide "Last updated" footer is MAX(foodbank.modified), so a
+  // published need has to stamp it, as Django's foodbank.save() did. An
+  // unpublished one changes nothing the public can see and must not.
+  it("stamps the food bank's modified for a published need, and leaves it for an unpublished one", async () => {
+    seedStaleSalisbury();
+
+    await insertAdminNeed(session, { foodbankId: SALISBURY, changeText: "Beans", excessChangeText: null, published: false });
+    expect(foodbankRow(SALISBURY).modified).toBe("2020-01-01 00:00:00.000000");
+
+    await insertAdminNeed(session, { foodbankId: SALISBURY, changeText: "Rice", excessChangeText: null, published: true });
+    expect(foodbankRow(SALISBURY).modified).toBe(PY_NOW);
+  });
+
   // TICKET #9, executed rather than argued. The recompute is
   // `ORDER BY created DESC LIMIT 1` over TEXT, so the format this function
   // writes decides which row wins. Salisbury already has a need created at

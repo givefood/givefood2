@@ -12,6 +12,12 @@ export const FRAG_KV_KEY_NEED_HITS = "frag:need-hits";
 // ("modified").modified`. MAX() over the already-migrated
 // foodbank_modified_idx index is the same answer as ORDER BY modified DESC
 // LIMIT 1, without needing a row shape back.
+//
+// Only as fresh as the writes that stamp foodbank.modified: the food bank
+// forms, orders, and -- the one that moves daily -- any change to a
+// published need (needAdmin.ts's recomputeFoodbankNeedFields). A write that
+// updates a food bank's needs without stamping it leaves this footer days
+// behind the site.
 export async function getLastModifiedFoodbank(session: Session): Promise<string | null> {
   const row = await session.prepare("SELECT MAX(modified) AS modified FROM foodbank").first<{ modified: string | null }>();
   return row?.modified ?? null;

@@ -337,6 +337,13 @@ const PY_DATETIME = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{6}$/;
 
 const countStatements = (pattern: RegExp): number => executed.filter((e) => pattern.test(e.sql)).length;
 
+// foodbank.modified as seedFoodbank stores it, and as a frozen pyNow() writes
+// it. The site-wide "Last updated" footer is MAX(foodbank.modified) (frag.ts),
+// so which need writes move it off the seeded value is user-visible.
+const SEEDED_MODIFIED = "2020-01-01 00:00:00.000000";
+const FROZEN_INSTANT = "2026-09-06T11:22:33.444Z";
+const FROZEN_PY = "2026-09-06 11:22:33.444000";
+
 // =========================================================================
 // getUnpublishedNeeds -- gfadmin/views.py:46-53's real review queue
 // =========================================================================
@@ -1082,6 +1089,22 @@ describe("recomputeFoodbankNeedFields", () => {
     expect(storedFoodbank(1).last_need).toBe("2026-09-05T08:00:00.000Z");
     expect(storedFoodbank(1).latest_need_id).toBe(2);
   });
+
+  // publicChange. Off by default, so a reject or a delete of a need nobody
+  // could see does not claim the site was updated; on, it stamps only the
+  // food bank named.
+  it("stamps modified only when told the change was public, and only on the named food bank", async () => {
+    freezeClock(FROZEN_INSTANT);
+    seedNeed(db, { id: 1, foodbank_id: 1, created: at(1), published: 1 });
+
+    await recomputeFoodbankNeedFields(session, 1);
+    expect(storedFoodbank(1).modified).toBe(SEEDED_MODIFIED);
+
+    await recomputeFoodbankNeedFields(session, 1, true);
+    expect(storedFoodbank(1).modified).toBe(FROZEN_PY);
+    expect(storedFoodbank(1).latest_need_id).toBe(1);
+    expect(storedFoodbank(2).modified).toBe(SEEDED_MODIFIED);
+  });
 });
 
 // =========================================================================
@@ -1222,6 +1245,26 @@ describe("setNeedPublished", () => {
     expect(storedFoodbank(1).last_need).toBe(at(1));
   });
 
+  // THE "LAST UPDATED" FOOTER. Django's need.save() on publish ran
+  // foodbank.save(), whose auto_now bumped modified, and the footer is
+  // MAX(foodbank.modified). Before this, a week of publishing needs left the
+  // footer reading "6 days ago" -- the last food bank form edit.
+  it("stamps the food bank's modified on publish, and on unpublishing a published need", async () => {
+    freezeClock(FROZEN_INSTANT);
+
+    await setNeedPublished(session, uuid(1), true);
+    expect(storedFoodbank(1).modified).toBe(FROZEN_PY);
+
+    db.prepare("UPDATE foodbank SET modified = ? WHERE id = 1").run(SEEDED_MODIFIED);
+    await setNeedPublished(session, uuid(1), false);
+    expect(storedFoodbank(1).modified).toBe(FROZEN_PY);
+  });
+
+  it("leaves the food bank's modified alone when unpublishing a need that was never published", async () => {
+    await setNeedPublished(session, uuid(1), false);
+    expect(storedFoodbank(1).modified).toBe(SEEDED_MODIFIED);
+  });
+
   // ONE WRITE, not two. Django calls `.save()` twice back to back and doubles
   // every side effect (38 translate tasks instead of 19, two decache cycles);
   // the port collapses that to a single UPDATE, and this is what stops the
@@ -1325,6 +1368,22 @@ describe("setNeedNonpertinent", () => {
     await setNeedNonpertinent(session, uuid(1));
     expect(countStatements(/^UPDATE foodbank /)).toBe(1);
     expect(storedFoodbank(1).last_need).toBe(at(1));
+  });
+
+  // Rejecting is the review queue's commonest action and, on an unpublished
+  // need, invisible to the public -- so it must not move "Last updated".
+  it("leaves the food bank's modified alone when rejecting an unpublished need", async () => {
+    await setNeedNonpertinent(session, uuid(1));
+    expect(storedFoodbank(1).modified).toBe(SEEDED_MODIFIED);
+  });
+
+  it("stamps the food bank's modified when the rejected need is published", async () => {
+    freezeClock(FROZEN_INSTANT);
+    db.prepare("UPDATE foodbankchange SET published = 1 WHERE id = 1").run();
+
+    await setNeedNonpertinent(session, uuid(1));
+
+    expect(storedFoodbank(1).modified).toBe(FROZEN_PY);
   });
 
   it("skips the recompute for a need with no food bank", async () => {
@@ -1474,6 +1533,17 @@ describe("deleteNeedByUuid", () => {
     expect(storedFoodbank(1).last_need).toBe(at(2));
   });
 
+  it("stamps the food bank's modified when the deleted need was published, and not when it was unpublished", async () => {
+    freezeClock(FROZEN_INSTANT);
+    seedNeed(db, { id: 3, foodbank_id: 1, created: at(3), published: 0 });
+
+    await deleteNeedByUuid(session, uuid(3));
+    expect(storedFoodbank(1).modified).toBe(SEEDED_MODIFIED);
+
+    await deleteNeedByUuid(session, uuid(2));
+    expect(storedFoodbank(1).modified).toBe(FROZEN_PY);
+  });
+
   it("skips the recompute for a need with no food bank", async () => {
     seedNeed(db, { id: 3, foodbank_id: null, created: at(3) });
     expect(await deleteNeedByUuid(session, uuid(3))).toBe(true);
@@ -1605,7 +1675,7 @@ describe("updateNeedRawFields", () => {
     expect(storedFoodbank(2).last_need).toBe(at(1));
   });
 
-  // Set() dedupe. An edit that leaves the food bank alone is by far the
+  // Map dedupe. An edit that leaves the food bank alone is by far the
   // common case, and recomputing it twice is two extra reads and a redundant
   // write on every save.
   it("recomputes once when the food bank has not changed", async () => {
@@ -1621,6 +1691,40 @@ describe("updateNeedRawFields", () => {
     expect(storedNeed(1).foodbank_id).toBeNull();
     expect(countStatements(/^UPDATE foodbank /)).toBe(1);
     expect(storedFoodbank(1).last_need).toBeNull();
+  });
+
+  // foodbank.modified moves only for a food bank whose PUBLIC needs changed:
+  // the one a published need left, and the one it is published on now.
+  it("leaves the food bank's modified alone for an edit that stays unpublished", async () => {
+    await updateNeedRawFields(session, uuid(1), { ...params, published: false });
+    expect(storedFoodbank(1).modified).toBe(SEEDED_MODIFIED);
+  });
+
+  it("stamps the food bank's modified when the edit publishes the need", async () => {
+    freezeClock(FROZEN_INSTANT);
+    await updateNeedRawFields(session, uuid(1), params);
+    expect(storedFoodbank(1).modified).toBe(FROZEN_PY);
+  });
+
+  // Same food bank on both sides, so the old side's "was published" and the
+  // new side's "is not" land on one Map entry -- and must OR, not overwrite.
+  it("stamps the food bank's modified when the edit unpublishes a published need", async () => {
+    freezeClock(FROZEN_INSTANT);
+    db.prepare("UPDATE foodbankchange SET published = 1 WHERE id = 1").run();
+
+    await updateNeedRawFields(session, uuid(1), { ...params, published: false });
+
+    expect(storedFoodbank(1).modified).toBe(FROZEN_PY);
+  });
+
+  it("stamps the food bank that lost a published need, not the one that gained an unpublished one", async () => {
+    freezeClock(FROZEN_INSTANT);
+    db.prepare("UPDATE foodbankchange SET published = 1 WHERE id = 1").run();
+
+    await updateNeedRawFields(session, uuid(1), { ...params, published: false, foodbankId: 2 });
+
+    expect(storedFoodbank(1).modified).toBe(FROZEN_PY);
+    expect(storedFoodbank(2).modified).toBe(SEEDED_MODIFIED);
   });
 
   // NO GUARD HERE, unlike setNeedPublished -- this function will happily
@@ -1741,7 +1845,7 @@ describe("deleteNeedsByUuids", () => {
     expect(countStatements(/^UPDATE foodbank /)).toBe(2);
   });
 
-  // Deduped ACROSS chunks, not merely within one. The Set lives outside the
+  // Deduped ACROSS chunks, not merely within one. The Map lives outside the
   // loop; moving it inside would recompute a food bank once per chunk, which
   // no assertion on a single-chunk batch could ever notice.
   it("dedupes a food bank that appears in more than one chunk", async () => {
@@ -1752,7 +1856,33 @@ describe("deleteNeedsByUuids", () => {
     expect(countStatements(/^UPDATE foodbank /)).toBe(1);
   });
 
-  // `AND foodbank_id IS NOT NULL` on the DISTINCT select. Without it the Set
+  // Clearing a backlog of unreviewed needs is invisible to the public and
+  // must not move "Last updated"; losing a published need is not.
+  it("stamps modified only on the food banks that lost a published need", async () => {
+    freezeClock(FROZEN_INSTANT);
+    seedNeed(db, { id: 1, foodbank_id: 1, created: at(1), published: 0 });
+    seedNeed(db, { id: 2, foodbank_id: 1, created: at(2), published: 1 });
+    seedNeed(db, { id: 3, foodbank_id: 2, created: at(3), published: 0 });
+
+    await deleteNeedsByUuids(session, [uuid(1), uuid(2), uuid(3)]);
+
+    expect(storedFoodbank(1).modified).toBe(FROZEN_PY);
+    expect(storedFoodbank(2).modified).toBe(SEEDED_MODIFIED);
+  });
+
+  // The published flag ORs across chunks: a published need in the first
+  // chunk is not forgotten because the second chunk's needs were not.
+  it("remembers a published need from an earlier chunk", async () => {
+    freezeClock(FROZEN_INSTANT);
+    const all = seedMany(120);
+    db.prepare("UPDATE foodbankchange SET published = 1 WHERE id = 1").run();
+
+    await deleteNeedsByUuids(session, all);
+
+    expect(storedFoodbank(1).modified).toBe(FROZEN_PY);
+  });
+
+  // `AND foodbank_id IS NOT NULL` on the grouped select. Without it the Map
   // would collect a null and recomputeFoodbankNeedFields would run an UPDATE
   // with `WHERE id = NULL`, matching nothing -- harmless, but a wasted round
   // trip on the one query per chunk that already costs the most.

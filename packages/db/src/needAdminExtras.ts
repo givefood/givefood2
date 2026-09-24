@@ -81,7 +81,7 @@ export async function insertAdminNeed(session: Session, params: InsertAdminNeedP
     .bind(needId, params.foodbankId, params.changeText, params.excessChangeText, params.published ? 1 : 0, now)
     .run();
 
-  if (params.foodbankId !== null) await recomputeFoodbankNeedFields(session, params.foodbankId);
+  if (params.foodbankId !== null) await recomputeFoodbankNeedFields(session, params.foodbankId, params.published);
   return { id: result.meta.last_row_id, needId };
 }
 
