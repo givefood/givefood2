@@ -75,19 +75,22 @@ npx wrangler d1 migrations apply givefood --remote  # production D1 — apply bo
 
 ## Deployment
 
-`workers/site` deploys automatically: pushes to `main` trigger Cloudflare Workers
-Builds (a plain `wrangler deploy`, with the Nunjucks precompile running from
-`wrangler.jsonc`'s own `build.command` hook).
+Both Workers deploy automatically: pushes to `main` trigger a Cloudflare Workers
+Builds project for each (`givefood2` and `givefood2-jobs`), running a plain
+`wrangler deploy`. `workers/site` runs the Nunjucks precompile from
+`wrangler.jsonc`'s own `build.command` hook. Pushes to other branches run
+`wrangler versions upload` instead.
 
-**`workers/jobs` has no Workers Builds project and deploys by hand:**
+Each Builds project's **root directory** must be set to its Worker's folder
+(`workers/site`, `workers/jobs`). Without it, wrangler runs at the repo root,
+finds no config and fails with "Missing entry-point to Worker script". It
+refuses to guess which of the two Workers a pnpm workspace means.
+
+To deploy by hand, pass the config explicitly or run from the Worker's folder:
 
 ```bash
 npx wrangler deploy -c workers/jobs/wrangler.jsonc
 ```
-
-It must be run with that explicit `-c`, or from `workers/jobs/`. A bare
-`wrangler deploy` at the repo root fails — wrangler refuses to guess which of the
-two Workers a pnpm workspace means.
 
 ## Scheduled work
 
