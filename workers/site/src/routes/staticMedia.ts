@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import type { AppEnv } from "../types";
+import { timedR2 } from "../lib/timings";
 
 // PLAN.md WP 1.6: `img/ar/**` (27 MB, incl. an 11 MB mp4) and
 // `img/appscreenshots/**` (2 MB) are excluded from the Workers Static
@@ -29,7 +30,7 @@ async function serveStaticMedia(c: Context<AppEnv>) {
   const key = url.pathname.slice(1); // -> static/img/ar/2025/androidapp.mp4
 
   const rangeHeader = c.req.header("Range");
-  const obj = await c.env.STATIC_MEDIA.get(key, {
+  const obj = await timedR2(c, c.env.STATIC_MEDIA).get(key, {
     range: c.req.raw.headers,
     onlyIf: c.req.raw.headers,
   });

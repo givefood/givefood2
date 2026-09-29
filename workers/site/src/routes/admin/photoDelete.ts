@@ -2,6 +2,7 @@ import type { Context } from "hono";
 import { getFoodbankBySlug, getOwnedPhoto, deletePlacePhoto, clearPlaceHasPhoto } from "@givefood/db";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
+import { timedR2 } from "../../lib/timings";
 import { verifyCsrf } from "../../lib/csrf";
 
 // gfadmin/views.py:1877-1913 photo_delete, registered
@@ -51,7 +52,7 @@ export async function adminPhotoDelete(c: Context<AppEnv>): Promise<Response> {
   // generated at ingest -- if the backfill consumer starts writing them it
   // must publish their key shape and this line must delete those too. Not
   // guessing a naming scheme here.
-  await c.env.MEDIA.delete(photo.r2_key);
+  await timedR2(c, c.env.MEDIA).delete(photo.r2_key);
   await deletePlacePhoto(db, photo.id);
   await clearPlaceHasPhoto(db, photo.owner_table, photo.place_id);
 

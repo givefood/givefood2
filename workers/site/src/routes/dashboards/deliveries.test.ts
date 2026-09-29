@@ -594,7 +594,7 @@ describe("gfdashDeliveries -- page context", () => {
   it("keeps the fractional render duration in the Server-Timing header", async () => {
     const res = await get("/dashboard/deliveries/count/");
 
-    expect(res.headers.get("Server-Timing")).toMatch(/^render;dur=\d+\.\d{3}$/);
+    expect(res.headers.get("Server-Timing")).toMatch(/(?:^|, )render;dur=\d+\.\d{3}$/);
   });
 
   // The dashboards fall through pageCacheControl's default family to

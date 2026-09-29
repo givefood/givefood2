@@ -2,6 +2,7 @@ import type { Context } from "hono";
 import type { AppEnv } from "../types";
 import { hmacSha256Hex, timingSafeEqual } from "./hmac";
 import { parseCookie } from "./cookies";
+import { timedKv } from "./timings";
 
 // WP 6.1/6.2 (PLAN.md §10.2.7, "per the maintainer's decision"). This is
 // NOT a port of gfauth/views.py -- that view accepts a Google Identity
@@ -251,7 +252,7 @@ function sessionKvKey(sessionId: string): string {
   return `admin-session:${sessionId}`;
 }
 
-async function createSession(env: AppEnv["Bindings"], claims: GoogleIdTokenClaims): Promise<string> {
+async function createSession(c: Context<AppEnv>, claims: GoogleIdTokenClaims): Promise<string> {
   const sessionId = randomBase64Url(32);
   const stored: StoredSession = {
     email: claims.email,
@@ -260,7 +261,7 @@ async function createSession(env: AppEnv["Bindings"], claims: GoogleIdTokenClaim
     picture: claims.picture ?? "",
     expiresAt: Date.now() + SESSION_TTL_SECONDS * 1000,
   };
-  await env.SESSIONS.put(sessionKvKey(sessionId), JSON.stringify(stored), { expirationTtl: SESSION_TTL_SECONDS });
+  await timedKv(c, c.env.SESSIONS).put(sessionKvKey(sessionId), JSON.stringify(stored), { expirationTtl: SESSION_TTL_SECONDS });
   return sessionId;
 }
 
@@ -273,7 +274,7 @@ export async function getAdminSession(c: Context<AppEnv>): Promise<AdminSessionD
   if (!sessionId) return null;
 
   const key = sessionKvKey(sessionId);
-  const raw = await c.env.SESSIONS.get(key);
+  const raw = await timedKv(c, c.env.SESSIONS).get(key);
   if (!raw) return null;
 
   let stored: StoredSession;
@@ -289,7 +290,7 @@ export async function getAdminSession(c: Context<AppEnv>): Promise<AdminSessionD
     // slide it forward. See SESSION_REFRESH_THRESHOLD_SECONDS's own
     // comment for why this isn't done on every read.
     const refreshed: StoredSession = { ...stored, expiresAt: Date.now() + SESSION_TTL_SECONDS * 1000 };
-    await c.env.SESSIONS.put(key, JSON.stringify(refreshed), { expirationTtl: SESSION_TTL_SECONDS });
+    await timedKv(c, c.env.SESSIONS).put(key, JSON.stringify(refreshed), { expirationTtl: SESSION_TTL_SECONDS });
   }
 
   return { email: stored.email, name: stored.name, givenName: stored.givenName, picture: stored.picture };
@@ -297,7 +298,7 @@ export async function getAdminSession(c: Context<AppEnv>): Promise<AdminSessionD
 
 export async function revokeAdminSession(c: Context<AppEnv>): Promise<void> {
   const sessionId = parseCookie(c.req.header("Cookie"), SESSION_COOKIE_NAME);
-  if (sessionId) await c.env.SESSIONS.delete(sessionKvKey(sessionId));
+  if (sessionId) await timedKv(c, c.env.SESSIONS).delete(sessionKvKey(sessionId));
   c.header("Set-Cookie", `${SESSION_COOKIE_NAME}=; Secure; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`, { append: true });
 }
 
@@ -384,7 +385,7 @@ export async function handleGoogleOAuthCallback(c: Context<AppEnv>): Promise<Res
   // different account, no need to dead-end them.
   if (!claims.email_verified || claims.hd !== HOSTED_DOMAIN) return c.redirect("/auth/", 302);
 
-  const sessionId = await createSession(c.env, claims);
+  const sessionId = await createSession(c, claims);
   setSessionCookie(c, sessionId);
 
   return c.redirect(oauthPayload.next, 302);

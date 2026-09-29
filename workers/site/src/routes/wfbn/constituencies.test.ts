@@ -929,7 +929,13 @@ describe("the constituencies index", () => {
     // started its own timer would report ~0 and quietly stop measuring the
     // thing the debug comment claims to measure. Driven from a fixed clock so
     // the NUMBER is the assertion.
-    const readings = [1000, 1064.6, 1099];
+    //
+    // The readings in order: serverTiming's t0; lib/timings.ts opening and
+    // closing the page's one D1 round trip; elapsedMs; serverTiming's final
+    // read. The clock does not move between the D1 close and elapsedMs, as on
+    // Workers where it only advances at I/O -- 1099 is there so that reading
+    // the wrong one of the last two shows up as the wrong number.
+    const readings = [1000, 1000, 1064.6, 1064.6, 1099];
     let i = 0;
     vi.spyOn(performance, "now").mockImplementation(() => readings[Math.min(i++, readings.length - 1)] ?? 0);
     expect(await body("/needs/in/constituencies/")).toContain("⏱️ Took 65ms");
@@ -1468,7 +1474,7 @@ describe("the constituency page: the MP, the map and the nearby list", () => {
     expect(res.headers.get("Cache-Control")).toBe("max-age=604800");
     expect(res.headers.get("Link")).toBe("</needs/in/constituency/salisbury/geo.json>; rel=preload; as=fetch; crossorigin=anonymous");
     expect(res.headers.get("Cache-Tag")).toBe("pc-salisbury");
-    expect(res.headers.get("Server-Timing")).toMatch(/^render;dur=/);
+    expect(res.headers.get("Server-Timing")).toMatch(/(?:^|, )render;dur=/);
   });
 
   it("issues four D1 round trips, with the two independent SELECTs batched into one", async () => {
@@ -1506,7 +1512,12 @@ describe("the constituency page: the MP, the map and the nearby list", () => {
     // timed only its own render would report a number that stayed flat while
     // the page got slower. The debug comment is the only place this page's
     // real timing is visible in production.
-    const readings = [2000, 2137.2, 2199];
+    //
+    // Nine readings: t0; then lib/timings.ts opening and closing each of the
+    // three D1 busy intervals the four round trips make (the first two run
+    // under one Promise.all, so they share one); then elapsedMs; then
+    // serverTiming's final read, kept distinct as on the index above.
+    const readings = [2000, 2000, 2080, 2080, 2120, 2120, 2137.2, 2137.2, 2199];
     let i = 0;
     vi.spyOn(performance, "now").mockImplementation(() => readings[Math.min(i++, readings.length - 1)] ?? 0);
     expect(await body("/needs/in/constituency/salisbury/")).toContain("⏱️ Took 137ms");

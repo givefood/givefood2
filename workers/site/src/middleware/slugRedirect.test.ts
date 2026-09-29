@@ -1048,7 +1048,10 @@ describe("slugRedirect: as index.ts actually mounts it", () => {
     const res = await realReq("/needs/at/durham/");
     expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
     expect(res.headers.get("Referrer-Policy")).toBe("same-origin");
-    expect(res.headers.get("Server-Timing")).toMatch(/^render;dur=/);
+    // The slug map read goes through lib/session.ts's dbSession, so even a
+    // redirect reports the D1 round trip it cost (the memo starts stale in
+    // every test, see beforeEach, so this request always makes it).
+    expect(res.headers.get("Server-Timing")).toMatch(/^db;dur=\d+\.\d{3};desc="1 round trip", render;dur=/);
   });
 
   it("emits no Content-Language, because resolveLanguage never runs", async () => {

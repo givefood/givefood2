@@ -377,7 +377,7 @@ describe("/aac/ -- the headers, which are most of the feature", () => {
     expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
     expect(res.headers.get("Referrer-Policy")).toBe("same-origin");
     expect(res.headers.get("Content-Language")).toBe("en");
-    expect(res.headers.get("Server-Timing")).toMatch(/^render;dur=\d/);
+    expect(res.headers.get("Server-Timing")).toMatch(/(?:^|, )render;dur=\d/);
   });
 });
 

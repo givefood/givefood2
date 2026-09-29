@@ -163,6 +163,23 @@ describe("serverTiming", () => {
     expect(res.headers.get("Server-Timing")).toBe("db;dur=5, render;dur=0.135");
   });
 
+  it("lists each backend the request waited on ahead of render, in the same header", async () => {
+    // The per-backend metrics are lib/timings.ts's (tested there); this pins
+    // where they land: after anything the route set itself, before `render`,
+    // comma-joined into the one header. Four clock reads and no more -- t0,
+    // the D1 call opening and closing, and the single `now` that both
+    // `render` and any still-open interval are measured to.
+    const clock = stubClock([1000, 1005, 1025, 1030]);
+    const app = timedApp(async (c) => {
+      c.header("Server-Timing", "app;dur=1");
+      await c.get("timings")!.time("db", async () => null);
+      return c.text("ok");
+    });
+    const res = await app.request("https://x/", {}, env);
+    expect(res.headers.get("Server-Timing")).toBe('app;dur=1, db;dur=20.000;desc="1 round trip", render;dur=30.000');
+    expect(clock).toHaveBeenCalledTimes(4);
+  });
+
   it("appends to a Server-Timing carried by a Response the handler constructed", async () => {
     // Deliberately NOT the same code path as the test above. c.header() before
     // the response exists writes into Hono's preparedHeaders; a route that

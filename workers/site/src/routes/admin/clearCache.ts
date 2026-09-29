@@ -2,6 +2,7 @@ import type { Context } from "hono";
 import { FRAG_KV_KEY_LAST_UPDATED, FRAG_KV_KEY_NEED_HITS } from "@givefood/db";
 import type { AppEnv } from "../../types";
 import { verifyCsrf } from "../../lib/csrf";
+import { timedKv } from "../../lib/timings";
 
 // gfadmin/views.py:3116-3122 clearcache(), registered gfadmin/urls/core.py:17
 // -- the DANGER ZONE "Clear Cache" button
@@ -98,7 +99,7 @@ export async function adminClearCache(c: Context<AppEnv>): Promise<Response> {
   // button into a 500, so a failed read just means "no cooldown known".
   let last: string | null = null;
   try {
-    last = await c.env.DATA.get(COOLDOWN_KV_KEY);
+    last = await timedKv(c, c.env.DATA).get(COOLDOWN_KV_KEY);
   } catch (err) {
     console.error("clearcache: KV read of the cooldown marker failed, proceeding", err);
   }
@@ -125,7 +126,8 @@ export async function adminClearCache(c: Context<AppEnv>): Promise<Response> {
     //
     // allSettled: one failed KV delete must not abort the Cloudflare purge,
     // which is the part that matters.
-    await Promise.allSettled([c.env.DATA.delete(FRAG_KV_KEY_LAST_UPDATED), c.env.DATA.delete(FRAG_KV_KEY_NEED_HITS)]);
+    const kv = timedKv(c, c.env.DATA);
+    await Promise.allSettled([kv.delete(FRAG_KV_KEY_LAST_UPDATED), kv.delete(FRAG_KV_KEY_NEED_HITS)]);
 
     // CF_API_KEY / CF_ZONE_ID are declared in the Env interface but are not yet
     // set on this Worker (they are live production credentials -- wrangler.jsonc
@@ -144,7 +146,7 @@ export async function adminClearCache(c: Context<AppEnv>): Promise<Response> {
     // immediately, and a KV-only clear never touched the rate-limited API.
     if (outcome === "purged") {
       try {
-        await c.env.DATA.put(COOLDOWN_KV_KEY, String(Date.now()));
+        await timedKv(c, c.env.DATA).put(COOLDOWN_KV_KEY, String(Date.now()));
       } catch (err) {
         console.error("clearcache: KV write of the cooldown marker failed", err);
       }

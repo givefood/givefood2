@@ -421,7 +421,7 @@ describe("publicCountry -- the response envelope", () => {
 
     expect(res.headers.get("Cache-Tag")).toBeNull();
     expect(res.headers.get("Link")).toBeNull();
-    expect(res.headers.get("Server-Timing")).toMatch(/^render;dur=/);
+    expect(res.headers.get("Server-Timing")).toMatch(/(?:^|, )render;dur=/);
   });
 
   // THE THREE CONSTANTS, WHICH ARE OTHERWISE INVISIBLE.

@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import type { AppEnv } from "../types";
+import { timedR2 } from "../lib/timings";
 
 // PLAN.md §3.7 "Media routes — PlacePhoto and the three families that were
 // missing". Explicitly called out as "the safest possible first thing to
@@ -148,7 +149,7 @@ async function serveMedia(c: Context<AppEnv>) {
   const onlyIf: R2Conditional = inm
     ? { etagDoesNotMatch: inm.replace(/^W\//, "").replace(/"/g, "") }
     : {};
-  const obj = await c.env.MEDIA.get(key, { onlyIf, range: c.req.raw.headers });
+  const obj = await timedR2(c, c.env.MEDIA).get(key, { onlyIf, range: c.req.raw.headers });
 
   if (obj === null) return missing(c, key);
 

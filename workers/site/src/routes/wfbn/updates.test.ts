@@ -1755,7 +1755,7 @@ describe("the rendered page", () => {
     const html = await (await get(OK)).text();
 
     expect(html).toMatch(/⏱️ Took \d+ms/);
-    expect((await get(OK)).headers.get("Server-Timing")).toMatch(/^render;dur=\d/);
+    expect((await get(OK)).headers.get("Server-Timing")).toMatch(/(?:^|, )render;dur=\d/);
   });
 });
 

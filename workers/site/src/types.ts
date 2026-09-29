@@ -1,5 +1,6 @@
 import type { Env } from "../worker-configuration";
 import type { AdminSessionData } from "./lib/adminAuth";
+import type { Timings } from "./lib/timings";
 
 // Shared Hono generics, so every route/middleware file's Context type is
 // structurally identical to the one `app` in index.ts is instantiated with.
@@ -10,5 +11,8 @@ import type { AdminSessionData } from "./lib/adminAuth";
 // middleware/pageCacheControl.ts. A response carrying a CSRF token is
 // per-visitor and must never enter a shared cache; see that middleware for
 // why the Set-Cookie header alone was not a sufficient signal.
-export type Vars = { lang: string; pathAfterPrefix: string; requestStartTime: number; adminUser?: AdminSessionData; csrfIssued?: boolean };
+// timings: set by middleware/serverTiming.ts, optional on purpose -- a test
+// app that mounts a route without that middleware has none, and every
+// lib/timings.ts wrapper then hands its binding back untouched.
+export type Vars = { lang: string; pathAfterPrefix: string; requestStartTime: number; adminUser?: AdminSessionData; csrfIssued?: boolean; timings?: Timings };
 export type AppEnv = { Bindings: Env; Variables: Vars };

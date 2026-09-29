@@ -945,7 +945,7 @@ describe("the shared page context", () => {
   // The Server-Timing header keeps its decimals -- the same divergence, the
   // other way round, and the pair only makes sense asserted together.
   it("keeps the fractional render duration in the Server-Timing header", async () => {
-    expect((await get(PATH)).headers.get("Server-Timing")).toMatch(/^render;dur=\d+\.\d{3}$/);
+    expect((await get(PATH)).headers.get("Server-Timing")).toMatch(/(?:^|, )render;dur=\d+\.\d{3}$/);
   });
 
   // A DIVERGENCE, PINNED. context_processors.py:46-48 appended QUERY_STRING to

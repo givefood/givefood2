@@ -1,5 +1,6 @@
 import type { Context, MiddlewareHandler } from "hono";
 import type { AppEnv } from "../types";
+import { Timings } from "../lib/timings";
 
 // PLAN.md §3.5 "RenderTime — do not port as a body rewrite". The Django
 // original does response.content.replace(b"PUTTHERENDERTIMEHERE", ...) on
@@ -9,12 +10,22 @@ import type { AppEnv } from "../types";
 //
 // Trap: Date.now() does not advance during code execution on Workers -- a
 // literal port would report 0ms for everything. Use performance.now().
+//
+// `render` is the whole request. The per-backend metrics in front of it
+// (db, kv, r2) come from the Timings collector published here and filled in
+// by lib/timings.ts's wrappers -- see that module for what they measure.
 export const serverTiming: MiddlewareHandler<AppEnv> = async (c, next) => {
   const t0 = performance.now();
+  const timings = new Timings();
   c.set("requestStartTime", t0);
+  c.set("timings", timings);
   await next();
-  const durationMs = performance.now() - t0;
-  c.header("Server-Timing", `render;dur=${durationMs.toFixed(3)}`, { append: true });
+  const now = performance.now();
+  const render = `render;dur=${(now - t0).toFixed(3)}`;
+  // ONE c.header() call however many metrics there are: after the response
+  // exists, each call makes Hono rebuild it (see serverTiming.test.ts), so a
+  // call per metric would clone every response once per backend it touched.
+  c.header("Server-Timing", [...timings.entries(now), render].join(", "), { append: true });
 };
 
 // For a page route that wants the debug comment's "Took Nms" to mean the

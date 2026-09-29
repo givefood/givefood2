@@ -1126,7 +1126,7 @@ describe("wfbnFoodbankLocation -- the response envelope and D1 traffic", () => {
     expect(res.headers.get("Content-Type")).toBe("text/html; charset=UTF-8");
     expect(res.headers.get("Cache-Control")).toBe("public, max-age=300, s-maxage=86400");
     expect(res.headers.get("Cache-Tag")).toBe("fb-salisbury");
-    expect(res.headers.get("Server-Timing")).toMatch(/^render;dur=/);
+    expect(res.headers.get("Server-Timing")).toMatch(/(?:^|, )render;dur=/);
   });
 
   // middleware/geoJsonPreload.ts recognises this route template and hints the

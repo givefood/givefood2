@@ -580,7 +580,7 @@ describe("staticMediaApp: a stored object", () => {
     expect(res.headers.get("referrer-policy")).toBe("same-origin");
     expect(res.headers.get("cross-origin-opener-policy")).toBe("same-origin");
     expect(res.headers.get("content-language")).toBe("en");
-    expect(res.headers.get("server-timing")).toMatch(/^render;dur=\d+(\.\d+)?$/);
+    expect(res.headers.get("server-timing")).toMatch(/^r2;dur=\d+\.\d{3};desc="1 round trip", render;dur=\d+(\.\d+)?$/);
   });
 });
 

@@ -905,7 +905,7 @@ describe("page context", () => {
 
     expect(html).toMatch(/⏱️ Took \d+ms/);
     expect(html).not.toMatch(/⏱️ Took \d+\.\d+ms/);
-    expect(res.headers.get("Server-Timing")).toMatch(/^render;dur=\d+\.\d{3}$/);
+    expect(res.headers.get("Server-Timing")).toMatch(/(?:^|, )render;dur=\d+\.\d{3}$/);
   });
 
   // The breadcrumb resolves through @givefood/urls' reverse-URL table. A

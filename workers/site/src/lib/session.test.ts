@@ -5,14 +5,15 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { schemaFor } from "@givefood/db/src/schema.testkit";
 import { api3App } from "../routes/api3";
 import type { AppEnv } from "../types";
+import { serverTiming } from "../middleware/serverTiming";
 import { dbSession } from "./session";
 
 // lib/session.ts is one expression, and it is the single point at which every
 // D1 read and write the PUBLIC Worker performs decides which copy of the
-// database it is allowed to talk to. 168 call sites across 87 files under
-// workers/site/src call `dbSession(c)` (counted by grep for this file); the
-// only other `withSession` in the Worker is middleware/slugRedirect.ts's own,
-// and workers/jobs never comes through here at all.
+// database it is allowed to talk to. 171 call sites across 89 files under
+// workers/site/src call `dbSession(c)` (counted by grep for this file);
+// middleware/slugRedirect.ts, which used to open its own `withSession`, now
+// comes through here too, and workers/jobs never does at all.
 //
 // NO DJANGO ANCESTOR TO PORT. /Users/jasoncartwright/Sites/foodcharity's
 // givefood/settings.py:139-149 declares one `default` Postgres connection and
@@ -382,6 +383,60 @@ describe("how it reaches the binding", () => {
 
     expect(real.calls).toHaveLength(1);
     expect(decoy.calls).toEqual([]);
+  });
+});
+
+// Everything above runs WITHOUT middleware/serverTiming.ts, which is why the
+// identity assertions hold: with no Timings collector on the context,
+// lib/timings.ts's timedD1 hands the session back untouched. Every production
+// request DOES run through serverTiming, and there dbSession returns a Proxy
+// over the session so D1 time reaches the Server-Timing header. These pin that
+// the Proxy changes nothing this file is about -- the constraint, and the real
+// session as `this` for the methods a native class needs it on.
+describe("under serverTiming, as every production request is", () => {
+  async function inTimedRequest<T>(env: AppEnv["Bindings"], body: (c: Context<AppEnv>) => T | Promise<T>) {
+    let value: T | undefined;
+    const app = new Hono<AppEnv>();
+    app.use("*", serverTiming);
+    app.all("*", async (c) => {
+      value = await body(c);
+      return c.text("ok");
+    });
+    const res = await app.fetch(new Request(PAGE), env, execCtx);
+    return { value, serverTiming: res.headers.get("Server-Timing") ?? "" };
+  }
+
+  it("still opens exactly one first-unconstrained session", async () => {
+    const db = dbDouble();
+
+    await inTimedRequest(envWith(db.DB), (c) => dbSession(c));
+
+    expect(db.calls.map((call) => call.args)).toEqual([["first-unconstrained"]]);
+  });
+
+  it("runs batch() and getBookmark() on the session withSession returned, not on the wrapper", async () => {
+    const db = dbDouble();
+
+    const { value } = await inTimedRequest(envWith(db.DB), async (c) => {
+      const session = dbSession(c);
+      return { batched: await session.batch([]), bookmark: session.getBookmark() };
+    });
+
+    expect(value).toEqual({ batched: [], bookmark: "bookmark-for-session-1" });
+    expect(db.records[0]!.batchSelf[0]).toBe(db.returned[0]);
+    expect(db.records[0]!.bookmarkSelf[0]).toBe(db.returned[0]);
+  });
+
+  it("reports the queries it ran as the request's db metric", async () => {
+    const db = dbDouble();
+
+    const { serverTiming: header } = await inTimedRequest(envWith(db.DB), async (c) => {
+      const session = dbSession(c);
+      await session.prepare("SELECT 1 WHERE id = ?").bind(1).first();
+      await session.batch([]);
+    });
+
+    expect(header).toMatch(/^db;dur=\d+\.\d{3};desc="2 round trips", render;dur=\d+\.\d{3}$/);
   });
 });
 

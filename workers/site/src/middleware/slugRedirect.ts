@@ -1,6 +1,7 @@
 import type { MiddlewareHandler } from "hono";
 import { getSlugRedirectMap } from "@givefood/db";
 import type { AppEnv } from "../types";
+import { dbSession } from "../lib/session";
 import { PREFIXES } from "./resolveLanguage";
 
 // PLAN.md §3.5 "Slug redirects — and the bug we must decide on".
@@ -62,7 +63,7 @@ export const slugRedirect: MiddlewareHandler<AppEnv> = async (c, next) => {
       // request through this isolate retries rather than serving an empty
       // map for the full 5 minutes.
       try {
-        map = await getSlugRedirectMap(c.env.DB.withSession("first-unconstrained"));
+        map = await getSlugRedirectMap(dbSession(c));
         memo = { at: Date.now(), map };
       } catch (err) {
         console.error("slugRedirect: D1 read failed, continuing without redirects", err);

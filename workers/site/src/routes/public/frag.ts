@@ -3,6 +3,7 @@ import { FRAG_KV_KEY_LAST_UPDATED, FRAG_KV_KEY_NEED_HITS, getFeaturedArticles, g
 import { intcomma, loadCatalogue, render, type Locale } from "@givefood/templates";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
+import { timedKv } from "../../lib/timings";
 import { isoDate, mapArticleRow } from "@givefood/models";
 import { timesinceAgo } from "../../lib/timesince";
 
@@ -103,7 +104,7 @@ export async function frag(c: Context<AppEnv>): Promise<Response> {
   const session = dbSession(c);
 
   if (slug === "last-updated") {
-    const modified = await readOrCompute(c.env.DATA, FRAG_KV_KEY_LAST_UPDATED, () => getLastModifiedFoodbank(session));
+    const modified = await readOrCompute(timedKv(c, c.env.DATA), FRAG_KV_KEY_LAST_UPDATED, () => getLastModifiedFoodbank(session));
     if (!modified) return new Response("", { status: 403 });
     const catalogue = await loadCatalogue(locale);
     return new Response(timesinceAgo(modified, new Date(), catalogue), {
@@ -112,7 +113,7 @@ export async function frag(c: Context<AppEnv>): Promise<Response> {
   }
 
   if (slug === "need-hits") {
-    const cachedOrComputed = await readOrCompute(c.env.DATA, FRAG_KV_KEY_NEED_HITS, async () => {
+    const cachedOrComputed = await readOrCompute(timedKv(c, c.env.DATA), FRAG_KV_KEY_NEED_HITS, async () => {
       const since = isoDate(new Date(Date.now() - SEVEN_DAYS_SECONDS * 1000));
       const total = await getRecentHitsTotal(session, since);
       return total === null ? null : String(total);
