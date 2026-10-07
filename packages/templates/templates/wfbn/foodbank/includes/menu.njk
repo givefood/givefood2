@@ -4,7 +4,10 @@
         {% if foodbank.no_locations != 0 %}
             <li><a {% if section == 'locations' %}class="is-active" {% endif %}href="{{ url('wfbn:foodbank_locations', foodbank.slug) }}">{% blocktrans %}Locations{% endblocktrans %}</a></li>
         {% endif %}
-        {% if foodbank.no_donation_points != 0 %}
+        {# Truthy, not `!= 0`: no_donation_points is nullable, and NULL != 0 is
+           true, so a food bank whose count was never computed got a link to a
+           donationpoints page that 404s on the same truthy guard (ticket 61). #}
+        {% if foodbank.no_donation_points %}
             <li><a {% if section == 'donationpoints' %}class="is-active" {% endif %}href="{{ url('wfbn:foodbank_donationpoints', foodbank.slug) }}">{% blocktrans %}Donation points{% endblocktrans %}</a></li>
         {% endif %}
         {% if foodbank.rss_url or foodbank.news_url %}

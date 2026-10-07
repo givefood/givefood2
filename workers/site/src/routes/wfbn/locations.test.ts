@@ -893,16 +893,15 @@ describe("wfbnFoodbankDonationpoints -- the gate, which is not the same gate", (
     expect((await get("/needs/at/null-dp-town/donationpoints/")).status).toBe(404);
   });
 
-  // AND THE MENU STILL LINKS TO IT. menu.njk gates the entry on
-  // `foodbank.no_donation_points != 0`, which is TRUE for null in both
-  // Nunjucks and Django's template language -- so this food bank's own
-  // locations page offers a "Donation points" link that 404s. The two halves
-  // disagree about what null means; asserted together because neither half is
-  // wrong on its own.
-  it("SUSPECT: the menu offers a Donation points link to that 404, from the sibling page", async () => {
+  // And the menu agrees: menu.njk gates the entry on truthiness too, so the
+  // sibling page no longer offers a "Donation points" link to that 404. It
+  // used `!= 0`, true for null, and linked to it -- ticket 61. In production
+  // the two NULL rows (strand-centre, slade-green, 2026-10-07) have no
+  // donation points either, so hiding is right and the 404 above is moot.
+  it("hides the Donation points menu entry for a NULL counter, from the sibling page", async () => {
     const html = await body("/needs/at/null-dp-town/locations/");
 
-    expect(html).toContain('<li><a href="/needs/at/null-dp-town/donationpoints/">Donation points</a></li>');
+    expect(html).not.toContain("/needs/at/null-dp-town/donationpoints/");
     expect((await get("/needs/at/null-dp-town/donationpoints/")).status).toBe(404);
   });
 

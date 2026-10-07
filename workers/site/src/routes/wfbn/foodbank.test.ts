@@ -1412,14 +1412,15 @@ describe("wfbnFoodbank -- the menu, the locale switcher and the alternates", () 
     expect(salisbury).toContain('href="/needs/at/salisbury/nearby/">Nearby</a>');
     expect(salisbury).toContain('<a class="is-active" href="/needs/at/salisbury/">Details</a>');
 
-    // bath: no_locations 0, no_donation_points NULL, no feeds. NULL is not 0,
-    // so the donation points entry SURVIVES -- `{% if x != 0 %}` is true for
-    // null, which is Django's behaviour for the same template expression and
-    // is why no_donation_points being nullable matters.
+    // bath: no_locations 0, no_donation_points NULL, no feeds. NULL hides the
+    // donation points entry too. Django's `{% if x != 0 %}` kept it (NULL is
+    // not 0), linking to a donationpoints page that 404s on its own truthy
+    // guard -- ticket 61, strand-centre.
     const bath = await body("/needs/at/bath/");
     expect(bath).not.toContain("/locations/");
     expect(bath).not.toContain(">News</a>");
-    expect(bath).toContain('href="/needs/at/bath/donationpoints/">Donation points</a>');
+    expect(bath).not.toContain("/donationpoints/");
+    expect((await get("/needs/at/bath/donationpoints/")).status).toBe(404);
   });
 
   // Every menu link, the RSS link, the API alternates and the markdown
