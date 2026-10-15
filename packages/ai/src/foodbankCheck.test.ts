@@ -436,6 +436,7 @@ interface FoodbankSeed {
   locations_url?: string | null;
   contacts_url?: string | null;
   delivery_address?: string | null;
+  network_id?: string | null;
 }
 
 // Every URL column gets a DIFFERENT path, so "the handler read the wrong
@@ -449,9 +450,9 @@ function seedFoodbank(seed: FoodbankSeed = {}): void {
        network, phone_number, contact_email, charity_number, charity_just_foodbank,
        facebook_page, bankuet_slug, url, shopping_list_url,
        rss_url, news_url, donation_points_url, locations_url, contacts_url,
-       delivery_address, address_is_administrative, is_closed, no_locations,
+       delivery_address, network_id, address_is_administrative, is_closed, no_locations,
        days_between_needs, created, modified
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, '51.0688,-1.7945', ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 14, ?, ?)`,
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, '51.0688,-1.7945', ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 14, ?, ?)`,
   ).run(
     seed.id ?? SALISBURY,
     `uuid-${seed.slug ?? "salisbury"}`,
@@ -474,6 +475,7 @@ function seedFoodbank(seed: FoodbankSeed = {}): void {
     seed.locations_url === undefined ? `${SITE}/locations/` : seed.locations_url,
     seed.contacts_url === undefined ? `${SITE}/contact/` : seed.contacts_url,
     seed.delivery_address === undefined ? null : seed.delivery_address,
+    seed.network_id ?? null,
     DJANGO_NOW,
     DJANGO_NOW,
   );
@@ -2086,15 +2088,252 @@ describe("location and donation-point discrepancies", () => {
 // ===========================================================================
 // THE STORED PAYLOAD -- what the check page is handed whole
 // ===========================================================================
+// ===========================================================================
+// THE FOODBANK.ORG.UK DONATION POINT FINDER -- github #63
+// ===========================================================================
+//
+// taff-ely, the food bank the ticket names, is one of 53 on Trussell's
+// white-label platform whose donate-food page is a postcode box and nothing
+// else. The list comes from a Next.js Server Action, and without asking it the
+// model has no donation points to find. These tests pin the request the page's
+// own JS makes (verified live against taffely.foodbank.org.uk while fixing the
+// ticket), and above all that a failed finder is SAID, which is the thing
+// Django's stale action ID never did.
+describe("the foodbank.org.uk donation point finder", () => {
+  const PLATFORM = "https://taffely.foodbank.org.uk";
+  const DONATE_FOOD = `${PLATFORM}/support-us/donate-food`;
+  const NETWORK_ID = "e7fb8e6d-d5bd-467d-b7ab-3a885392ac63";
+  // The seed's lat_lng and postcode, as the site's own search URL spells them.
+  const FINDER_URL = `${DONATE_FOOD}?lat=51.0688&lng=-1.7945&address=SP2%209DY`;
+
+  // A real reply's shape, cut down to two points: the RSC header row pointing
+  // at row 1, and row 1 carrying everything the page renders.
+  const FINDER_REPLY = [
+    '0:{"a":"$@1","q":"","i":false,"b":"3jy4UpnYLOEs6sCy5r_VY"}',
+    `1:${JSON.stringify({
+      results: [
+        {
+          id: "42f1643b-96f4-4830-837a-d847522ea5f9",
+          title: "Tesco Extra",
+          address: { addressLine1: "Green Park", addressLine2: null, locality: "Talbot Green", postalCode: "CF72 8RB", country: { name: "United Kingdom" } },
+          notes: "Donation point at front of store near exit",
+          geolocation: { lat: 51.535027, lon: -3.380614 },
+          openingTimes: [{ day: 1, endHours: null, startHours: 600, allDay: false }],
+          telephone: "0345 677 9802",
+          telephoneNotes: null,
+        },
+        {
+          id: "c0ffee00-0000-4000-8000-000000000002",
+          title: "Edwards Coaches",
+          address: { addressLine1: "The Courtyard", addressLine2: "Parc Busnes Edwards", locality: "Llantrisant", postalCode: "CF72 8QZ", country: { name: "United Kingdom" } },
+          notes: null,
+          geolocation: { lat: 51.54, lon: -3.37 },
+          openingTimes: [],
+          telephone: null,
+          telephoneNotes: null,
+        },
+      ],
+      pageInfo: "$undefined",
+    })}`,
+    "",
+  ].join("\n");
+
+  function seedPlatformFoodbank(networkId: string | null = NETWORK_ID): void {
+    seedFoodbank({ donation_points_url: DONATE_FOOD, network_id: networkId });
+    seedJob();
+    stubAllPages();
+    pageReplies.delete(`${SITE}/donate-food/`);
+    pageReplies.set(DONATE_FOOD, [{ status: 200, body: html("Find your nearest donation point below. Enter your postcode") }]);
+    geminiReplies = [geminiOk(aiResponse({ details: { ...aiResponse().details, donation_points_url: DONATE_FOOD } }))];
+  }
+
+  function finderCalls(): FetchCall[] {
+    return calls.filter((call) => call.url === FINDER_URL);
+  }
+
+  function donationPointsBlock(prompt: string): string {
+    return prompt.slice(prompt.indexOf("donation_points...\n"));
+  }
+
+  it("POSTs the action the donate-food page's own search calls, with the food bank's network id and coordinates", async () => {
+    seedPlatformFoodbank();
+    pageReplies.set(FINDER_URL, [{ status: 200, body: FINDER_REPLY }]);
+
+    await runJob();
+
+    expect(finderCalls()).toHaveLength(1);
+    const call = finderCalls()[0]!;
+    expect(call.method).toBe("POST");
+    expect(call.headers).toEqual({
+      "User-Agent": BOT_HEADERS["User-Agent"],
+      Accept: "text/x-component",
+      "Content-Type": "text/plain;charset=UTF-8",
+      "Next-Action": "781623cbf05ebf81aee85060224b1bdafb59f142a5",
+    });
+    // Strings, not numbers: the page reads them back out of its own URL.
+    expect(JSON.parse(call.body!)).toEqual([NETWORK_ID, "51.0688", "-1.7945"]);
+    expect(call.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("puts the finder's list under the donation_points page text, as name and address blocks", async () => {
+    seedPlatformFoodbank();
+    pageReplies.set(FINDER_URL, [{ status: 200, body: FINDER_REPLY }]);
+
+    await runJob();
+
+    expect(donationPointsBlock(storedResult().prompt)).toBe(
+      "donation_points...\n" +
+        "Find your nearest donation point below. Enter your postcode\n" +
+        "Donation points listed by the food bank's donation point finder...\n" +
+        "Tesco Extra\nGreen Park\nTalbot Green\nCF72 8RB\n\n" +
+        "Edwards Coaches\nThe Courtyard\nParc Busnes Edwards\nLlantrisant\nCF72 8QZ\n\n",
+    );
+    // None of the wire format's freight reaches the model.
+    expect(storedResult().prompt).not.toContain("openingTimes");
+    expect(storedResult().prompt).not.toContain("0345 677 9802");
+    expect(storedResult().donationPointFinder).toEqual({ url: FINDER_URL, count: 2, error: null });
+  });
+
+  it("records the finder's POST as a sixth crawl row, after the pages'", async () => {
+    seedPlatformFoodbank();
+    pageReplies.set(FINDER_URL, [{ status: 200, body: FINDER_REPLY }]);
+
+    await runJob();
+
+    const rows = crawlItems();
+    expect(rows).toHaveLength(6);
+    expect(rows[5]!.url).toBe(FINDER_URL);
+    expect(rows[5]!.crawl_type).toBe("check");
+    expect(rows[5]!.foodbank_id).toBe(SALISBURY);
+    expect(rows[5]!.start).toMatch(PY_DATETIME);
+    expect(rows[5]!.finish).toMatch(PY_DATETIME);
+  });
+
+  it("asks the finder alongside the five pages, not after them", async () => {
+    seedPlatformFoodbank();
+    pageReplies.set(FINDER_URL, [{ status: 200, body: FINDER_REPLY }]);
+    let issuedBeforeAnyDone = 0;
+    let anyDone = false;
+    onPageFetch = () => void (anyDone || issuedBeforeAnyDone++);
+    onPageDone = () => void (anyDone = true);
+
+    await runJob();
+
+    expect(issuedBeforeAnyDone).toBe(6);
+  });
+
+  // THE TICKET'S OWN FAILURE MODE, made visible. Django's action ID now gets
+  // exactly this reply, which Django pasted into the prompt as if it were page
+  // text. The check still completes -- the details and locations are still
+  // worth reviewing -- but the result says the donation points are missing.
+  it("carries a stale action ID's refusal as an error, logs it, and keeps it out of the prompt", async () => {
+    seedPlatformFoodbank();
+    pageReplies.set(FINDER_URL, [{ status: 400, body: "Invalid Server Action request." }]);
+
+    await runJob();
+
+    expect(lastError).toBeNull();
+    const finder = storedResult().donationPointFinder!;
+    expect(finder.url).toBe(FINDER_URL);
+    expect(finder.count).toBeNull();
+    expect(finder.error).toContain("answered 400 (Invalid Server Action request.)");
+    expect(finder.error).toContain("packages/ai/src/foodbankCheck.ts");
+    expect(storedResult().prompt).not.toContain("Invalid Server Action");
+    expect(donationPointsBlock(storedResult().prompt)).toBe("donation_points...\nFind your nearest donation point below. Enter your postcode\n\n");
+    expect(logs).toContain(`foodbank-check: donation point finder ${FINDER_URL} returned 400: Invalid Server Action request.`);
+  });
+
+  it("treats a 200 with no result list as a failure, not as no donation points", async () => {
+    seedPlatformFoodbank();
+    pageReplies.set(FINDER_URL, [{ status: 200, body: html("Something went wrong") }]);
+
+    await runJob();
+
+    expect(storedResult().donationPointFinder!.error).toContain("answered 200");
+    expect(storedResult().donationPointFinder!.count).toBeNull();
+  });
+
+  it("says so when the finder could not be reached at all", async () => {
+    seedPlatformFoodbank();
+    pageReplies.set(FINDER_URL, [new Error("connect ECONNREFUSED")]);
+
+    await runJob();
+
+    expect(lastError).toBeNull();
+    expect(storedResult().donationPointFinder).toEqual({ url: FINDER_URL, count: null, error: "The foodbank.org.uk donation point finder could not be reached: connect ECONNREFUSED" });
+    expect(crawlItems()).toHaveLength(6);
+  });
+
+  it("tells the model the finder lists none, rather than nothing, when its list is empty", async () => {
+    seedPlatformFoodbank();
+    pageReplies.set(FINDER_URL, [{ status: 200, body: '0:{"a":"$@1"}\n1:{"results":[],"pageInfo":"$undefined"}\n' }]);
+
+    await runJob();
+
+    expect(storedResult().donationPointFinder).toEqual({ url: FINDER_URL, count: 0, error: null });
+    expect(donationPointsBlock(storedResult().prompt)).toContain("The food bank's donation point finder lists no donation points.");
+  });
+
+  it("retries a 403 once, as the page fetches do", async () => {
+    seedPlatformFoodbank();
+    pageReplies.set(FINDER_URL, [
+      { status: 403, body: "" },
+      { status: 200, body: FINDER_REPLY },
+    ]);
+
+    await runJob();
+
+    expect(finderCalls()).toHaveLength(2);
+    expect(storedResult().donationPointFinder!.count).toBe(2);
+  });
+
+  it("asks nothing, and says which field to fill, when the food bank has no network id", async () => {
+    seedPlatformFoodbank(null);
+
+    await runJob();
+
+    expect(finderCalls()).toHaveLength(0);
+    expect(storedResult().donationPointFinder!.url).toBeNull();
+    expect(storedResult().donationPointFinder!.error).toContain("No network id");
+    expect(crawlItems()).toHaveLength(5);
+  });
+
+  // The list does not come from the donate-food page, so a page we failed to
+  // read must not take the list down with it.
+  it("still gives the model the list when the donate-food page itself could not be read", async () => {
+    seedPlatformFoodbank();
+    pageReplies.set(DONATE_FOOD, [{ status: 404, body: "" }]);
+    pageReplies.set(FINDER_URL, [{ status: 200, body: FINDER_REPLY }]);
+
+    await runJob();
+
+    expect(donationPointsBlock(storedResult().prompt)).toMatch(/^donation_points\.\.\.\nDonation points listed by the food bank's donation point finder\.\.\.\nTesco Extra\n/);
+    // The preview tab still reports the PAGE, which is what it shows.
+    expect(storedResult().fetchedPages.find((page) => page.name === "donation_points")!.found).toBe(false);
+  });
+
+  it("leaves a food bank off the platform alone", async () => {
+    seedFoodbank();
+    seedJob();
+    stubAllPages();
+    geminiReplies = [geminiOk(aiResponse())];
+
+    await runJob();
+
+    expect(calls.filter((call) => call.method === "POST" && !call.url.startsWith(GEMINI_URL_PREFIX))).toHaveLength(0);
+    expect(storedResult().donationPointFinder).toBeNull();
+  });
+});
+
 describe("the stored FoodbankCheckResult", () => {
-  // Seven of these eight keys are read by foodbank_check.njk directly
+  // Eight of these nine keys are read by foodbank_check.njk directly
   // (detailChanges, aiResponse, ourLocations, foundLocations, ourDonationPoints,
-  // foundDonationPoints, fetchedPages); the eighth, `prompt`, is what the
+  // foundDonationPoints, fetchedPages, donationPointFinder); the ninth, `prompt`, is what the
   // route's `?debug=prompt` branch serves behind the template's own link at
   // :59. Nunjucks is configured throwOnUndefined:false, so a key that stopped
   // being written renders an empty table rather than raising -- which is why
   // this is asserted as the whole key set rather than spot-checked.
-  it("carries all eight keys the check page reads", async () => {
+  it("carries all nine keys the check page reads", async () => {
     seedFoodbank();
     seedLocation({ id: 1, name: "Wilton", slug: "wilton", postcode: "SP2 0HR" });
     seedDonationPoint({ id: 5, name: "Tesco", slug: "tesco", postcode: "SP1 2LB" });
@@ -2112,7 +2351,9 @@ describe("the stored FoodbankCheckResult", () => {
     await runJob();
 
     const result: FoodbankCheckResult = storedResult();
-    expect(Object.keys(result).sort()).toEqual(["aiResponse", "detailChanges", "fetchedPages", "foundDonationPoints", "foundLocations", "ourDonationPoints", "ourLocations", "prompt"]);
+    expect(Object.keys(result).sort()).toEqual(["aiResponse", "detailChanges", "donationPointFinder", "fetchedPages", "foundDonationPoints", "foundLocations", "ourDonationPoints", "ourLocations", "prompt"]);
+    // Not on the foodbank.org.uk platform, so the finder was never asked.
+    expect(result.donationPointFinder).toBeNull();
     expect(result.prompt.length).toBeGreaterThan(500);
     expect(result.aiResponse.details.name).toBe("Salisbury Foodbank");
     expect(result.fetchedPages).toHaveLength(5);

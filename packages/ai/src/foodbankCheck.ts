@@ -48,14 +48,22 @@ const PAGE_HEADERS: Record<string, string> = {
   "Accept-Language": "en-GB,en;q=0.9",
 };
 
+// One retry after 750ms on a 403 or 429, each attempt with its own 20s
+// timeout. Shared by the page GETs and the donation point finder's POST below,
+// which goes to the same foodbank.org.uk hosts and meets the same protection.
+async function fetchWithOneRetry(url: string, init: RequestInit): Promise<Response> {
+  let res = await fetch(url, { ...init, signal: AbortSignal.timeout(20_000) });
+  if (res.status === 403 || res.status === 429) {
+    await new Promise((resolve) => setTimeout(resolve, 750));
+    res = await fetch(url, { ...init, signal: AbortSignal.timeout(20_000) });
+  }
+  return res;
+}
+
 async function fetchPageBodyText(url: string): Promise<string | null> {
   let res: Response;
   try {
-    res = await fetch(url, { headers: PAGE_HEADERS, signal: AbortSignal.timeout(20_000) });
-    if (res.status === 403 || res.status === 429) {
-      await new Promise((resolve) => setTimeout(resolve, 750));
-      res = await fetch(url, { headers: PAGE_HEADERS, signal: AbortSignal.timeout(20_000) });
-    }
+    res = await fetchWithOneRetry(url, { headers: PAGE_HEADERS });
   } catch {
     return null;
   }
@@ -83,6 +91,134 @@ async function fetchPageBodyText(url: string): Promise<string | null> {
   return text;
 }
 
+// THE FOODBANK.ORG.UK DONATION POINT FINDER, github #63. Every food bank on
+// the white-label platform (53 open ones when this was written) points
+// donation_points_url at its own /support-us/donate-food, and that page lists
+// no donation points at all -- it is a postcode box. The list arrives only
+// after a search, from a Next.js Server Action the page's own JS POSTs to. So
+// the page text the model reads holds nothing to find, and every check on
+// these food banks came back with no found donation points, flagging every
+// one we hold as a discrepancy with a Delete button beside it.
+//
+// Django made this call (gfadmin/views.py:955-987) and appended the reply to
+// the donation_points page text; WP 6.8 left it out as a disclosed
+// simplification. Restored here the same way, except that the reply is parsed
+// and laid out as name and address blocks rather than handed to the model as
+// raw RSC wire format with opening hours and phone numbers in it.
+//
+// THE ACTION ID IS THE PLATFORM'S BUILD ARTEFACT, NOT AN API. Next.js derives
+// it from the action's source file and export, so it changes whenever the
+// platform moves or upgrades that code. Django's
+// (b8d1dab7508947f9e5f96fd1d7ebdbeb402a31ac) had already gone stale and
+// answers "400 Invalid Server Action request." -- and Django never noticed,
+// because it pasted that sentence into the prompt and the model found nothing
+// in it. So a reply that is not a result list is an ERROR here, carried on
+// the result and shown on the check page, never quietly an empty list.
+//
+// When that notification appears, the new ID is in one of the JS chunks the
+// donate-food page loads: the `createServerReference)("<id>", ...)` whose
+// variable is called as `await x(<foodBank>.id, lat, lng, page)`. The ID was
+// discovered that way for this fix; doing it on every check instead would
+// mean downloading the page's ~2.8 MB of chunks and pattern-matching minified
+// code that changes as freely as the ID does.
+const DONATION_POINT_FINDER_ACTION = "781623cbf05ebf81aee85060224b1bdafb59f142a5";
+
+// views.py:955's test, verbatim.
+const DONATION_POINT_FINDER_PAGE = "foodbank.org.uk/support-us/donate-food";
+
+export interface DonationPointFinderOutcome {
+  // The page URL the action was POSTed to, with the query string the site's
+  // own search puts there -- opened in a browser it shows the same list. Null
+  // when the call was never made.
+  url: string | null;
+  count: number | null;
+  error: string | null;
+}
+
+interface FinderPoint {
+  title?: string | null;
+  address?: { addressLine1?: string | null; addressLine2?: string | null; locality?: string | null; postalCode?: string | null } | null;
+}
+
+// The reply is React Server Components wire format: one `<row id>:<json>`
+// per line, the first row pointing at the second, which holds
+// `{"results": [...], "pageInfo": ...}`. Called without the fourth `page`
+// argument -- as the page's map view calls it -- the action answers every
+// point at once rather than a page of them.
+function parseFinderReply(body: string): FinderPoint[] | null {
+  for (const line of body.split("\n")) {
+    const colon = line.indexOf(":");
+    if (colon < 0) continue;
+    try {
+      const row = JSON.parse(line.slice(colon + 1)) as { results?: unknown };
+      if (row && Array.isArray(row.results)) return row.results as FinderPoint[];
+    } catch {
+      // Not every row is JSON (RSC text rows are `T<length>,<text>`).
+    }
+  }
+  return null;
+}
+
+function finderPointText(point: FinderPoint): string {
+  const a = point.address ?? {};
+  return [point.title, a.addressLine1, a.addressLine2, a.locality, a.postalCode]
+    .map((part) => (part ?? "").trim())
+    .filter((part) => part !== "")
+    .join("\n");
+}
+
+async function fetchDonationPointFinder(
+  donationPointsUrl: string,
+  networkId: string | null,
+  latLng: string,
+  postcode: string | null,
+): Promise<{ outcome: DonationPointFinderOutcome; text: string | null; start: string | null; finish: string | null }> {
+  // Every platform food bank has one today. A new one added without it gets
+  // told which field to fill rather than a silent gap.
+  if (!networkId) {
+    return { outcome: { url: null, count: null, error: "No network id on this food bank, so the foodbank.org.uk donation point finder was not asked. Set it on the edit form." }, text: null, start: null, finish: null };
+  }
+  const [lat, lng] = latLng.split(",").map((part) => part.trim());
+  const url = `${donationPointsUrl}?lat=${encodeURIComponent(lat ?? "")}&lng=${encodeURIComponent(lng ?? "")}&address=${encodeURIComponent(postcode ?? "")}`;
+  const fail = (error: string) => ({ outcome: { url, count: null, error }, text: null });
+
+  const start = pyNow();
+  let res: Response;
+  let body: string;
+  try {
+    // Headers and body as the page's own JS sends them: lat and lng are
+    // strings because the browser reads them back out of its query string.
+    res = await fetchWithOneRetry(url, {
+      method: "POST",
+      headers: {
+        "User-Agent": BOT_USER_AGENT,
+        Accept: "text/x-component",
+        "Content-Type": "text/plain;charset=UTF-8",
+        "Next-Action": DONATION_POINT_FINDER_ACTION,
+      },
+      body: JSON.stringify([networkId, lat, lng]),
+    });
+    body = await res.text();
+  } catch (err) {
+    return { ...fail(`The foodbank.org.uk donation point finder could not be reached: ${err instanceof Error ? err.message : String(err)}`), start, finish: pyNow() };
+  }
+  const finish = pyNow();
+
+  const points = res.status === 200 ? parseFinderReply(body) : null;
+  if (points === null) {
+    const said = body.trim().slice(0, 200);
+    console.log(`foodbank-check: donation point finder ${url} returned ${res.status}: ${said}`);
+    return {
+      ...fail(`The foodbank.org.uk donation point finder answered ${res.status}${said ? ` (${said})` : ""} instead of a list, so found donation points are missing from this check. If it says the action is invalid, its ID in packages/ai/src/foodbankCheck.ts has changed.`),
+      start,
+      finish,
+    };
+  }
+
+  const text = points.length > 0 ? `Donation points listed by the food bank's donation point finder...\n${points.map(finderPointText).join("\n\n")}` : "The food bank's donation point finder lists no donation points.";
+  return { outcome: { url, count: points.length, error: null }, text, start, finish };
+}
+
 export interface FoodbankCheckResult {
   prompt: string;
   aiResponse: FoodbankCheckAiResponse;
@@ -92,6 +228,8 @@ export interface FoodbankCheckResult {
   foundLocations: { name: string; address: string; postcode: string; discrepancy: boolean }[];
   ourDonationPoints: { slug: string; name: string; address: string | null; postcode: string; discrepancy: boolean }[];
   foundDonationPoints: { name: string; address: string; postcode: string; discrepancy: boolean }[];
+  // Null for a food bank not on the foodbank.org.uk platform.
+  donationPointFinder: DonationPointFinderOutcome | null;
 }
 
 function normalisePostcode(value: string | null | undefined): string {
@@ -134,14 +272,10 @@ export async function runFoodbankCheck(session: Session, foodbankSlug: string, g
   // the 7 food banks that carry a boundary at all.
   const [locations, donationPoints] = await Promise.all([getLocationsByFoodbankIdNarrow(session, foodbank.id), getDonationPointsByFoodbankId(session, foodbank.id)]);
 
-  // WP 6.8 (disclosed simplification, not a fix): Django also has a 6th
-  // fetch -- a POST to a donation-points finder specific to food banks
-  // using the shared "foodbank.org.uk donate-food" white-label platform
-  // (views.py:955-987), plus a network_id auto-backfill regex-scrape.
-  // Narrow to one third-party platform and adding real complexity for
-  // an unknown (possibly small) subset of food banks -- not built here.
-  // Food banks on that platform get an incomplete donation-points
-  // section in their check result until this is picked up.
+  // Django's 6th fetch, the foodbank.org.uk donation point finder
+  // (views.py:955-987), is fetchDonationPointFinder above -- github #63.
+  // Django's network_id auto-backfill, a regex-scrape of the food bank's own
+  // pages, is still not built: every open platform food bank already has one.
   // proxyField matches WP 6.3's allowlisted proxy field names exactly
   // (lib/adminFormFields.ts's FOODBANK_FIELDS url-kind fields) -- the
   // check page's preview iframes go through that same proxy.
@@ -170,33 +304,52 @@ export async function runFoodbankCheck(session: Session, foodbankSlug: string, g
   // elsewhere), and it happens once per manual check rather than on a crawl
   // schedule -- unlike needcheck-render, whose max_batch_size of 5 exists
   // precisely to be gentle with food banks' own hosting.
-  const fetched = await Promise.all(
-    candidatePages.map(async (page) => {
-      if (!page.url) return { page, text: null, start: null, finish: null };
-      const start = pyNow();
-      const text = await fetchPageBodyText(page.url);
-      return { page, text, start, finish: pyNow() };
-    }),
-  );
+  //
+  // The donation point finder is a sixth request alongside them, which is
+  // still no more than a browser would open. It needs nothing from the
+  // donate-food page itself, so it does not wait for it.
+  const [fetched, finder] = await Promise.all([
+    Promise.all(
+      candidatePages.map(async (page) => {
+        if (!page.url) return { page, text: null, start: null, finish: null };
+        const start = pyNow();
+        const text = await fetchPageBodyText(page.url);
+        return { page, text, start, finish: pyNow() };
+      }),
+    ),
+    foodbank.donation_points_url?.includes(DONATION_POINT_FINDER_PAGE)
+      ? fetchDonationPointFinder(foodbank.donation_points_url, foodbank.network_id, foodbank.lat_lng, foodbank.postcode)
+      : null,
+  ]);
 
   // gfadmin/views.py's CrawlItem bookkeeping -- crawl_type "check", no
   // crawl_set (matches Django: these check-crawls are never grouped into a
   // CrawlSet). ONE batch rather than one awaited INSERT per page: same rows,
   // one round trip. Skipped entirely when no page had a URL, so a food bank
-  // with nothing to crawl does not pay for an empty batch.
-  const crawlItems = fetched
+  // with nothing to crawl does not pay for an empty batch. The finder's POST
+  // gets a row of its own after the pages', as Django's did.
+  const crawls: { start: string | null; finish: string | null; url: string | null }[] = fetched
     .filter((f) => f.start !== null)
-    .map((f) =>
-      session
-        .prepare("INSERT INTO crawlitem (crawl_type, start, finish, foodbank_id, url) VALUES ('check', ?, ?, ?, ?)")
-        .bind(f.start, f.finish, foodbank.id, f.page.url),
-    );
+    .map((f) => ({ start: f.start, finish: f.finish, url: f.page.url }));
+  if (finder?.start) crawls.push({ start: finder.start, finish: finder.finish, url: finder.outcome.url });
+  const crawlItems = crawls.map((crawl) =>
+    session
+      .prepare("INSERT INTO crawlitem (crawl_type, start, finish, foodbank_id, url) VALUES ('check', ?, ?, ?, ?)")
+      .bind(crawl.start, crawl.finish, foodbank.id, crawl.url),
+  );
   if (crawlItems.length > 0) await session.batch(crawlItems);
 
   // Promise.all preserves input order, so both of these stay in
   // candidatePages order -- which is the order the prompt lists the pages in
   // and the order the check page's preview tabs appear in.
-  const pageTexts = fetched.map((f) => ({ name: f.page.name, text: f.text }));
+  //
+  // The finder's list goes under the donation_points page, after its text, as
+  // views.py:984-986 put it -- and stands alone if the page itself could not
+  // be read, since the list does not come from it.
+  const pageTexts = fetched.map((f) => {
+    if (f.page.name !== "donation_points" || !finder?.text) return { name: f.page.name, text: f.text };
+    return { name: f.page.name, text: f.text === null ? finder.text : `${f.text}\n${finder.text}` };
+  });
   // `f.start !== null` and NOT `f.page.url !== null`: a food bank whose
   // locations_url is the EMPTY STRING has a url that is falsy but not null,
   // and the fetch above skips it on the same `if (!page.url)` test Django
@@ -323,6 +476,7 @@ export async function runFoodbankCheck(session: Session, foodbankSlug: string, g
       ...d,
       discrepancy: !ourDonationPointPostcodes.has(normalisePostcode(d.postcode)) && !ourLocationPostcodes.has(normalisePostcode(d.postcode)),
     })),
+    donationPointFinder: finder?.outcome ?? null,
   };
 
   return result;

@@ -56,6 +56,18 @@
     <a href="/admin/foodbank/{{ foodbank.slug }}/check/" class="button is-small is-light">Re-run</a>
   </p>
 
+  {# github #63 -- on a foodbank.org.uk food bank the found donation points
+     come only from the platform's finder, so when it fails every one we hold
+     is about to show a Delete button for no reason. Said above the table,
+     not in it: the Donation Points rows only render when either side has
+     one. #}
+  {% if result.donationPointFinder and result.donationPointFinder.error %}
+  <div class="notification is-warning is-light">
+    {{ result.donationPointFinder.error }}
+    {% if result.donationPointFinder.url %}<a href="{{ result.donationPointFinder.url }}" target="_blank" rel="noopener">Open the finder</a>{% endif %}
+  </div>
+  {% endif %}
+
   <div class="columns">
     {# check.html:10 -- a plain flexible column, so the details take ~2/3
        and the preview column below takes the remaining third. Two is-half
