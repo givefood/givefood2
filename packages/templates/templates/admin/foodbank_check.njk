@@ -56,6 +56,15 @@
     <a href="/admin/foodbank/{{ foodbank.slug }}/check/" class="button is-small is-light">Re-run</a>
   </p>
 
+  {# The food bank had no network id and the check found and saved one, so
+     the edit form changed without anyone typing in it. Says where from, so a
+     wrong one can be traced. #}
+  {% if result.donationPointFinder and result.donationPointFinder.savedNetworkId %}
+  <div class="notification is-info is-light">
+    This food bank had no network id, so {{ result.donationPointFinder.savedNetworkId.id }} was read from <a href="{{ result.donationPointFinder.savedNetworkId.url }}" target="_blank" rel="noopener">{{ result.donationPointFinder.savedNetworkId.url }}</a> and saved.
+  </div>
+  {% endif %}
+
   {# github #63 -- on a foodbank.org.uk food bank the found donation points
      come only from the platform's finder, so when it fails every one we hold
      is about to show a Delete button for no reason. Said above the table,

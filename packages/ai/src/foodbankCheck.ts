@@ -60,7 +60,10 @@ async function fetchWithOneRetry(url: string, init: RequestInit): Promise<Respon
   return res;
 }
 
-async function fetchPageBodyText(url: string): Promise<string | null> {
+// The page's body text for the model, and the foodbank.org.uk network id if
+// the raw HTML carries one (see NETWORK_ID_RE). The id lives in a <script>,
+// which the body text has removed, so it is read off the HTML first.
+async function fetchPageBodyText(url: string): Promise<{ text: string; networkId: string | null } | null> {
   let res: Response;
   try {
     res = await fetchWithOneRetry(url, { headers: PAGE_HEADERS });
@@ -74,6 +77,8 @@ async function fetchPageBodyText(url: string): Promise<string | null> {
     console.log(`foodbank-check: ${url} returned ${res.status}, treating the page as not found`);
     return null;
   }
+  const html = await res.text();
+  const networkId = NETWORK_ID_RE.exec(html)?.[1] ?? null;
 
   let text = "";
   const rewriter = new HTMLRewriter()
@@ -87,8 +92,8 @@ async function fetchPageBodyText(url: string): Promise<string | null> {
         text += chunk.text;
       },
     });
-  await rewriter.transform(res).text();
-  return text;
+  await rewriter.transform(new Response(html)).text();
+  return { text, networkId };
 }
 
 // THE FOODBANK.ORG.UK DONATION POINT FINDER, github #63. Every food bank on
@@ -126,6 +131,19 @@ const DONATION_POINT_FINDER_ACTION = "781623cbf05ebf81aee85060224b1bdafb59f142a5
 // views.py:955's test, verbatim.
 const DONATION_POINT_FINDER_PAGE = "foodbank.org.uk/support-us/donate-food";
 
+// THE NETWORK ID BACKFILL, views.py:957-967. The finder needs the food bank's
+// id on the platform, which we hold as network_id, and a food bank newly moved
+// onto the platform has none. Every platform page carries it in the Next.js
+// flight data the page pushes from inline <script>s, as JSON escaped inside a
+// JS string -- hence the literal backslashes -- next to its "food we need"
+// block. Django's pattern, verbatim; still matched on ely.foodbank.org.uk's
+// homepage, donate-food and shopping list pages when ported.
+const NETWORK_ID_RE = /\\"foodBank\\":\{\\"id\\":\\"([a-f0-9-]{36})\\"\}/;
+
+// Django's search order. Food banks put the "food we need" block on different
+// pages: Abergele has it on the shopping list, Stranraer only on its homepage.
+const NETWORK_ID_PAGES = ["shopping_list", "homepage", "donation_points"];
+
 export interface DonationPointFinderOutcome {
   // The page URL the action was POSTed to, with the query string the site's
   // own search puts there -- opened in a browser it shows the same list. Null
@@ -133,6 +151,9 @@ export interface DonationPointFinderOutcome {
   url: string | null;
   count: number | null;
   error: string | null;
+  // Set when the food bank had no network_id and this check found it on one
+  // of its pages and saved it: the id, and the page it was read from.
+  savedNetworkId: { id: string; url: string } | null;
 }
 
 interface FinderPoint {
@@ -172,15 +193,22 @@ async function fetchDonationPointFinder(
   networkId: string | null,
   latLng: string,
   postcode: string | null,
+  savedNetworkId: DonationPointFinderOutcome["savedNetworkId"],
 ): Promise<{ outcome: DonationPointFinderOutcome; text: string | null; start: string | null; finish: string | null }> {
-  // Every platform food bank has one today. A new one added without it gets
-  // told which field to fill rather than a silent gap.
+  // Neither held nor found on the pages the check read (a site that blocked
+  // us, or a page layout without the "food we need" block). Told which field
+  // to fill rather than a silent gap.
   if (!networkId) {
-    return { outcome: { url: null, count: null, error: "No network id on this food bank, so the foodbank.org.uk donation point finder was not asked. Set it on the edit form." }, text: null, start: null, finish: null };
+    return {
+      outcome: { url: null, count: null, error: "No network id on this food bank, and none was found on its homepage, shopping list or donate-food page, so the foodbank.org.uk donation point finder was not asked. Set it on the edit form.", savedNetworkId },
+      text: null,
+      start: null,
+      finish: null,
+    };
   }
   const [lat, lng] = latLng.split(",").map((part) => part.trim());
   const url = `${donationPointsUrl}?lat=${encodeURIComponent(lat ?? "")}&lng=${encodeURIComponent(lng ?? "")}&address=${encodeURIComponent(postcode ?? "")}`;
-  const fail = (error: string) => ({ outcome: { url, count: null, error }, text: null });
+  const fail = (error: string) => ({ outcome: { url, count: null, error, savedNetworkId }, text: null });
 
   const start = pyNow();
   let res: Response;
@@ -216,7 +244,7 @@ async function fetchDonationPointFinder(
   }
 
   const text = points.length > 0 ? `Donation points listed by the food bank's donation point finder...\n${points.map(finderPointText).join("\n\n")}` : "The food bank's donation point finder lists no donation points.";
-  return { outcome: { url, count: points.length, error: null }, text, start, finish };
+  return { outcome: { url, count: points.length, error: null, savedNetworkId }, text, start, finish };
 }
 
 export interface FoodbankCheckResult {
@@ -273,10 +301,8 @@ export async function runFoodbankCheck(session: Session, foodbankSlug: string, g
   const [locations, donationPoints] = await Promise.all([getLocationsByFoodbankIdNarrow(session, foodbank.id), getDonationPointsByFoodbankId(session, foodbank.id)]);
 
   // Django's 6th fetch, the foodbank.org.uk donation point finder
-  // (views.py:955-987), is fetchDonationPointFinder above -- github #63.
-  // Django's network_id auto-backfill, a regex-scrape of the food bank's own
-  // pages, is still not built: every open platform food bank already has one.
-  // proxyField matches WP 6.3's allowlisted proxy field names exactly
+  // (views.py:955-987), is fetchDonationPointFinder above -- github #63 --
+  // and its network_id backfill is NETWORK_ID_RE. proxyField matches WP 6.3's allowlisted proxy field names exactly
   // (lib/adminFormFields.ts's FOODBANK_FIELDS url-kind fields) -- the
   // check page's preview iframes go through that same proxy.
   const candidatePages: { name: string; url: string | null; proxyField: string }[] = [
@@ -307,20 +333,31 @@ export async function runFoodbankCheck(session: Session, foodbankSlug: string, g
   //
   // The donation point finder is a sixth request alongside them, which is
   // still no more than a browser would open. It needs nothing from the
-  // donate-food page itself, so it does not wait for it.
-  const [fetched, finder] = await Promise.all([
-    Promise.all(
-      candidatePages.map(async (page) => {
-        if (!page.url) return { page, text: null, start: null, finish: null };
-        const start = pyNow();
-        const text = await fetchPageBodyText(page.url);
-        return { page, text, start, finish: pyNow() };
-      }),
-    ),
-    foodbank.donation_points_url?.includes(DONATION_POINT_FINDER_PAGE)
-      ? fetchDonationPointFinder(foodbank.donation_points_url, foodbank.network_id, foodbank.lat_lng, foodbank.postcode)
-      : null,
-  ]);
+  // donate-food page itself, so it does not wait for it -- unless the food
+  // bank has no network_id, when it waits for the pages to find one.
+  const pagesFetched = Promise.all(
+    candidatePages.map(async (page) => {
+      if (!page.url) return { page, text: null, networkId: null, start: null, finish: null };
+      const start = pyNow();
+      const read = await fetchPageBodyText(page.url);
+      return { page, text: read?.text ?? null, networkId: read?.networkId ?? null, start, finish: pyNow() };
+    }),
+  );
+  const donationPointsUrl = foodbank.donation_points_url;
+  const finderAsked = donationPointsUrl?.includes(DONATION_POINT_FINDER_PAGE)
+    ? (async () => {
+        if (foodbank.network_id) return fetchDonationPointFinder(donationPointsUrl, foodbank.network_id, foodbank.lat_lng, foodbank.postcode, null);
+        // Read off the pages this check fetches anyway, so the backfill costs
+        // no request of its own. Django fetched the shopping list for it even
+        // when the check skipped it as Facebook or Bank the Food; neither is
+        // ever a platform food bank's.
+        const pages = await pagesFetched;
+        const found = NETWORK_ID_PAGES.map((name) => pages.find((f) => f.page.name === name)).find((f) => f?.networkId);
+        const saved = found ? { id: found.networkId!, url: found.page.url! } : null;
+        return fetchDonationPointFinder(donationPointsUrl, saved?.id ?? null, foodbank.lat_lng, foodbank.postcode, saved);
+      })()
+    : null;
+  const [fetched, finder] = await Promise.all([pagesFetched, finderAsked]);
 
   // gfadmin/views.py's CrawlItem bookkeeping -- crawl_type "check", no
   // crawl_set (matches Django: these check-crawls are never grouped into a
@@ -332,12 +369,23 @@ export async function runFoodbankCheck(session: Session, foodbankSlug: string, g
     .filter((f) => f.start !== null)
     .map((f) => ({ start: f.start, finish: f.finish, url: f.page.url }));
   if (finder?.start) crawls.push({ start: finder.start, finish: finder.finish, url: finder.outcome.url });
-  const crawlItems = crawls.map((crawl) =>
+  const writes = crawls.map((crawl) =>
     session
       .prepare("INSERT INTO crawlitem (crawl_type, start, finish, foodbank_id, url) VALUES ('check', ?, ?, ?, ?)")
       .bind(crawl.start, crawl.finish, foodbank.id, crawl.url),
   );
-  if (crawlItems.length > 0) await session.batch(crawlItems);
+  // The backfill's save, in the same round trip. Django's foodbank.save()
+  // also bumped `modified`; this leaves it alone, because `modified` is the
+  // public "Last updated" footer and no public page shows network_id (see
+  // needAdmin.ts's recomputeFoodbankNeedFields for the same rule). Guarded so
+  // an id typed on the edit form while the check ran is not overwritten.
+  const savedNetworkId = finder?.outcome.savedNetworkId;
+  if (savedNetworkId) {
+    writes.push(
+      session.prepare("UPDATE foodbank SET network_id = ? WHERE id = ? AND (network_id IS NULL OR network_id = '')").bind(savedNetworkId.id, foodbank.id),
+    );
+  }
+  if (writes.length > 0) await session.batch(writes);
 
   // Promise.all preserves input order, so both of these stay in
   // candidatePages order -- which is the order the prompt lists the pages in

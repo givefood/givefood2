@@ -2191,7 +2191,7 @@ describe("the foodbank.org.uk donation point finder", () => {
     // None of the wire format's freight reaches the model.
     expect(storedResult().prompt).not.toContain("openingTimes");
     expect(storedResult().prompt).not.toContain("0345 677 9802");
-    expect(storedResult().donationPointFinder).toEqual({ url: FINDER_URL, count: 2, error: null });
+    expect(storedResult().donationPointFinder).toEqual({ url: FINDER_URL, count: 2, error: null, savedNetworkId: null });
   });
 
   it("records the finder's POST as a sixth crawl row, after the pages'", async () => {
@@ -2260,7 +2260,7 @@ describe("the foodbank.org.uk donation point finder", () => {
     await runJob();
 
     expect(lastError).toBeNull();
-    expect(storedResult().donationPointFinder).toEqual({ url: FINDER_URL, count: null, error: "The foodbank.org.uk donation point finder could not be reached: connect ECONNREFUSED" });
+    expect(storedResult().donationPointFinder).toEqual({ url: FINDER_URL, count: null, error: "The foodbank.org.uk donation point finder could not be reached: connect ECONNREFUSED", savedNetworkId: null });
     expect(crawlItems()).toHaveLength(6);
   });
 
@@ -2270,7 +2270,7 @@ describe("the foodbank.org.uk donation point finder", () => {
 
     await runJob();
 
-    expect(storedResult().donationPointFinder).toEqual({ url: FINDER_URL, count: 0, error: null });
+    expect(storedResult().donationPointFinder).toEqual({ url: FINDER_URL, count: 0, error: null, savedNetworkId: null });
     expect(donationPointsBlock(storedResult().prompt)).toContain("The food bank's donation point finder lists no donation points.");
   });
 
@@ -2287,7 +2287,7 @@ describe("the foodbank.org.uk donation point finder", () => {
     expect(storedResult().donationPointFinder!.count).toBe(2);
   });
 
-  it("asks nothing, and says which field to fill, when the food bank has no network id", async () => {
+  it("asks nothing, and says which field to fill, when the food bank has no network id and its pages carry none", async () => {
     seedPlatformFoodbank(null);
 
     await runJob();
@@ -2295,7 +2295,135 @@ describe("the foodbank.org.uk donation point finder", () => {
     expect(finderCalls()).toHaveLength(0);
     expect(storedResult().donationPointFinder!.url).toBeNull();
     expect(storedResult().donationPointFinder!.error).toContain("No network id");
+    expect(storedResult().donationPointFinder!.error).toContain("Set it on the edit form");
+    expect(storedResult().donationPointFinder!.savedNetworkId).toBeNull();
     expect(crawlItems()).toHaveLength(5);
+    expect(networkIdHeld()).toBeNull();
+  });
+
+  // ---------------------------------------------------------------------------
+  // The network id backfill, views.py:957-967
+  // ---------------------------------------------------------------------------
+  //
+  // Ely moved onto the platform with no network id and its check said "Set it
+  // on the edit form" -- where Django would have read it off the page and
+  // saved it. The id is in the page's flight data, JSON escaped inside a JS
+  // string in an inline <script>; this is ely's own markup, cut down.
+  function flightData(networkId: string): string {
+    return `<script>self.__next_f.push([1,"{\\"value\\":\\"\\u003cp\\u003eFind your nearest supermarket donation point below.\\u003c/p\\u003e\\"},\\"foodBank\\":{\\"id\\":\\"${networkId}\\"}}],\\"shareLinks\\":null"])</script>`;
+  }
+
+  function networkIdHeld(): string | null {
+    return (db.prepare("SELECT network_id FROM foodbank WHERE id = ?").get(SALISBURY) as { network_id: string | null }).network_id;
+  }
+
+  const ELY_ID = "2c9be09b-47c1-45ea-aaa3-4d72f50097e2";
+
+  it("reads a missing network id off the food bank's pages, saves it, and asks the finder with it", async () => {
+    seedPlatformFoodbank(null);
+    pageReplies.set(`${SITE}/what-we-need/`, [{ status: 200, body: html(`SHOPPING${flightData(ELY_ID)}`) }]);
+    pageReplies.set(FINDER_URL, [{ status: 200, body: FINDER_REPLY }]);
+
+    await runJob();
+
+    expect(finderCalls()).toHaveLength(1);
+    expect(JSON.parse(finderCalls()[0]!.body!)).toEqual([ELY_ID, "51.0688", "-1.7945"]);
+    expect(networkIdHeld()).toBe(ELY_ID);
+    expect(storedResult().donationPointFinder).toEqual({ url: FINDER_URL, count: 2, error: null, savedNetworkId: { id: ELY_ID, url: `${SITE}/what-we-need/` } });
+    // The pages' five rows and the finder's -- the backfill fetched nothing
+    // of its own.
+    expect(crawlItems()).toHaveLength(6);
+    expect(pageCalls()).toHaveLength(6);
+  });
+
+  // `modified` is the public "Last updated" footer, and nothing public shows
+  // network_id. Django's foodbank.save() would have bumped it.
+  it("saves the network id without touching modified or edited", async () => {
+    seedPlatformFoodbank(null);
+    pageReplies.set(`${SITE}/`, [{ status: 200, body: html(`HOMEPAGE${flightData(ELY_ID)}`) }]);
+    pageReplies.set(FINDER_URL, [{ status: 200, body: FINDER_REPLY }]);
+    vi.setSystemTime(new Date("2026-10-19T12:00:00Z"));
+
+    await runJob();
+
+    expect(networkIdHeld()).toBe(ELY_ID);
+    expect(db.prepare("SELECT modified, edited FROM foodbank WHERE id = ?").get(SALISBURY)).toEqual({ modified: DJANGO_NOW, edited: null });
+  });
+
+  it("looks in Django's order: the shopping list, then the homepage, then the donate-food page", async () => {
+    const SHOPPING_ID = "11111111-1111-4111-8111-111111111111";
+    const HOMEPAGE_ID = "22222222-2222-4222-8222-222222222222";
+    const DONATE_ID = "33333333-3333-4333-8333-333333333333";
+    seedPlatformFoodbank(null);
+    pageReplies.set(`${SITE}/`, [{ status: 200, body: html(`HOMEPAGE${flightData(HOMEPAGE_ID)}`) }]);
+    pageReplies.set(DONATE_FOOD, [{ status: 200, body: html(`DONATE${flightData(DONATE_ID)}`) }]);
+    pageReplies.set(`${SITE}/what-we-need/`, [{ status: 200, body: html(`SHOPPING${flightData(SHOPPING_ID)}`) }]);
+    pageReplies.set(FINDER_URL, [{ status: 200, body: FINDER_REPLY }]);
+
+    await runJob();
+    expect(networkIdHeld()).toBe(SHOPPING_ID);
+
+    db.prepare("UPDATE foodbank SET network_id = NULL").run();
+    calls = [];
+    pageReplies.set(`${SITE}/what-we-need/`, [{ status: 200, body: html("SHOPPING") }]);
+    await runJob();
+    expect(networkIdHeld()).toBe(HOMEPAGE_ID);
+    expect(storedResult().donationPointFinder!.savedNetworkId).toEqual({ id: HOMEPAGE_ID, url: `${SITE}/` });
+
+    db.prepare("UPDATE foodbank SET network_id = NULL").run();
+    calls = [];
+    pageReplies.set(`${SITE}/`, [{ status: 200, body: html("HOMEPAGE") }]);
+    await runJob();
+    expect(networkIdHeld()).toBe(DONATE_ID);
+  });
+
+  // Only the three pages Django searched. A contacts page carrying an id is
+  // not where the platform puts it, and taking one from there would be a
+  // guess this port has no evidence for.
+  it("does not take a network id from the locations or contacts page", async () => {
+    seedPlatformFoodbank(null);
+    pageReplies.set(`${SITE}/contact/`, [{ status: 200, body: html(`CONTACTS${flightData(ELY_ID)}`) }]);
+
+    await runJob();
+
+    expect(finderCalls()).toHaveLength(0);
+    expect(networkIdHeld()).toBeNull();
+  });
+
+  it("treats an empty network id as none", async () => {
+    seedPlatformFoodbank("");
+    pageReplies.set(`${SITE}/what-we-need/`, [{ status: 200, body: html(`SHOPPING${flightData(ELY_ID)}`) }]);
+    pageReplies.set(FINDER_URL, [{ status: 200, body: FINDER_REPLY }]);
+
+    await runJob();
+
+    expect(networkIdHeld()).toBe(ELY_ID);
+  });
+
+  it("does not overwrite a network id typed on the edit form while the check ran", async () => {
+    const TYPED = "44444444-4444-4444-8444-444444444444";
+    seedPlatformFoodbank(null);
+    pageReplies.set(`${SITE}/what-we-need/`, [{ status: 200, body: html(`SHOPPING${flightData(ELY_ID)}`) }]);
+    pageReplies.set(FINDER_URL, [{ status: 200, body: FINDER_REPLY }]);
+    onPageFetch = (url) => {
+      if (url === `${SITE}/contact/`) db.prepare("UPDATE foodbank SET network_id = ? WHERE id = ?").run(TYPED, SALISBURY);
+    };
+
+    await runJob();
+
+    expect(networkIdHeld()).toBe(TYPED);
+  });
+
+  it("leaves a held network id alone, even when a page carries a different one", async () => {
+    seedPlatformFoodbank();
+    pageReplies.set(`${SITE}/what-we-need/`, [{ status: 200, body: html(`SHOPPING${flightData(ELY_ID)}`) }]);
+    pageReplies.set(FINDER_URL, [{ status: 200, body: FINDER_REPLY }]);
+
+    await runJob();
+
+    expect(networkIdHeld()).toBe(NETWORK_ID);
+    expect(JSON.parse(finderCalls()[0]!.body!)[0]).toBe(NETWORK_ID);
+    expect(storedResult().donationPointFinder!.savedNetworkId).toBeNull();
   });
 
   // The list does not come from the donate-food page, so a page we failed to

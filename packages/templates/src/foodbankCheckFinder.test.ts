@@ -41,3 +41,21 @@ describe("the donation point finder warning on admin/foodbank_check.njk", () => 
     expect(warningAt).toBeLessThan(SOURCE.indexOf("{% if result.ourDonationPoints.length or result.foundDonationPoints.length %}"));
   });
 });
+
+// A food bank with no network id has one read off its pages and saved by the
+// check, so its edit form changes without anyone typing in it. The check page
+// says so, and where the id came from.
+const SAVED = /\{% if result\.donationPointFinder and result\.donationPointFinder\.savedNetworkId %\}([\s\S]*?)\{% endif %\}/.exec(SOURCE);
+
+describe("the saved network id notice on admin/foodbank_check.njk", () => {
+  it("names the id and links the page it was read from", () => {
+    expect(SAVED).not.toBeNull();
+    expect(SAVED![1]).toContain('class="notification is-info is-light"');
+    expect(SAVED![1]).toContain("{{ result.donationPointFinder.savedNetworkId.id }}");
+    expect(SAVED![1]).toContain('href="{{ result.donationPointFinder.savedNetworkId.url }}"');
+  });
+
+  it("sits above the comparison table", () => {
+    expect(SOURCE.indexOf("result.donationPointFinder.savedNetworkId")).toBeLessThan(SOURCE.indexOf("checktable"));
+  });
+});
