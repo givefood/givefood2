@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cleanFoodbankNeedText, keysEqual, needItemsKey } from "./textClean";
+import { cleanFoodbankNeedText, keysEqual, needItemsKey, needWordsKey } from "./textClean";
 
 // HOW THE "matches Django" CLAIMS HERE WERE CHECKED, and how far they go.
 // The Django tree is NOT in this repo -- only the port is. So the reference
@@ -976,6 +976,26 @@ describe("needItemsKey", () => {
     // The whole point of the insensitivity above is that it must not go so far
     // as to hide a real edit.
     expect(keysEqual(needItemsKey("Beans\nRice"), needItemsKey("Beans\nRice\nPasta"))).toBe(false);
+  });
+});
+
+describe("needWordsKey", () => {
+  it("is the set of words across every line, lowercased", () => {
+    expect([...needWordsKey("Tinned Fish, Meat\nUHT Milk")].sort()).toEqual(["fish", "meat", "milk", "tinned", "uht"]);
+  });
+
+  it("drops filler words", () => {
+    expect(keysEqual(needWordsKey("Tea and Coffee please"), needWordsKey("Tea\nCoffee"))).toBe(true);
+  });
+
+  it("is empty for null, empty or punctuation-only text", () => {
+    expect(needWordsKey(null).size).toBe(0);
+    expect(needWordsKey("").size).toBe(0);
+    expect(needWordsKey(" - \n...").size).toBe(0);
+  });
+
+  it("still registers a new word as a change", () => {
+    expect(keysEqual(needWordsKey("Beans\nRice"), needWordsKey("Beans\nRice\nPasta"))).toBe(false);
   });
 });
 

@@ -33,10 +33,12 @@ export type OpenRouterOutcome =
 // crawlers.py:451-474's two-attempt loop, folded together with ai.py's
 // payload construction. temperature/seed/model/require_parameters are all
 // load-bearing (PLAN.md §8.5.3 stage 5 table) -- do not change any of them
-// without re-benchmarking against the same prompt/schema.
+// without re-benchmarking against the same prompt/schema. Model moved from
+// openai/gpt-oss-120b in Oct 2026 after a 78-page benchmark: about half the
+// false-positive needs at ~$23/month vs ~$9, and far less run-to-run drift.
 export async function extractNeed(env: Env, prompt: string): Promise<OpenRouterOutcome> {
   const body = {
-    model: "openai/gpt-oss-120b",
+    model: "deepseek/deepseek-v4.1-flash",
     messages: [{ role: "user", content: prompt }],
     temperature: 0,
     seed: 1,
