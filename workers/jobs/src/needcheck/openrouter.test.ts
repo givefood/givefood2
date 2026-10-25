@@ -286,8 +286,9 @@ describe("the request that goes to OpenRouter", () => {
     // model/require_parameters "load-bearing ... do not change any of them
     // without re-benchmarking"):
     //
-    //   model            crawlers.py:442. gpt-oss-120b was benchmarked against
-    //                    deepseek-v4-flash on this exact prompt and schema.
+    //   model            deepseek-v4.1-flash replaced gpt-oss-120b in Oct
+    //                    2026 after a 78-page false-positive benchmark on
+    //                    this exact prompt and schema.
     //   temperature 0    crawlers.py:441. Reproducibility: at anything higher
     //                    the same unchanged page yields a different item list
     //                    run to run, and every one of those becomes a
@@ -307,7 +308,7 @@ describe("the request that goes to OpenRouter", () => {
     await extractNeed(envWith(), PROMPT);
 
     expect(sentBody(fetchMock)).toStrictEqual({
-      model: "openai/gpt-oss-120b",
+      model: "deepseek/deepseek-v4.1-flash",
       messages: [{ role: "user", content: PROMPT }],
       temperature: 0,
       seed: 1,

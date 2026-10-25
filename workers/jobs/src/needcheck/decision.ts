@@ -1,4 +1,4 @@
-import { keysEqual, needItemsKey } from "@givefood/models";
+import { keysEqual, needWordsKey } from "@givefood/models";
 
 // crawlers.py:486-538, stages 8-9 of the pipeline (PLAN.md §8.5.3) --
 // extracted as a pure function (no D1/network access) so it can be unit
@@ -29,13 +29,13 @@ export function decideNeedChange(params: {
     return { kind: "empty_extraction_skip" };
   }
 
-  const needKey = needItemsKey(needText);
-  const excessKey = needItemsKey(excessText);
+  const needKey = needWordsKey(needText);
+  const excessKey = needWordsKey(excessText);
 
   // S7: suppress a repeat of something already sitting unreviewed.
   let isNonpertinent = false;
   for (const prev of lastUnpublished) {
-    if (keysEqual(needKey, needItemsKey(prev.changeText)) && keysEqual(excessKey, needItemsKey(prev.excessChangeText))) {
+    if (keysEqual(needKey, needWordsKey(prev.changeText)) && keysEqual(excessKey, needWordsKey(prev.excessChangeText))) {
       isNonpertinent = true;
     }
   }
@@ -44,8 +44,8 @@ export function decideNeedChange(params: {
   if (lastPublished === null) {
     if (needText || excessText) isChange = true;
   } else {
-    if (!keysEqual(needKey, needItemsKey(lastPublished.changeText))) isChange = true;
-    if (!keysEqual(excessKey, needItemsKey(lastPublished.excessChangeText))) isChange = true;
+    if (!keysEqual(needKey, needWordsKey(lastPublished.changeText))) isChange = true;
+    if (!keysEqual(excessKey, needWordsKey(lastPublished.excessChangeText))) isChange = true;
   }
 
   if (!isChange) return { kind: "no_change" };
