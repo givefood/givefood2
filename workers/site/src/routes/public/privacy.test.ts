@@ -436,8 +436,9 @@ describe("publicPrivacy -- cacheability", () => {
 
     expect(res.headers.get("Cache-Control")).toBe("public, max-age=300, s-maxage=604800");
     expect(res.headers.get("Cache-Control")).not.toContain("s-maxage=3600");
-    // Not one of middleware/noStore.ts's mounts, so none of its headers.
-    expect(res.headers.get("CDN-Cache-Control")).toBeNull();
+    // Not one of middleware/noStore.ts's mounts: the edge gets
+    // pageCacheControl's directive, not no-store.
+    expect(res.headers.get("CDN-Cache-Control")).toBe("public, max-age=604800, stale-while-revalidate=604800");
   });
 
   // THE INVARIANT THAT MAKES A WEEK OF SHARED CACHE SAFE: two different

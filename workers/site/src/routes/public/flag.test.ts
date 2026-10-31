@@ -202,7 +202,9 @@ describe("GET /flag/ is the same page for everybody", () => {
     // The three headers middleware/noStore.ts sets. Their ABSENCE is the
     // index.ts half of the fix; CDN-Cache-Control is the load-bearing one,
     // being the only thing that actually stopped the Cloudflare edge.
-    expect(res.headers.get("CDN-Cache-Control")).toBeNull();
+    // pageCacheControl's edge directive replaces it: a day, served stale
+    // while refreshing.
+    expect(res.headers.get("CDN-Cache-Control")).toBe("public, max-age=86400, stale-while-revalidate=86400");
     expect(res.headers.get("Vary")).toBeNull();
   });
 
@@ -214,7 +216,7 @@ describe("GET /flag/ is the same page for everybody", () => {
       const res = await get(path);
       expect(res.status, path).toBe(200);
       expect(res.headers.get("Cache-Control"), path).toBe("public, max-age=300, s-maxage=86400");
-      expect(res.headers.get("CDN-Cache-Control"), path).toBeNull();
+      expect(res.headers.get("CDN-Cache-Control"), path).toBe("public, max-age=86400, stale-while-revalidate=86400");
       expect(res.headers.get("Set-Cookie"), path).toBeNull();
     }
   });
