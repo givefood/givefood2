@@ -76,13 +76,13 @@
       <div class="notification is-success is-light">Cache purged.</div>
     {% elif cache_result == "purged-kv-only" %}
       <div class="notification is-warning is-light">
-        Cleared the KV fragments, but the CDN cache was <strong>not</strong> purged:
-        CF_API_KEY / CF_ZONE_ID are not set on this Worker.
+        Cleared the KV fragments, but the page cache was <strong>not</strong> purged:
+        Workers Cache is not available to this Worker.
       </div>
     {% elif cache_result == "cooldown" %}
       <div class="notification is-warning is-light">Not purged &mdash; a purge already ran in the last minute.</div>
     {% elif cache_result == "failed" %}
-      <div class="notification is-danger is-light">Cloudflare rejected the purge. Check the Worker logs.</div>
+      <div class="notification is-danger is-light">Cloudflare rejected the purge (it may be rate-limited). Check the Worker logs.</div>
     {% endif %}
 
     <ul class="settings">

@@ -637,10 +637,10 @@ describe("adminSettings -- the cache-purge banner", () => {
     [
       "purged-kv-only",
       "warning",
-      "Cleared the KV fragments, but the CDN cache was not purged: CF_API_KEY / CF_ZONE_ID are not set on this Worker.",
+      "Cleared the KV fragments, but the page cache was not purged: Workers Cache is not available to this Worker.",
     ],
     ["cooldown", "warning", "Not purged — a purge already ran in the last minute."],
-    ["failed", "danger", "Cloudflare rejected the purge. Check the Worker logs."],
+    ["failed", "danger", "Cloudflare rejected the purge (it may be rate-limited). Check the Worker logs."],
   ];
 
   for (const [value, kind, text] of outcomes) {
@@ -922,8 +922,8 @@ describe("adminSettings -- the Clear Cache button", () => {
   //
   // Followed all the way back into the banner, so this single test covers the
   // whole round trip the admin actually performs: render, press, redirect,
-  // read the result. CF_API_KEY/CF_ZONE_ID are unset on this Worker today, so
-  // purged-kv-only is the outcome production would produce.
+  // read the result. This harness's execution context has no ctx.cache (no
+  // Workers Cache), so purged-kv-only is the outcome it produces.
   it("mints a token the purge endpoint accepts, and the outcome comes back as a banner", async () => {
     // Seeded so the purge has something to clear. The banner this round trip
     // ends on says the KV fragments were cleared; a banner is not evidence

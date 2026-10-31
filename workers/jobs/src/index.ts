@@ -9,7 +9,6 @@ import { handleCharityEwQueue } from "./queues/charityEw";
 import { handleCharityScotlandQueue } from "./queues/charityScotland";
 import { handleCharityNiQueue } from "./queues/charityNi";
 import { handleCharityEwDlq, handleCharityNiDlq, handleCharityScotlandDlq } from "./queues/charityDlq";
-import { handleCachePurgeQueue } from "./queues/cachePurge";
 import { handleJobsDlq } from "./queues/jobsDlq";
 import { handleWhatsappHookQueue } from "./queues/whatsappHook";
 
@@ -45,8 +44,8 @@ export default {
         return handleCharityNiQueue(batch as MessageBatch<any>, env);
       case "charity-ni-dlq":
         return handleCharityNiDlq(batch as MessageBatch<any>, env);
-      case "cache-purge":
-        return handleCachePurgeQueue(batch as MessageBatch<any>, env);
+      // "cache-purge" is consumed by workers/site: Workers Caching can only
+      // be purged from inside the Worker that owns the cache.
       // Both dead-letter queues that previously had no case here. See
       // queues/jobsDlq.ts -- jobs-dlq was reaching `default` and logging its
       // own name rather than the message that failed.

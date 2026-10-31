@@ -170,6 +170,18 @@
       { "queue": "charity-ew",       "binding": "CHARITY_EW_Q" },
       { "queue": "charity-scotland", "binding": "CHARITY_SCOTLAND_Q" },
       { "queue": "charity-ni",       "binding": "CHARITY_NI_Q" }
+    ],
+    // cache-purge is the one queue THIS Worker consumes. Workers Caching
+    // belongs to the Worker that owns it and can only be purged from inside
+    // it (ctx.cache.purge); the zone purge_cache API givefood2-jobs used to
+    // call has no effect on it. See src/queues/cachePurge.ts. The DLQ's
+    // consumer stays on givefood2-jobs (queues/jobsDlq.ts), alongside the
+    // other dead-letter queues the maintainer already reads.
+    "consumers": [
+      {
+        "queue": "cache-purge", "max_batch_size": 100, "max_batch_timeout": 30,
+        "max_retries": 3, "dead_letter_queue": "cache-purge-dlq"
+      }
     ]
   },
 
@@ -181,8 +193,8 @@
     // not a secret -- it is an account identifier, it is already in plain
     // text in workers/jobs/wrangler.jsonc, and it is useless without the
     // token that accompanies it. CF_API_KEY, which IS the secret, is
-    // already in `secrets.required` below for clearCache.ts's zone purge;
-    // that same token now needs Account Analytics:Read and Queues:Read
+    // already in `secrets.required` below (clearCache.ts no longer uses it:
+    // it purges through ctx.cache); that same token needs Account Analytics:Read and Queues:Read
     // added, and the panel degrades to a stated reason without them rather
     // than failing the page.
     "CF_ACCOUNT_ID": "211195b9bf606f797a6d2dbc0bf41791"
@@ -255,9 +267,10 @@
     // a browser-side URL by construction. Both set 2026-09-02, confirmed
     // via `wrangler secret list`.
     //
-    // CF_API_KEY / CF_ZONE_ID: routes/admin/clearCache.ts's zone purge --
-    // the Settings page's "Clear Cache" button. The token needs Zone.Cache
-    // Purge on givefood.org.uk. Set 2026-09-02, confirmed via `wrangler
+    // CF_API_KEY / CF_ZONE_ID: originally for routes/admin/clearCache.ts's
+    // zone purge. That button now purges through ctx.cache, which needs no
+    // token (the zone API never reached Workers Caching); CF_API_KEY is
+    // still read by lib/queueBacklog.ts. Set 2026-09-02, confirmed via `wrangler
     // secret list`. Until they were set the handler degraded to a KV-only
     // purge with a warning banner; that branch stays, since it is also what
     // a revoked token should do.

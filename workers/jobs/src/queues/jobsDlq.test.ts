@@ -958,7 +958,6 @@ describe("dispatch from the real Worker entrypoint", () => {
   it.each([
     "needcheck-render",
     "needcheck-render-dlq",
-    "cache-purge",
     "jobs",
     "whatsapp-hook",
     "articles",
