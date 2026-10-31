@@ -92,7 +92,17 @@
   // Workers Cache. NOT optional on a catch-all route -- see PLAN.md §3.6.
   // Tiered, collapses concurrent misses, and serves hits WITHOUT
   // executing the Worker (so a hit costs 0 CPU-ms).
-  "cache": { "enabled": true },
+  //
+  // cross_version_cache: by default the Worker version is part of the cache
+  // key, so every deploy started from an empty cache -- every page, API
+  // response, map and screenshot a miss again, and the maps and screenshots
+  // re-billed (Google Static Maps, Browser Rendering). With this on, a new
+  // version keeps serving what the previous one cached until it expires or
+  // is purged. THE TRADE-OFF: a deploy that changes what a page looks like
+  // no longer shows everywhere at once. When one does, press Clear Cache on
+  // /admin/settings/ after the deploy lands (it purges this Worker's whole
+  // cache). Needs wrangler >= 4.107.
+  "cache": { "enabled": true, "cross_version_cache": true },
 
   "assets": {
     "directory": "./dist/static",
