@@ -1,23 +1,22 @@
 import type { MiddlewareHandler } from "hono";
 import { LOCALES } from "@givefood/templates";
 import type { AppEnv } from "../types";
+import { isPurgedByEntity } from "./cacheTag";
 
 // Django decorated 75 public views with @cache_page, which sets a
 // Cache-Control header on the response. This port sets one in 12 of its 72
 // public route files -- the API, geojson, /aac/, favicons, screenshots and
 // a handful of others -- and nothing at all on HTML, RSS or Markdown.
 //
-// The port's original reasoning was that "edge caching for the cached
-// pages is a Cloudflare Cache Rule, not per-route code". That is
-// still true and is not being reversed here. The Cache Rule works -- a food
-// bank page comes back HIT with age=3092 -- but a Cache Rule is an EDGE
-// mechanism, and it cannot put a header in the response. So no browser
-// anywhere caches a page of this site for a single second, where Django's
-// @cache_page had them caching for an hour, a day or a week. Measured
-// 2026-09-06: html 11.9% edge hit rate, rss 0.0%, md 1.3%.
-//
-// This middleware supplies only the half the Cache Rule cannot: the header.
-//
+// The port's original reasoning was that "edge caching for the cached pages
+// is a Cloudflare Cache Rule, not per-route code". That stopped being true
+// when wrangler.jsonc turned on Workers Caching: zone Cache Rules have no
+// effect on it, and the response headers are its entire configuration. So
+// this middleware now sets both halves -- Cache-Control for browsers and any
+// other shared cache, and CDN-Cache-Control for Cloudflare's edge (see
+// edgeTtl below). Measured 2026-09-06, before either: html 11.9% edge hit
+// rate, rss 0.0%, md 1.3%.
+
 // WHY A MIDDLEWARE AND NOT 60 EDITS. The alternative is a Cache-Control line
 // in every page handler, which is how the 12 explicit ones work and is the
 // better pattern when a route has something particular to say. For "every
@@ -49,12 +48,9 @@ const BROWSER_MAX_AGE = 300;
 // listed falls through to DAY, which is what @cache_page said for the food
 // bank pages that make up nearly all of this site's HTML.
 //
-// Only s-maxage, which shared caches read and browsers ignore. Whether the
-// edge actually uses it depends on the Cache Rule: a rule with an explicit
-// Edge TTL overrides it, one set to respect origin honours it. Both are
-// fine, which is the point of writing it this way -- it either matches
-// Django's number or defers to the rule already in place, and cannot
-// shorten what the edge does today.
+// s-maxage, which shared caches read and browsers ignore. Cloudflare's own
+// edge does not use it: Workers Caching reads CDN-Cache-Control first (see
+// edgeTtl below). Zone Cache Rules have no effect on Workers Caching at all.
 // Built from LOCALES, not a character class. It was "(?:[a-z-]{2,7}/)?"
 // first, which matches a locale prefix and ALSO matches "privacy", "rss"
 // and "md" -- so /privacy/ was being read as a locale home page and given
@@ -114,6 +110,36 @@ const SHARED_TTL: { test: (path: string) => boolean; ttl: number }[] = [
 function sharedTtl(path: string): number {
   for (const rule of SHARED_TTL) if (rule.test(path)) return rule.ttl;
   return SECONDS_IN_DAY;
+}
+
+// WHAT THE EDGE IS TOLD, separately from what Cache-Control says.
+//
+// Workers Caching reads CDN-Cache-Control ahead of Cache-Control, and nothing
+// downstream does (browsers ignore it). That matters for two reasons:
+//
+// 1. s-maxage turns stale-while-revalidate OFF. RFC 9111 gives s-maxage
+//    proxy-revalidate semantics, and Cloudflare honours that: with s-maxage
+//    present, every expired entry is a blocking re-render (cf-cache-status
+//    EXPIRED) and stale-if-error is disabled too. The edge directive below
+//    uses max-age instead, so an expired page is served at once (UPDATING)
+//    while the Worker refreshes it in the background, and a Worker error
+//    while refreshing serves the last good copy rather than a 500.
+//
+// 2. A longer TTL for pages that are purged by name. This site's traffic is
+//    a very long tail -- 1,375 distinct paths in 3,308 pageviews in a week of
+//    late October 2026 -- so most food bank pages are not viewed twice in a
+//    day, and a one-day TTL expired before the next visitor arrived. A food
+//    bank's pages (fb-<slug>) and a constituency's (pc-<slug>) are purged
+//    by tag on every admin save that changes them (queues/cachePurge.ts), so
+//    at the edge they get a week, where Cache-Control keeps Django's day for
+//    any other shared cache. Pages without such a tag keep their family's
+//    TTL, because nothing purges them early.
+//
+// The stale window equals the TTL: at most one request after expiry sees the
+// old copy, and only if it arrives within that window.
+function edgeTtl(path: string): number {
+  const ttl = sharedTtl(path);
+  return ttl === SECONDS_IN_DAY && isPurgedByEntity(path) ? SECONDS_IN_WEEK : ttl;
 }
 
 // Only the three types that have no header today. Everything else either
@@ -188,4 +214,6 @@ export const pageCacheControl: MiddlewareHandler<AppEnv> = async (c, next) => {
 
   const path = new URL(c.req.url).pathname;
   c.header("Cache-Control", `public, max-age=${BROWSER_MAX_AGE}, s-maxage=${sharedTtl(path)}`);
+  const edge = edgeTtl(path);
+  c.header("CDN-Cache-Control", `public, max-age=${edge}, stale-while-revalidate=${edge}`);
 };
