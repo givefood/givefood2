@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { Hono } from "hono";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { FRAG_KV_KEY_LAST_UPDATED, FRAG_KV_KEY_NEED_HITS } from "@givefood/db";
 import { adminApp } from "./index";
 import { frag } from "../public/frag";
@@ -18,8 +18,8 @@ import type { AppEnv } from "../../types";
 // that called adminClearCache(c) directly with a hand-made Context.
 //
 // WHAT "THE WRITE ACTUALLY HAPPENED" MEANS FOR THIS HANDLER. It writes no
-// rows. Its entire durable effect is three KV operations and one outbound
-// POST, and it reports all of them through a 302 -- which is precisely the
+// rows. Its entire durable effect is three KV operations and one Workers Cache
+// purge, and it reports all of them through a 302 -- which is precisely the
 // shape of issue #34 (a location form that parsed a Place ID, passed it down,
 // wrote it with no SQL at all, and redirected as though it had worked). So a
 // 302 is never the assertion here. Every purge test either
@@ -42,7 +42,7 @@ import type { AppEnv } from "../../types";
 // followed through the redirect into the real settings page and its banner
 // asserted, not just its querystring.
 //
-// Mocked: fetch (Cloudflare's purge API -- the only thing that leaves the
+// Mocked: ctx.cache (the Workers Cache purge -- the only thing that leaves the
 // machine) and the two KV namespaces. The router, the auth middleware, the
 // CSRF verifier, the templates, the D1 queries behind /frag/ and the handler
 // itself are all the shipped implementations.
@@ -56,9 +56,6 @@ const CSRF_SECRET = "test-csrf-secret-not-a-real-one";
 const CSRF_RAW = "a".repeat(64);
 const SESSION_ID = "test-admin-session-id";
 
-const ZONE_ID = "zone-abc123";
-const API_KEY = "cf-api-token-not-a-real-one";
-const PURGE_URL = `https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/purge_cache`;
 
 // clearCache.ts:50's COOLDOWN_KV_KEY, which is module-private. Duplicated here
 // deliberately: it is the only name that identifies the marker in production
@@ -169,7 +166,7 @@ app.onError((err, c) => c.text(`five hundred: ${(err as Error).message}`, 500));
 let db: DatabaseSync;
 let kv: FakeKv;
 let sessions: FakeKv;
-let fetchMock: ReturnType<typeof vi.fn>;
+let purgeMock: Mock<(options: CachePurgeOptions) => Promise<unknown>>;
 let consoleError: ReturnType<typeof vi.spyOn>;
 let consoleLog: ReturnType<typeof vi.spyOn>;
 
@@ -179,30 +176,31 @@ function env(overrides: Record<string, unknown> = {}): AppEnv["Bindings"] {
     DATA: kv,
     SESSIONS: sessions,
     CSRF_SECRET,
-    CF_API_KEY: API_KEY,
-    CF_ZONE_ID: ZONE_ID,
     GMAP_STATIC_KEY: "",
     GMAP_GEOCODE_KEY: "",
     ...overrides,
   } as unknown as AppEnv["Bindings"];
 }
 
-const execCtx = { waitUntil: (p: Promise<unknown>) => void p, passThroughOnException: () => {} } as unknown as ExecutionContext;
+/** The execution context the handler runs under. `cache` is the Workers
+ *  Cache purge surface (ctx.cache); `withCache: false` models an invocation
+ *  with no Workers Cache, such as a local runner. */
+function execCtx(withCache = true): ExecutionContext {
+  return {
+    waitUntil: (p: Promise<unknown>) => void p,
+    passThroughOnException: () => {},
+    ...(withCache ? { cache: { purge: (options: CachePurgeOptions) => purgeMock(options) } } : {}),
+  } as unknown as ExecutionContext;
+}
 
-type Reply = (init: RequestInit) => Promise<Response>;
+type Reply = (options: CachePurgeOptions) => Promise<unknown>;
 
-/** Cloudflare's v4 success envelope. */
-const purgeOk: Reply = async () => new Response(JSON.stringify({ success: true, result: { id: ZONE_ID } }), { status: 200 });
+/** What ctx.cache.purge() resolves to when Cloudflare accepts the purge. */
+const purgeOk: Reply = async () => ({ success: true, errors: [] });
 
-/** Answers the purge endpoint and throws on anything else, so an added
- *  outbound call fails loudly here rather than in production. */
-function stubFetch(reply: Reply) {
-  fetchMock = vi.fn(async (url: string, init: RequestInit): Promise<Response> => {
-    if (url === PURGE_URL) return reply(init);
-    throw new Error(`unmodelled fetch: ${url}`);
-  });
-  vi.stubGlobal("fetch", fetchMock);
-  return fetchMock;
+function stubPurge(reply: Reply) {
+  purgeMock = vi.fn(reply);
+  return purgeMock;
 }
 
 beforeEach(() => {
@@ -234,11 +232,16 @@ beforeEach(() => {
     }),
   );
 
-  // Default: any outbound call at all is a test bug. Individual tests replace
-  // this with a modelled reply.
-  stubFetch(async () => {
-    throw new Error("fetch not stubbed for this test");
+  // Default: any purge at all is a test bug. Individual tests replace this
+  // with a modelled reply.
+  stubPurge(async () => {
+    throw new Error("purge not stubbed for this test");
   });
+  // And nothing in this handler should reach the network any more: the zone
+  // purge_cache call it used to make is gone.
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+    throw new Error(`unmodelled fetch: ${url}`);
+  }));
 
   // The handler narrates every degradation. Silenced by default (half these
   // tests are degradations) but kept as spies so the logging can be asserted
@@ -276,6 +279,8 @@ interface PostOptions {
    *  which of the two checks refused it. */
   headers?: Record<string, string | undefined>;
   env?: Record<string, unknown>;
+  /** false runs the request with no ctx.cache, as a local runner would. */
+  withCache?: boolean;
   /** Raw body + content type, for the non-form submissions. */
   body?: string;
   contentType?: string;
@@ -309,7 +314,7 @@ async function post(options: PostOptions = {}): Promise<Response> {
       body,
     }),
     env(options.env),
-    execCtx,
+    execCtx(options.withCache ?? true),
   );
 }
 
@@ -319,7 +324,7 @@ async function get(path: string): Promise<Response> {
   return app.fetch(
     new Request(`${ORIGIN}${path}`, { method: "GET", headers: { Cookie: await signedInCookie() } }),
     env(),
-    execCtx,
+    execCtx(),
   );
 }
 
@@ -346,7 +351,7 @@ describe("adminClearCache -- getting to the handler at all", () => {
     // The assertions that matter: an unauthenticated request costs nothing.
     expect(fragCacheIntact()).toBe(true);
     expect(kv.delete).not.toHaveBeenCalled();
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(purgeMock).not.toHaveBeenCalled();
   });
 
   // THE MUTANT THIS KILLS AND THE ONE ABOVE DOES NOT: a gate that checks the
@@ -365,7 +370,7 @@ describe("adminClearCache -- getting to the handler at all", () => {
     expect(res.headers.get("Location")).toBe("/auth/?next=%2Fadmin%2Fclearcache%2F");
     expect(fragCacheIntact()).toBe(true);
     expect(kv.delete).not.toHaveBeenCalled();
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(purgeMock).not.toHaveBeenCalled();
   });
 
   // PLAN.md:10082 lists Django's clearcache as one of the GET-mutation holes
@@ -385,7 +390,7 @@ describe("adminClearCache -- getting to the handler at all", () => {
     expect(res.status).toBe(404);
     expect(fragCacheIntact()).toBe(true);
     expect(kv.delete).not.toHaveBeenCalled();
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(purgeMock).not.toHaveBeenCalled();
   });
 
   it("refuses a POST with no csrf_token field", async () => {
@@ -395,7 +400,7 @@ describe("adminClearCache -- getting to the handler at all", () => {
     expect(res.status).toBe(403);
     expect(await res.text()).toBe("Forbidden");
     expect(fragCacheIntact()).toBe(true);
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(purgeMock).not.toHaveBeenCalled();
   });
 
   it("refuses a POST whose token does not match the cookie", async () => {
@@ -404,7 +409,7 @@ describe("adminClearCache -- getting to the handler at all", () => {
 
     expect(res.status).toBe(403);
     expect(fragCacheIntact()).toBe(true);
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(purgeMock).not.toHaveBeenCalled();
   });
 
   // The "signed" half of the signed double-submit. An attacker who can set a
@@ -417,7 +422,7 @@ describe("adminClearCache -- getting to the handler at all", () => {
 
     expect(res.status).toBe(403);
     expect(fragCacheIntact()).toBe(true);
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(purgeMock).not.toHaveBeenCalled();
   });
 
   it("refuses a cross-origin POST even with a valid token pair", async () => {
@@ -426,7 +431,7 @@ describe("adminClearCache -- getting to the handler at all", () => {
 
     expect(res.status).toBe(403);
     expect(fragCacheIntact()).toBe(true);
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(purgeMock).not.toHaveBeenCalled();
   });
 
   // MUTANTS THESE TWO KILL, AND THE ONE ABOVE DOES NOT. A real browser sends
@@ -444,7 +449,7 @@ describe("adminClearCache -- getting to the handler at all", () => {
 
     expect(res.status).toBe(403);
     expect(fragCacheIntact()).toBe(true);
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(purgeMock).not.toHaveBeenCalled();
   });
 
   it("refuses on Sec-Fetch-Site alone, when Origin is absent", async () => {
@@ -453,7 +458,7 @@ describe("adminClearCache -- getting to the handler at all", () => {
 
     expect(res.status).toBe(403);
     expect(fragCacheIntact()).toBe(true);
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(purgeMock).not.toHaveBeenCalled();
   });
 
   // lib/csrf.ts fails closed on an unset secret, and this endpoint is the one
@@ -465,7 +470,7 @@ describe("adminClearCache -- getting to the handler at all", () => {
 
     expect(res.status).toBe(403);
     expect(fragCacheIntact()).toBe(true);
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(purgeMock).not.toHaveBeenCalled();
   });
 
   // Hono's parseBody returns {} for any content type that is not a form
@@ -480,7 +485,7 @@ describe("adminClearCache -- getting to the handler at all", () => {
 
     expect(res.status).toBe(403);
     expect(fragCacheIntact()).toBe(true);
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(purgeMock).not.toHaveBeenCalled();
   });
 });
 
@@ -490,7 +495,7 @@ describe("adminClearCache -- getting to the handler at all", () => {
 
 describe("adminClearCache -- the purge that succeeds", () => {
   it("redirects to the settings page with the purged outcome", async () => {
-    stubFetch(purgeOk);
+    stubPurge(purgeOk);
     const res = await post();
 
     // Django redirects to admin:index (gfadmin/views.py:3122). This port
@@ -500,27 +505,16 @@ describe("adminClearCache -- the purge that succeeds", () => {
     expect(res.headers.get("Location")).toBe("/admin/settings/?cache=purged");
   });
 
-  // givefood/utils/cache.py:166's endpoint and Bearer-token shape, with
-  // purge_everything in place of files/prefixes. Asserted field by field
-  // because every one of them is a way to get a 200 back for a purge that
-  // did not happen: the wrong zone purges someone else's cache, a missing
-  // body is a no-op, and a `files: []` body clears nothing.
-  it("sends exactly the documented purge_everything request", async () => {
-    const fetchSpy = stubFetch(purgeOk);
+  // Exactly one purge, of everything, through this Worker's own cache. The
+  // zone purge_cache API it used to call does not reach Workers Caching at
+  // all, so the assertion is on ctx.cache.purge and on fetch NOT being used.
+  it("purges everything in this Worker's cache, and nothing else", async () => {
+    const purgeSpy = stubPurge(purgeOk);
     await post();
 
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
-    const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe(PURGE_URL);
-    expect(init.method).toBe("POST");
-    expect(init.headers).toMatchObject({
-      Authorization: `Bearer ${API_KEY}`,
-      "Content-Type": "application/json",
-    });
-    expect(JSON.parse(String(init.body))).toEqual({ purge_everything: true });
-    // A purge that can hang forever holds the admin's request open and gives
-    // no answer either way; clearCache.ts:64 caps it.
-    expect(init.signal).toBeInstanceOf(AbortSignal);
+    expect(purgeSpy).toHaveBeenCalledTimes(1);
+    expect(purgeSpy).toHaveBeenCalledWith({ purgeEverything: true });
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   // THE WRITE. Both frag keys gone from the store -- read back, not inferred
@@ -529,7 +523,7 @@ describe("adminClearCache -- the purge that succeeds", () => {
   it("deletes both frag KV keys, and only those", async () => {
     warmFragCache();
     kv.store.set("something:else", "left alone");
-    stubFetch(purgeOk);
+    stubPurge(purgeOk);
     await post();
 
     expect(kv.store.has(FRAG_KV_KEY_LAST_UPDATED)).toBe(false);
@@ -539,7 +533,7 @@ describe("adminClearCache -- the purge that succeeds", () => {
   });
 
   it("starts the cooldown by writing the marker", async () => {
-    stubFetch(purgeOk);
+    stubPurge(purgeOk);
     const before = Date.now();
     await post();
     const marker = Number(kv.store.get(COOLDOWN_KEY));
@@ -574,7 +568,7 @@ describe("adminClearCache -- what the site serves after the purge", () => {
 
   it("recomputes both fragments from D1 on the next request after a purge", async () => {
     warmFragCache();
-    stubFetch(purgeOk);
+    stubPurge(purgeOk);
     expect((await post()).headers.get("Location")).toBe("/admin/settings/?cache=purged");
 
     // need-hits: SUM(hits) over the trailing seven days -- 4000 + 321, with
@@ -616,15 +610,15 @@ async function bannerAfter(res: Response): Promise<string | null> {
 
 describe("adminClearCache -- every outcome reaches the admin as a banner", () => {
   it("purged", async () => {
-    stubFetch(purgeOk);
+    stubPurge(purgeOk);
     expect(await bannerAfter(await post())).toBe("Cache purged.");
   });
 
   it("purged-kv-only", async () => {
-    const res = await post({ env: { CF_API_KEY: "" } });
+    const res = await post({ withCache: false });
     expect(res.headers.get("Location")).toBe("/admin/settings/?cache=purged-kv-only");
     expect(await bannerAfter(res)).toBe(
-      "Cleared the KV fragments, but the CDN cache was not purged: CF_API_KEY / CF_ZONE_ID are not set on this Worker.",
+      "Cleared the KV fragments, but the page cache was not purged: Workers Cache is not available to this Worker.",
     );
   });
 
@@ -636,10 +630,10 @@ describe("adminClearCache -- every outcome reaches the admin as a banner", () =>
   });
 
   it("failed", async () => {
-    stubFetch(async () => new Response(JSON.stringify({ success: false, errors: [{ code: 10000 }] }), { status: 200 }));
+    stubPurge(async () => ({ success: false, errors: [{ code: 10000, message: "rate limited" }] }));
     const res = await post();
     expect(res.headers.get("Location")).toBe("/admin/settings/?cache=failed");
-    expect(await bannerAfter(res)).toBe("Cloudflare rejected the purge. Check the Worker logs.");
+    expect(await bannerAfter(res)).toBe("Cloudflare rejected the purge (it may be rate-limited). Check the Worker logs.");
   });
 });
 
@@ -647,138 +641,80 @@ describe("adminClearCache -- every outcome reaches the admin as a banner", () =>
 // Degrading instead of 500ing
 // ---------------------------------------------------------------------------
 
-describe("adminClearCache -- unset Cloudflare credentials", () => {
-  // clearCache.ts:130-135: the secrets are not on this Worker yet, and the
-  // branch is explicitly marked "do not tidy this branch away". The KV clear
-  // still has to happen -- that half needs no credentials -- and the admin has
-  // to be told the CDN was not touched rather than shown a success banner.
-  it("clears KV, skips the CDN and says so when CF_API_KEY is unset", async () => {
+describe("adminClearCache -- no Workers Cache on this invocation", () => {
+  // ctx.cache only exists where Workers Caching does. The KV clear still has
+  // to happen -- that half needs no cache -- and the admin has to be told the
+  // page cache was not touched rather than shown a success banner.
+  it("clears KV, skips the purge and says so", async () => {
     warmFragCache();
-    const res = await post({ env: { CF_API_KEY: "" } });
+    const res = await post({ withCache: false });
 
     expect(res.headers.get("Location")).toBe("/admin/settings/?cache=purged-kv-only");
     expect(kv.store.has(FRAG_KV_KEY_LAST_UPDATED)).toBe(false);
     expect(kv.store.has(FRAG_KV_KEY_NEED_HITS)).toBe(false);
-    // No half-formed request goes out unauthenticated.
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(consoleLog).toHaveBeenCalledWith("clearcache: CF_API_KEY/CF_ZONE_ID unset -- KV cleared, CDN not purged");
+    expect(purgeMock).not.toHaveBeenCalled();
+    expect(consoleLog).toHaveBeenCalledWith("clearcache: no Workers Cache on this invocation -- KV cleared, cache not purged");
   });
 
-  // The zone id is a plain var and the API key is a secret, so in practice
-  // these go missing for entirely different reasons. One branch covers both;
-  // assert it does not quietly become an API-key-only check, which would send
-  // a purge to `zones//purge_cache`.
-  it("does the same when CF_ZONE_ID is the missing half", async () => {
-    warmFragCache();
-    const res = await post({ env: { CF_ZONE_ID: "" } });
-
-    expect(res.headers.get("Location")).toBe("/admin/settings/?cache=purged-kv-only");
-    expect(kv.store.has(FRAG_KV_KEY_NEED_HITS)).toBe(false);
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  // A KV-only clear never touched the rate-limited API, so it must stay
-  // instantly repeatable -- otherwise a Worker with no credentials would put
-  // the admin in a 60-second cooldown for an operation that cost Cloudflare
-  // nothing.
+  // A KV-only clear never touched the rate-limited purge, so it must stay
+  // instantly repeatable.
   it("starts no cooldown, because nothing rate-limited happened", async () => {
-    await post({ env: { CF_API_KEY: "" } });
+    await post({ withCache: false });
     expect(kv.store.has(COOLDOWN_KEY)).toBe(false);
+  });
+
+  // The zone credentials are irrelevant now: a Worker without them still
+  // purges its own cache.
+  it("purges without CF_API_KEY or CF_ZONE_ID", async () => {
+    stubPurge(purgeOk);
+    const res = await post({ env: { CF_API_KEY: "", CF_ZONE_ID: "" } });
+    expect(res.headers.get("Location")).toBe("/admin/settings/?cache=purged");
+    expect(purgeMock).toHaveBeenCalledTimes(1);
   });
 });
 
 describe("adminClearCache -- Cloudflare says no", () => {
-  // The v4 API answers 200 with {"success": false} for a token missing
-  // Zone.Cache Purge. res.ok alone would report that as a success, and the
-  // admin would walk away believing the cache was cleared. Django checks
-  // neither (cache.py:172/196 discards the response entirely).
-  it("treats a 200 with success:false as a failure", async () => {
-    stubFetch(async () => new Response(JSON.stringify({ success: false, errors: [{ code: 10000, message: "Authentication error" }] })));
+  // A rate-limited purge (Workers Caching always gets the Free-plan purge
+  // limits) resolves with success:false rather than throwing. Reporting that
+  // as a success would leave the admin believing the cache was cleared.
+  it("treats success:false as a failure, and logs the errors", async () => {
+    stubPurge(async () => ({ success: false, errors: [{ code: 10000, message: "rate limited" }] }));
     const res = await post();
 
     expect(res.headers.get("Location")).toBe("/admin/settings/?cache=failed");
-    expect(consoleError).toHaveBeenCalledWith("clearcache: Cloudflare purge_cache failed (HTTP 200)", [
-      { code: 10000, message: "Authentication error" },
-    ]);
+    expect(consoleError).toHaveBeenCalledWith("clearcache: Workers Cache purge failed", [{ code: 10000, message: "rate limited" }]);
   });
 
-  it("treats a non-2xx as a failure", async () => {
-    stubFetch(async () => new Response(JSON.stringify({ success: false, errors: [] }), { status: 403 }));
-    expect((await post()).headers.get("Location")).toBe("/admin/settings/?cache=failed");
-  });
-
-  // THE MUTANT THIS KILLS: dropping `!res.ok` and trusting the body alone.
-  // That mutant survived every other test in this file, including the one
-  // directly above -- its 403 also carries success:false, so the body check
-  // covers for the status check and the two halves of clearCache.ts:82 are
-  // never told apart. Which makes deleting `!res.ok` look like a safe tidy:
-  // every failure Cloudflare produces TODAY says success:false in the body.
-  // It is not safe. The status check is the half that does not depend on the
-  // envelope's shape surviving contact with something that is not Cloudflare
-  // -- a TLS-inspecting corporate proxy, a captive portal, or a cached error
-  // page -- any of which can hand back a 5xx whose body still parses as a
-  // success. Believing that is the exact failure mode this handler was
-  // written to avoid: the admin is told the cache was purged when it was not.
-  it("fails on the HTTP status alone, even when the body claims success", async () => {
-    stubFetch(async () => new Response(JSON.stringify({ success: true, result: { id: ZONE_ID } }), { status: 503 }));
-    const res = await post();
-
-    expect(res.headers.get("Location")).toBe("/admin/settings/?cache=failed");
-    // The status is in the log because it is the operator's only clue as to
-    // which of the two halves refused it.
-    expect(consoleError).toHaveBeenCalledWith("clearcache: Cloudflare purge_cache failed (HTTP 503)", undefined);
-    // And a failure is a failure however it was detected: no cooldown, so the
-    // admin can retry the moment the proxy stops lying.
-    expect(kv.store.has(COOLDOWN_KEY)).toBe(false);
-  });
-
-  // Cloudflare's edge serves an HTML error page often enough that this is a
-  // real shape. It fails INSIDE res.json(), after the ok check has passed, so
-  // a handler without the try/catch would 500 here rather than report failure.
-  it("treats a 200 whose body is not JSON as a failure", async () => {
-    stubFetch(async () => new Response("<html>520</html>", { status: 200 }));
-    expect((await post()).headers.get("Location")).toBe("/admin/settings/?cache=failed");
-  });
-
-  // Includes the AbortSignal.timeout case: whatever the reason fetch rejects,
-  // the admin gets an answer rather than a stack trace.
-  it("treats an unreachable API as a failure, not a 500", async () => {
-    stubFetch(async () => {
-      throw new TypeError("network error");
+  it("treats a purge that throws as a failure, not a 500", async () => {
+    stubPurge(async () => {
+      throw new TypeError("purge unavailable");
     });
     const res = await post();
 
     expect(res.status).toBe(302);
     expect(res.headers.get("Location")).toBe("/admin/settings/?cache=failed");
-    expect(consoleError).toHaveBeenCalledWith("clearcache: Cloudflare purge_cache could not be reached", expect.any(TypeError));
+    expect(consoleError).toHaveBeenCalledWith("clearcache: Workers Cache purge threw", expect.any(TypeError));
   });
 
-  // Two things at once, and both are deliberate. The frag keys ARE gone even
-  // though the CDN purge failed -- the KV clear happens first and is not
-  // rolled back -- and NO cooldown is recorded, because a failed purge has to
-  // be retryable immediately (clearCache.ts:143-145). An admin hitting the
-  // button again after a transient 5xx must not be told to wait a minute.
+  // The frag keys ARE gone even though the purge failed -- the KV clear
+  // happens first and is not rolled back -- and NO cooldown is recorded,
+  // because a failed purge has to be retryable immediately.
   it("still clears KV, and leaves the button immediately retryable", async () => {
     warmFragCache();
-    stubFetch(async () => new Response(JSON.stringify({ success: false, errors: [] }), { status: 500 }));
+    stubPurge(async () => ({ success: false, errors: [] }));
     await post();
 
     expect(kv.store.has(FRAG_KV_KEY_LAST_UPDATED)).toBe(false);
     expect(kv.store.has(FRAG_KV_KEY_NEED_HITS)).toBe(false);
     expect(kv.store.has(COOLDOWN_KEY)).toBe(false);
 
-    // And the retry genuinely goes through rather than hitting a cooldown.
-    stubFetch(purgeOk);
+    stubPurge(purgeOk);
     expect((await post()).headers.get("Location")).toBe("/admin/settings/?cache=purged");
   });
 
-  // SUSPECT, PINNED AS-IS: `payload?.success !== true` is a strict identity
-  // check, so a v4 envelope carrying the string "true" reads as a failure.
-  // Cloudflare sends a real boolean, so this is right today; it is asserted
-  // rather than left implicit so that loosening it to `== true` (which would
-  // also accept 1, "1" and " ") is a decision someone has to make on purpose.
+  // Strict identity: only a real boolean true is a success.
   it("does not accept a stringly-typed success flag", async () => {
-    stubFetch(async () => new Response(JSON.stringify({ success: "true" })));
+    stubPurge(async () => ({ success: "true" }));
     expect((await post()).headers.get("Location")).toBe("/admin/settings/?cache=failed");
   });
 });
@@ -791,12 +727,12 @@ describe("adminClearCache -- KV itself failing", () => {
   it("purges anyway when the cooldown read fails", async () => {
     warmFragCache();
     kv.failing.get = true;
-    stubFetch(purgeOk);
+    stubPurge(purgeOk);
     const res = await post();
 
     expect(res.status).toBe(302);
     expect(res.headers.get("Location")).toBe("/admin/settings/?cache=purged");
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(purgeMock).toHaveBeenCalledTimes(1);
     expect(consoleError).toHaveBeenCalledWith("clearcache: KV read of the cooldown marker failed, proceeding", expect.any(Error));
   });
 
@@ -805,15 +741,15 @@ describe("adminClearCache -- KV itself failing", () => {
   // before the Cloudflare purge, which is the part that actually matters,
   // and the admin would see a stack trace for a cache that was left entirely
   // intact.
-  it("still purges the CDN when one frag delete rejects", async () => {
+  it("still purges the cache when one frag delete rejects", async () => {
     warmFragCache();
     kv.failing.deleteKeys.add(FRAG_KV_KEY_LAST_UPDATED);
-    stubFetch(purgeOk);
+    stubPurge(purgeOk);
     const res = await post();
 
     expect(res.status).toBe(302);
     expect(res.headers.get("Location")).toBe("/admin/settings/?cache=purged");
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(purgeMock).toHaveBeenCalledTimes(1);
     // The sibling delete still landed -- allSettled runs both, it does not
     // stop at the first rejection.
     expect(kv.store.has(FRAG_KV_KEY_NEED_HITS)).toBe(false);
@@ -829,7 +765,7 @@ describe("adminClearCache -- KV itself failing", () => {
   it("reports success even though a frag key survived, and logs nothing", async () => {
     warmFragCache();
     kv.failing.deleteKeys.add(FRAG_KV_KEY_NEED_HITS);
-    stubFetch(purgeOk);
+    stubPurge(purgeOk);
     const res = await post();
 
     expect(res.headers.get("Location")).toBe("/admin/settings/?cache=purged");
@@ -846,7 +782,7 @@ describe("adminClearCache -- KV itself failing", () => {
   // that already succeeded, which is strictly worse.
   it("still reports success when the marker write fails", async () => {
     kv.failing.put = true;
-    stubFetch(purgeOk);
+    stubPurge(purgeOk);
     const res = await post();
 
     expect(res.status).toBe(302);
@@ -865,12 +801,12 @@ describe("adminClearCache -- the 60s cooldown", () => {
   // handler twice rather than through a hand-set marker.
   it("refuses a second press moments after the first", async () => {
     warmFragCache();
-    stubFetch(purgeOk);
+    stubPurge(purgeOk);
     expect((await post()).headers.get("Location")).toBe("/admin/settings/?cache=purged");
 
     const second = await post();
     expect(second.headers.get("Location")).toBe("/admin/settings/?cache=cooldown");
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(purgeMock).toHaveBeenCalledTimes(1);
   });
 
   // A cooldown is a COMPLETE no-op, not "KV cleared but the CDN skipped": the
@@ -878,7 +814,7 @@ describe("adminClearCache -- the 60s cooldown", () => {
   // reading -- clear the free thing, skip the rate-limited one -- is a
   // plausible "improvement" that would make the second click of a double-click
   // silently different from the first.
-  it("touches nothing at all: no delete, no fetch, no new marker", async () => {
+  it("touches nothing at all: no delete, no purge, no new marker", async () => {
     warmFragCache();
     const marker = String(Date.now() - 10_000);
     kv.store.set(COOLDOWN_KEY, marker);
@@ -886,7 +822,7 @@ describe("adminClearCache -- the 60s cooldown", () => {
 
     expect(fragCacheIntact()).toBe(true);
     expect(kv.delete).not.toHaveBeenCalled();
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(purgeMock).not.toHaveBeenCalled();
     // The original marker stands -- the cooldown does not slide forward on a
     // refused press, so it expires 60s after the PURGE rather than 60s after
     // the last impatient click.
@@ -895,7 +831,7 @@ describe("adminClearCache -- the 60s cooldown", () => {
 
   it("lets a purge through once the marker is a minute old", async () => {
     kv.store.set(COOLDOWN_KEY, String(Date.now() - COOLDOWN_MS));
-    stubFetch(purgeOk);
+    stubPurge(purgeOk);
     expect((await post()).headers.get("Location")).toBe("/admin/settings/?cache=purged");
   });
 
@@ -912,7 +848,7 @@ describe("adminClearCache -- the 60s cooldown", () => {
     expect((await post()).headers.get("Location")).toBe("/admin/settings/?cache=cooldown");
 
     kv.store.set(COOLDOWN_KEY, String(now - COOLDOWN_MS));
-    stubFetch(purgeOk);
+    stubPurge(purgeOk);
     expect((await post()).headers.get("Location")).toBe("/admin/settings/?cache=purged");
   });
 
@@ -925,7 +861,7 @@ describe("adminClearCache -- the 60s cooldown", () => {
   // longer exists.
   it("ignores a marker it cannot parse and purges", async () => {
     kv.store.set(COOLDOWN_KEY, "not-a-timestamp");
-    stubFetch(purgeOk);
+    stubPurge(purgeOk);
     const res = await post();
 
     expect(res.headers.get("Location")).toBe("/admin/settings/?cache=purged");
@@ -947,14 +883,14 @@ describe("adminClearCache -- the 60s cooldown", () => {
     const res = await post();
 
     expect(res.headers.get("Location")).toBe("/admin/settings/?cache=cooldown");
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(purgeMock).not.toHaveBeenCalled();
   });
 
   // An empty string is falsy, so it fails the `last &&` guard before Number()
   // is ever reached -- the same end as the NaN case, by a different route.
   it("ignores an empty marker", async () => {
     kv.store.set(COOLDOWN_KEY, "");
-    stubFetch(purgeOk);
+    stubPurge(purgeOk);
     expect((await post()).headers.get("Location")).toBe("/admin/settings/?cache=purged");
   });
 });

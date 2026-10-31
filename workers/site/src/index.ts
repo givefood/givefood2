@@ -11,6 +11,7 @@ import { securityHeaders } from "./middleware/securityHeaders";
 import { slugRedirect } from "./middleware/slugRedirect";
 import { PREFIXES, resolveLanguage } from "./middleware/resolveLanguage";
 import { geoJsonPreload } from "./middleware/geoJsonPreload";
+import { handleCachePurgeQueue, type CachePurgeMessage } from "./queues/cachePurge";
 import { mediaApp } from "./routes/media";
 import { staticMediaApp } from "./routes/staticMedia";
 import { api1App } from "./routes/api1";
@@ -689,4 +690,19 @@ app.onError(async (err, c) => {
   return c.html(await render500(c), 500);
 });
 
-export default app;
+// The default export is the Hono app itself (tests call app.request /
+// app.fetch on it) with the queue handler added. The cache-purge consumer has
+// to run in THIS Worker: Workers Caching can only be purged from inside the
+// Worker that owns it. See queues/cachePurge.ts.
+export default Object.assign(app, {
+  async queue(batch: MessageBatch<unknown>, _env: AppEnv["Bindings"], ctx: ExecutionContext): Promise<void> {
+    switch (batch.queue) {
+      case "cache-purge":
+        return handleCachePurgeQueue(batch as MessageBatch<CachePurgeMessage>, ctx);
+      default:
+        // Acked implicitly: a queue routed here by mistake must not retry
+        // forever. Logged so the misrouting is visible.
+        console.error(`givefood2: unhandled queue "${batch.queue}"`);
+    }
+  },
+});
