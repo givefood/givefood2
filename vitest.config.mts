@@ -22,5 +22,8 @@ export default defineConfig({
     // -- which is exactly the class of bug those helpers exist to prevent,
     // so the suite must not be the thing that hides it.
     env: { TZ: "UTC" },
+    // node:sqlite binds `undefined` as NULL from Node 26, but D1 refuses it.
+    // The setup file keeps the sqlite-backed D1 fakes refusing it too.
+    setupFiles: ["./vitest.setup.ts"],
   },
 });
