@@ -432,24 +432,30 @@ describe("0025_place_prefix_cover: the tie-breaks are load-bearing", () => {
   });
 
   it("without `id ASC`, the covering index reorders /admin/places/ pages", async () => {
+    // One database per schema for all 30 pages, not a fresh pair per query.
+    // Everything below only reads, so sharing them changes no result, and
+    // seeding runs every migration: doing it ~150 times took this test past
+    // vitest's 5s timeout on a slow machine.
+    const before = seed(SCHEMA_BEFORE);
+    const after = seed(SCHEMA_AFTER);
     let moved = 0;
     let checked = 0;
     for (const sort of PLACE_LIST_SORTS) {
       for (const direction of ["asc", "desc"] as const) {
         for (const page of [1, 2, 5, 13, 14]) {
           const calls: Recorded[] = [];
-          await getPlacesPage(d1Session(seed(SCHEMA_AFTER), calls), sort, direction, page, 7);
+          await getPlacesPage(d1Session(after, calls), sort, direction, page, 7);
           const listing = calls.find((c) => c.sql.includes("LIMIT ? OFFSET ?"))!;
           const unpinned = { sql: withoutTieBreak(listing.sql), params: listing.params };
           expect(unpinned.sql).not.toBe(listing.sql);
 
           checked++;
-          if (rowsFor(seed(SCHEMA_AFTER), unpinned) !== rowsFor(seed(SCHEMA_BEFORE), unpinned)) moved++;
+          if (rowsFor(after, unpinned) !== rowsFor(before, unpinned)) moved++;
 
           // Pinned, every one of them is identical across the two schemas.
-          expect(rowsFor(seed(SCHEMA_AFTER), listing), `${sort} ${direction} page ${page}`).toBe(rowsFor(seed(SCHEMA_BEFORE), listing));
+          expect(rowsFor(after, listing), `${sort} ${direction} page ${page}`).toBe(rowsFor(before, listing));
           // And identical to what the un-tie-broken table scan produced.
-          expect(rowsFor(seed(SCHEMA_BEFORE), listing), `${sort} ${direction} page ${page} vs today`).toBe(rowsFor(seed(SCHEMA_BEFORE), unpinned));
+          expect(rowsFor(before, listing), `${sort} ${direction} page ${page} vs today`).toBe(rowsFor(before, unpinned));
         }
       }
     }
