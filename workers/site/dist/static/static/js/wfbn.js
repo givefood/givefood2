@@ -136,7 +136,17 @@ function initMap() {
         mapOptions.zoom = 5;
     }
     
-    map = new maplibregl.Map(mapOptions);
+    // MapLibre throws from its constructor when the browser can't create a
+    // WebGL context (WebGL disabled, GPU blocklisted, hardware acceleration
+    // off). Hide the map rather than leave an empty box and an uncaught
+    // error; the rest of the page doesn't depend on it.
+    try {
+        map = new maplibregl.Map(mapOptions);
+    } catch (err) {
+        map = null;
+        hideMap();
+        return;
+    }
 
     // Add compact attribution control (collapsed by default)
     map.addControl(new maplibregl.AttributionControl({
@@ -479,6 +489,15 @@ function addLocationMarker(lat, lng) {
     new maplibregl.Marker({ element: el })
         .setLngLat([lng, lat])
         .addTo(map);
+}
+
+/**
+ * Hide the map container when the map can't be shown (e.g. no WebGL)
+ */
+function hideMap() {
+    if (mapElement) {
+        mapElement.style.display = 'none';
+    }
 }
 
 /**
