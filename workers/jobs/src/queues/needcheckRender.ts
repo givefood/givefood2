@@ -178,8 +178,31 @@ async function processOne(env: Env, msg: NeedcheckRenderMessage): Promise<void> 
   }
 
   // Stage 7 -- clean (text.py:91-115).
-  const needText = await cleanFoodbankNeedText(outcome.need.needed.join("\n"));
-  const excessText = await cleanFoodbankNeedText(outcome.need.excess.join("\n"));
+  let needText = await cleanFoodbankNeedText(outcome.need.needed.join("\n"));
+  let excessText = await cleanFoodbankNeedText(outcome.need.excess.join("\n"));
+
+  // S6b -- the hole beside S6. S6 only catches an extraction that is empty
+  // on BOTH halves; a reply that drops every needed item but keeps the
+  // excess sails past it and reaches the review queue as "needs nothing".
+  // Seen live on 2026-11-12 for bradford-central: the page was unchanged
+  // (29 needed, "fish" in excess), the model answered needed=[] /
+  // excess=["Fish"], and 20 reruns of the identical prompt across every
+  // eligible provider all returned the full 29 items. So: when the needs
+  // half comes back empty but the published need has items, ask once more
+  // (OpenRouter re-routes the repeat). Use the second answer only if it
+  // found needs; if it is empty too, two independent answers agree and the
+  // change goes to the reviewer as before. A failed re-ask is not an error
+  // here -- the first answer was a valid reply and still stands.
+  if (!needText && excessText && primingNeed?.change_text) {
+    const recheck = await extractNeed(env, prompt);
+    if (recheck.kind === "ok" && recheck.need.needed.length > 0) {
+      const recheckNeedText = await cleanFoodbankNeedText(recheck.need.needed.join("\n"));
+      if (recheckNeedText) {
+        needText = recheckNeedText;
+        excessText = await cleanFoodbankNeedText(recheck.need.excess.join("\n"));
+      }
+    }
+  }
 
   const lastUnpublished = await getLastUnpublishedNeeds(session, msg.foodbankId, NONPERTINENT_WINDOW);
 

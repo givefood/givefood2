@@ -1476,6 +1476,109 @@ describe("an empty extraction", () => {
 });
 
 // ===========================================================================
+// S6b -- EMPTY NEEDS BESIDE A NON-EMPTY EXCESS
+// ===========================================================================
+describe("an extraction that drops every needed item but keeps the excess", () => {
+  beforeEach(() => {
+    seedFoodbank();
+    seedCrawlSet(3);
+  });
+
+  // bradford-central, 2026-11-12: an unchanged page came back needed=[] /
+  // excess=["Fish"], which S6 does not catch because the excess half is not
+  // empty. The re-ask is what 20 reruns of the same prompt said it should be.
+  it("asks once more and files the second answer when that one has needs", async () => {
+    seedNeed({ id: 1, changeText: "Baked Beans\nUHT Milk", excessChangeText: "Fish", published: 1 });
+    markdownReplies = [markdownOk("- baked beans\n- UHT Milk\n- Cereals\n\nWe've got plenty of\n- fish")];
+    openRouterReplies = [openRouterOk([], ["Fish"]), openRouterOk(["Baked Beans", "UHT Milk", "Cereals"], ["Fish"])];
+
+    const { acks } = await run();
+
+    expect(fetchCallsTo(OPENROUTER_URL)).toHaveLength(2);
+    expect(promptSent(1)).toBe(promptSent(0));
+    expect(newChanges()).toHaveLength(1);
+    expect(newChanges()[0]!.change_text).toBe("Baked Beans\nUHT Milk\nCereals");
+    expect(newChanges()[0]!.excess_change_text).toBe("Fish");
+    expect(acks).toEqual([0]);
+  });
+
+  // The re-ask can also show nothing changed at all, in which case nothing is filed.
+  it("files nothing when the second answer matches the published need", async () => {
+    seedNeed({ id: 1, changeText: "Baked Beans\nUHT Milk", excessChangeText: "Fish", published: 1 });
+    markdownReplies = [markdownOk("- baked beans\n- UHT Milk")];
+    openRouterReplies = [openRouterOk([], ["Fish"]), openRouterOk(["Baked Beans", "UHT Milk"], ["Fish"])];
+
+    await run();
+
+    expect(fetchCallsTo(OPENROUTER_URL)).toHaveLength(2);
+    expect(newChanges()).toEqual([]);
+  });
+
+  // Two answers agreeing that the needs are gone is evidence enough to put it
+  // in front of the reviewer, exactly as before this guard existed.
+  it("files the empty-needs change when the second answer agrees", async () => {
+    seedNeed({ id: 1, changeText: "Baked Beans", excessChangeText: "Fish", published: 1 });
+    markdownReplies = [markdownOk("We've got plenty of fish")];
+    openRouterReplies = [openRouterOk([], ["Fish"]), openRouterOk([], ["Fish"])];
+
+    const { acks } = await run();
+
+    expect(fetchCallsTo(OPENROUTER_URL)).toHaveLength(2);
+    expect(newChanges()).toHaveLength(1);
+    expect(newChanges()[0]!.change_text).toBe("");
+    expect(newChanges()[0]!.excess_change_text).toBe("Fish");
+    expect(acks).toEqual([0]);
+  });
+
+  // The first reply was valid, so a failed re-ask must not turn a usable
+  // result into a queue retry.
+  it("keeps the first answer when the re-ask fails", async () => {
+    seedNeed({ id: 1, changeText: "Baked Beans", excessChangeText: "Fish", published: 1 });
+    markdownReplies = [markdownOk("We've got plenty of fish")];
+    openRouterReplies = [openRouterOk([], ["Fish"]), { status: 500, body: "provider error" }, { status: 500, body: "provider error" }];
+
+    const { acks, retries } = await run();
+
+    expect(fetchCallsTo(OPENROUTER_URL)).toHaveLength(3);
+    expect(newChanges()).toHaveLength(1);
+    expect(newChanges()[0]!.change_text).toBe("");
+    expect(acks).toEqual([0]);
+    expect(retries).toEqual([]);
+  });
+
+  it("does not re-ask when there is no published need to compare against", async () => {
+    markdownReplies = [markdownOk("We've got plenty of fish")];
+    openRouterReplies = [openRouterOk([], ["Fish"])];
+
+    await run();
+
+    expect(fetchCallsTo(OPENROUTER_URL)).toHaveLength(1);
+    expect(newChanges()[0]!.excess_change_text).toBe("Fish");
+  });
+
+  it("does not re-ask when the published need has no needed items", async () => {
+    seedNeed({ id: 1, changeText: "", excessChangeText: "Pasta", published: 1 });
+    markdownReplies = [markdownOk("We've got plenty of fish")];
+    openRouterReplies = [openRouterOk([], ["Fish"])];
+
+    await run();
+
+    expect(fetchCallsTo(OPENROUTER_URL)).toHaveLength(1);
+  });
+
+  // "Nothing"/"Unknown"/"Facebook" are placeholders, not lists (stage 4).
+  it("does not re-ask when the published need is a placeholder", async () => {
+    seedNeed({ id: 1, changeText: "Nothing", excessChangeText: "", published: 1 });
+    markdownReplies = [markdownOk("We've got plenty of fish")];
+    openRouterReplies = [openRouterOk([], ["Fish"])];
+
+    await run();
+
+    expect(fetchCallsTo(OPENROUTER_URL)).toHaveLength(1);
+  });
+});
+
+// ===========================================================================
 // S5 -- AN UNUSABLE MODEL REPLY IS A FAILURE, NEVER AN EMPTY LIST
 // ===========================================================================
 describe("when OpenRouter fails transiently", () => {
