@@ -293,7 +293,9 @@
     // value -- that is how Worker secrets work; neither is the other's.
   },
 
-  "observability": { "enabled": true, "head_sampling_rate": 1 },
+  // Logs keep 1 request in 10, which keeps the account under the plan's 20M
+  // log events a month.
+  "observability": { "enabled": true, "head_sampling_rate": 0.1 },
 
   // 30s is ample: HTML rendering is I/O-bound and waiting on D1 does not
   // count toward CPU. Raise only if a gfdash aggregation says otherwise.
