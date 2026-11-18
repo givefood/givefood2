@@ -1,5 +1,5 @@
 import type { Context } from "hono";
-import { getArticlesByFoodbankId, getFoodbankBySlug } from "@givefood/db";
+import { getArticlesByFoodbankId, getCharityYearsByFoodbankSlug, getFoodbankBySlug } from "@givefood/db";
 import { buildPageContext, render } from "@givefood/templates";
 import type { AppEnv } from "../../types";
 import { dbSession } from "../../lib/session";
@@ -62,7 +62,9 @@ export async function wfbnFoodbankNews(c: Context<AppEnv>): Promise<Response> {
 export async function wfbnFoodbankCharity(c: Context<AppEnv>): Promise<Response> {
   const slug = c.req.param("slug")!;
   const session = dbSession(c);
-  const foodbank = await getFoodbankBySlug(session, slug);
+  // The years are fetched alongside the food bank rather than after it, so
+  // the page still costs one D1 round trip; on a 404 they're simply unused.
+  const [foodbank, charityYears] = await Promise.all([getFoodbankBySlug(session, slug), getCharityYearsByFoodbankSlug(session, slug)]);
   if (!foodbank) return c.notFound();
   if (!foodbank.charity_name || !CHARITY_DETAIL_COUNTRIES.has(foodbank.country)) return c.notFound();
 
@@ -90,10 +92,7 @@ export async function wfbnFoodbankCharity(c: Context<AppEnv>): Promise<Response>
       open_charities_url: openCharitiesUrl(foodbank.charity_number, foodbank.country),
       charity_reg_date: foodbank.charity_reg_date ? formatCharityRegDate(foodbank.charity_reg_date) : null,
       charity_purpose_list: charityPurposeList,
-      // No `charityyear` table in D1 yet (packages/db/migrations/*.sql) --
-      // the Income & Expenditure table is permanently absent until a
-      // future migration adds one; a known, deliberate gap, not a bug.
-      charity_years: [],
+      charity_years: charityYears,
     },
     locale,
   );
