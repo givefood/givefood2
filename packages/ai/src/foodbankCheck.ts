@@ -120,13 +120,85 @@ async function fetchPageBodyText(url: string): Promise<{ text: string; networkId
 // in it. So a reply that is not a result list is an ERROR here, carried on
 // the result and shown on the check page, never quietly an empty list.
 //
-// When that notification appears, the new ID is in one of the JS chunks the
-// donate-food page loads: the `createServerReference)("<id>", ...)` whose
-// variable is called as `await x(<foodBank>.id, lat, lng, page)`. The ID was
-// discovered that way for this fix; doing it on every check instead would
-// mean downloading the page's ~2.8 MB of chunks and pattern-matching minified
-// code that changes as freely as the ID does.
-const DONATION_POINT_FINDER_ACTION = "781623cbf05ebf81aee85060224b1bdafb59f142a5";
+// The ID below was read off the donate-food page's JS chunks on 18 Nov 2026,
+// after the platform's redeploy turned the previous one
+// (781623cbf05ebf81aee85060224b1bdafb59f142a5) into "409 Server Action
+// unavailable." It is only the first guess, though. When the platform refuses
+// it, findFinderActionCandidates below reads the current one off the page the same
+// way a person would, tries it, and keeps it for the rest of the isolate's
+// life -- so a redeploy costs one slower check per isolate rather than every
+// check failing until someone edits this line. Update it when the log says
+// "the action is now ...", to save that slower check.
+const DONATION_POINT_FINDER_ACTION = "781721fb2f5c816bce1d9cf2ecb431600818fe8c0a";
+
+// The action ID this isolate last saw work. Module state on purpose: it is a
+// fact about the platform's current build, the same for every food bank on it.
+let finderAction = DONATION_POINT_FINDER_ACTION;
+
+// For the tests, which each start from a fresh isolate's state.
+export function resetDonationPointFinderAction(): void {
+  finderAction = DONATION_POINT_FINDER_ACTION;
+}
+
+// FINDING THE ACTION ON THE PAGE. The donate-food page loads a couple of
+// dozen /_next/static/chunks/*.js files (~2.7 MB). One of them declares each
+// Server Action as
+//   let h=(0,l.createServerReference)("<id>",l.callServer,void 0,l.findSourceMapURL,"default")
+// and the finder's is the one whose variable is then called with the food
+// bank's id and the coordinates: `await h(l.id,a,r,p)`. Minified names change
+// with every build, so both patterns match names generically. A variable name
+// can repeat in another module of the same chunk, and the chunk declares
+// other actions (form submissions among them), so only a declaration followed
+// by that call shape is a candidate, and a candidate counts only once it has
+// actually answered a result list.
+const SERVER_REFERENCE_RE = /([\w$]+)=\(0,[\w$]+\.createServerReference\)\("([0-9a-f]{40,})"/g;
+const SCRIPT_SRC_RE = /<script[^>]*\ssrc="([^"]*\/_next\/static\/[^"]*\.js)"/g;
+// Far more than the page loads; a ceiling so a page gone strange cannot make
+// one check fan out into hundreds of requests.
+const MAX_CHUNKS = 60;
+const MAX_CANDIDATES = 3;
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// Action IDs in a chunk whose variable is called the way the finder is, in
+// the order they appear.
+export function finderActionCandidates(chunk: string): string[] {
+  const ids: string[] = [];
+  for (const [, name, id] of chunk.matchAll(SERVER_REFERENCE_RE)) {
+    const call = new RegExp(`await ${escapeRegExp(name!)}\\([\\w$]+\\.id,[\\w$]+,[\\w$]+[,)]`);
+    if (call.test(chunk) && !ids.includes(id!)) ids.push(id!);
+  }
+  return ids;
+}
+
+// The donate-food page's chunks, scanned for candidates, with the reason
+// when there are none.
+async function findFinderActionCandidates(pageUrl: string): Promise<{ ids: string[]; error: string | null }> {
+  let html: string;
+  try {
+    const res = await fetchWithOneRetry(pageUrl, { headers: PAGE_HEADERS });
+    if (res.status !== 200) return { ids: [], error: `its page answered ${res.status}` };
+    html = await res.text();
+  } catch (err) {
+    return { ids: [], error: `its page could not be reached: ${err instanceof Error ? err.message : String(err)}` };
+  }
+  const srcs = [...new Set([...html.matchAll(SCRIPT_SRC_RE)].map((m) => new URL(m[1]!, pageUrl).href))].slice(0, MAX_CHUNKS);
+  if (srcs.length === 0) return { ids: [], error: "its page loads no Next.js chunks" };
+  const chunks = await Promise.all(
+    srcs.map(async (src) => {
+      try {
+        const res = await fetchWithOneRetry(src, { headers: { "User-Agent": BOT_USER_AGENT } });
+        return res.status === 200 ? await res.text() : "";
+      } catch {
+        return "";
+      }
+    }),
+  );
+  const ids = [...new Set(chunks.flatMap(finderActionCandidates))];
+  return { ids, error: ids.length === 0 ? `none of the ${srcs.length} scripts its page loads declares it` : null };
+}
 
 // views.py:955's test, verbatim.
 const DONATION_POINT_FINDER_PAGE = "foodbank.org.uk/support-us/donate-food";
@@ -210,34 +282,71 @@ async function fetchDonationPointFinder(
   const url = `${donationPointsUrl}?lat=${encodeURIComponent(lat ?? "")}&lng=${encodeURIComponent(lng ?? "")}&address=${encodeURIComponent(postcode ?? "")}`;
   const fail = (error: string) => ({ outcome: { url, count: null, error, savedNetworkId }, text: null });
 
-  const start = pyNow();
-  let res: Response;
-  let body: string;
-  try {
-    // Headers and body as the page's own JS sends them: lat and lng are
-    // strings because the browser reads them back out of its query string.
-    res = await fetchWithOneRetry(url, {
+  // Headers and body as the page's own JS sends them: lat and lng are
+  // strings because the browser reads them back out of its query string.
+  const ask = async (action: string) => {
+    const res = await fetchWithOneRetry(url, {
       method: "POST",
       headers: {
         "User-Agent": BOT_USER_AGENT,
         Accept: "text/x-component",
         "Content-Type": "text/plain;charset=UTF-8",
-        "Next-Action": DONATION_POINT_FINDER_ACTION,
+        "Next-Action": action,
       },
       body: JSON.stringify([networkId, lat, lng]),
     });
-    body = await res.text();
+    const body = await res.text();
+    return { status: res.status, body, points: res.status === 200 ? parseFinderReply(body) : null };
+  };
+  const unreachable = (err: unknown) => `The foodbank.org.uk donation point finder could not be reached: ${err instanceof Error ? err.message : String(err)}`;
+
+  const start = pyNow();
+  let reply: Awaited<ReturnType<typeof ask>>;
+  try {
+    reply = await ask(finderAction);
   } catch (err) {
-    return { ...fail(`The foodbank.org.uk donation point finder could not be reached: ${err instanceof Error ? err.message : String(err)}`), start, finish: pyNow() };
+    return { ...fail(unreachable(err)), start, finish: pyNow() };
+  }
+
+  // Next.js refuses an action ID its current build does not have -- "400
+  // Invalid Server Action request." on older versions, "409 Server Action
+  // unavailable." now; a 404 is taken the same way. Anything else (a block, an outage, a
+  // 200 that is not a list) is not cured by a new ID, so is not worth the
+  // page's 2.7 MB of chunks.
+  let rediscovery: string | null = null;
+  if (reply.points === null && [400, 404, 409].includes(reply.status)) {
+    const refused = reply;
+    const { ids, error } = await findFinderActionCandidates(donationPointsUrl);
+    const fresh = ids.filter((id) => id !== finderAction).slice(0, MAX_CANDIDATES);
+    rediscovery = error ?? (fresh.length === 0 ? "its page still declares the very ID that was refused" : null);
+    for (const id of fresh) {
+      try {
+        const attempt = await ask(id);
+        if (attempt.points !== null) {
+          console.log(`foodbank-check: donation point finder action ${finderAction} was refused with ${refused.status}; the action is now ${id}, read off ${donationPointsUrl} -- update DONATION_POINT_FINDER_ACTION in packages/ai/src/foodbankCheck.ts`);
+          finderAction = id;
+          reply = attempt;
+          break;
+        }
+      } catch (err) {
+        return { ...fail(unreachable(err)), start, finish: pyNow() };
+      }
+    }
+    if (reply.points === null) rediscovery ??= `${fresh.length === 1 ? "the one other action" : `the ${fresh.length} other actions`} its page calls the way it calls the finder did not answer a list either`;
   }
   const finish = pyNow();
 
-  const points = res.status === 200 ? parseFinderReply(body) : null;
+  const points = reply.points;
   if (points === null) {
-    const said = body.trim().slice(0, 200);
-    console.log(`foodbank-check: donation point finder ${url} returned ${res.status}: ${said}`);
+    const said = reply.body.trim().slice(0, 200);
+    console.log(`foodbank-check: donation point finder ${url} returned ${reply.status}: ${said}`);
+    const answered = `The foodbank.org.uk donation point finder answered ${reply.status}${said ? ` (${said})` : ""} instead of a list, so found donation points are missing from this check.`;
     return {
-      ...fail(`The foodbank.org.uk donation point finder answered ${res.status}${said ? ` (${said})` : ""} instead of a list, so found donation points are missing from this check. If it says the action is invalid, its ID in packages/ai/src/foodbankCheck.ts has changed.`),
+      ...fail(
+        rediscovery === null
+          ? answered
+          : `${answered} That is how it refuses an action ID its site no longer has, and a current one could not be read off the donate-food page: ${rediscovery}. The page's JS has probably changed shape; see the comments by DONATION_POINT_FINDER_ACTION in packages/ai/src/foodbankCheck.ts.`,
+      ),
       start,
       finish,
     };
