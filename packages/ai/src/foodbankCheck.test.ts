@@ -9,7 +9,7 @@ interface Env {
   GEMINI_API_KEY: string;
 }
 import type { Session } from "@givefood/db";
-import { runFoodbankCheck, type FoodbankCheckResult } from "./foodbankCheck";
+import { finderActionCandidates, resetDonationPointFinderAction, runFoodbankCheck, type FoodbankCheckResult } from "./foodbankCheck";
 import { CHECK_USE_AI_FIELDS, FOODBANK_CHECK_RESPONSE_SCHEMA, type FoodbankCheckAiResponse } from "./checkPrompt";
 // @ts-ignore -- this Worker's tsconfig lists only @cloudflare/workers-types, so
 // node:sqlite has no declarations here. It is real under vitest's node
@@ -665,6 +665,7 @@ beforeEach(() => {
   calls = [];
   pageReplies = new Map();
   geminiReplies = [];
+  resetDonationPointFinderAction();
   onPageFetch = null;
   onPageDone = null;
   logs = [];
@@ -2105,6 +2106,10 @@ describe("the foodbank.org.uk donation point finder", () => {
   const NETWORK_ID = "e7fb8e6d-d5bd-467d-b7ab-3a885392ac63";
   // The seed's lat_lng and postcode, as the site's own search URL spells them.
   const FINDER_URL = `${DONATE_FOOD}?lat=51.0688&lng=-1.7945&address=SP2%209DY`;
+  // The ID the code ships with, and the one before it, which the platform's
+  // redeploy of November 2026 turned into a 409.
+  const CURRENT_ACTION = "781721fb2f5c816bce1d9cf2ecb431600818fe8c0a";
+  const NEW_ACTION = "7800aa11bb22cc33dd44ee55ff6677889900aabbcc";
 
   // A real reply's shape, cut down to two points: the RSC header row pointing
   // at row 1, and row 1 carrying everything the page renders.
@@ -2168,7 +2173,7 @@ describe("the foodbank.org.uk donation point finder", () => {
       "User-Agent": BOT_HEADERS["User-Agent"],
       Accept: "text/x-component",
       "Content-Type": "text/plain;charset=UTF-8",
-      "Next-Action": "781623cbf05ebf81aee85060224b1bdafb59f142a5",
+      "Next-Action": CURRENT_ACTION,
     });
     // Strings, not numbers: the page reads them back out of its own URL.
     expect(JSON.parse(call.body!)).toEqual([NETWORK_ID, "51.0688", "-1.7945"]);
@@ -2241,6 +2246,113 @@ describe("the foodbank.org.uk donation point finder", () => {
     expect(storedResult().prompt).not.toContain("Invalid Server Action");
     expect(donationPointsBlock(storedResult().prompt)).toBe("donation_points...\nFind your nearest donation point below. Enter your postcode\n\n");
     expect(logs).toContain(`foodbank-check: donation point finder ${FINDER_URL} returned 400: Invalid Server Action request.`);
+    // A refusal sends the check looking for the current ID; this page has no
+    // scripts to look in, and the error says that too.
+    expect(finder.error).toContain("could not be read off the donate-food page: its page loads no Next.js chunks");
+  });
+
+  // THE NOVEMBER 2026 FAILURE: the platform redeployed, the shipped ID began
+  // answering "409 Server Action unavailable.", and every platform food bank's
+  // check lost its donation points until the ID was edited by hand. Now a
+  // refusal reads the current ID off the page's own scripts, the way the ID
+  // was found by hand, and asks again with it.
+  describe("when the platform refuses the action ID", () => {
+    const CHUNK_A = `${PLATFORM}/_next/static/chunks/0ctrjlf_y_94b.js`;
+    const CHUNK_B = `${PLATFORM}/_next/static/chunks/32d98amw7zu0e.js`;
+    // Cut from the real chunk (32d98amw7zu0e.js on ely.foodbank.org.uk, 18 Nov
+    // 2026), with the finder's ID swapped for NEW_ACTION: the address search
+    // form's action (c), the finder's (h) and the call that makes it the
+    // finder, and a newsletter form's action (j). Only h is the finder.
+    const FINDER_CHUNK =
+      `var e=t.i(48277),i=t.i(30668),l=t.i(41851);let c=(0,l.createServerReference)("4004472e89b1af2dcf1683dc6ad31dce768320096e",l.callServer,void 0,l.findSourceMapURL,"default");` +
+      `function u({initialAddress:t}){let n=async e=>{await c(e)}}` +
+      `var v=t.i(13796);let h=(0,l.createServerReference)("${NEW_ACTION}",l.callServer,void 0,l.findSourceMapURL,"default");` +
+      `(0,i.useEffect)(()=>{(async function(){d(!0);let t=await h(l.id,a,r,p),e=await h(l.id,a,r);t.results&&(g(t.results),_(t.pageInfo)),e.results&&k(e.results),d(!1)})().catch(()=>d(!1))},[g,_,d,k,c,l,a,r,p]);` +
+      `var k=t.i(41851);let j=(0,k.createServerReference)("78ef31bd743f1106aa177842be4ef26ec44227c1d5",k.callServer,void 0,k.findSourceMapURL,"onSubmitAction");`;
+    const PAGE_WITH_SCRIPTS =
+      '<html><head><script src="/_next/static/chunks/0ctrjlf_y_94b.js" async=""></script>' +
+      '<script src="/_next/static/chunks/32d98amw7zu0e.js" async=""></script></head>' +
+      "<body>Find your nearest donation point below. Enter your postcode</body></html>";
+
+    function seedRefusingPlatform(chunk = FINDER_CHUNK): void {
+      seedPlatformFoodbank();
+      pageReplies.set(DONATE_FOOD, [{ status: 200, body: PAGE_WITH_SCRIPTS }]);
+      pageReplies.set(CHUNK_A, [{ status: 200, body: 'console.log("framework")' }]);
+      pageReplies.set(CHUNK_B, [{ status: 200, body: chunk }]);
+    }
+
+    it("reads the current ID off the page's scripts, asks again with it, and lists what that answers", async () => {
+      seedRefusingPlatform();
+      pageReplies.set(FINDER_URL, [
+        { status: 409, body: "Server Action unavailable." },
+        { status: 200, body: FINDER_REPLY },
+      ]);
+
+      await runJob();
+
+      expect(finderCalls().map((call) => call.headers["Next-Action"])).toEqual([CURRENT_ACTION, NEW_ACTION]);
+      expect(JSON.parse(finderCalls()[1]!.body!)).toEqual([NETWORK_ID, "51.0688", "-1.7945"]);
+      expect(storedResult().donationPointFinder).toEqual({ url: FINDER_URL, count: 2, error: null, savedNetworkId: null });
+      expect(donationPointsBlock(storedResult().prompt)).toContain("Tesco Extra\nGreen Park");
+      expect(logs.some((line) => line.includes(`the action is now ${NEW_ACTION}`) && line.includes("DONATION_POINT_FINDER_ACTION"))).toBe(true);
+    });
+
+    it("keeps the ID it found for the isolate's next check, without reading the page's scripts again", async () => {
+      seedRefusingPlatform();
+      pageReplies.set(FINDER_URL, [
+        { status: 409, body: "Server Action unavailable." },
+        { status: 200, body: FINDER_REPLY },
+      ]);
+      await runJob();
+      calls = [];
+
+      await runJob();
+
+      expect(finderCalls().map((call) => call.headers["Next-Action"])).toEqual([NEW_ACTION]);
+      expect(calls.filter((call) => call.url === CHUNK_B)).toHaveLength(0);
+    });
+
+    it("never POSTs the page's other actions, only the one called like the finder", () => {
+      expect(finderActionCandidates(FINDER_CHUNK)).toEqual([NEW_ACTION]);
+      expect(finderActionCandidates('let c=(0,l.createServerReference)("4004472e89b1af2dcf1683dc6ad31dce768320096e",l.callServer);await c(e)')).toEqual([]);
+    });
+
+    it("says the scripts held no finder when none of them declares it", async () => {
+      seedRefusingPlatform('console.log("no actions here")');
+      pageReplies.set(FINDER_URL, [{ status: 409, body: "Server Action unavailable." }]);
+
+      await runJob();
+
+      expect(finderCalls()).toHaveLength(1);
+      const finder = storedResult().donationPointFinder!;
+      expect(finder.count).toBeNull();
+      expect(finder.error).toContain("answered 409 (Server Action unavailable.)");
+      expect(finder.error).toContain("none of the 2 scripts its page loads declares it");
+      expect(finder.error).toContain("packages/ai/src/foodbankCheck.ts");
+    });
+
+    it("says so when the ID it found is refused too, and keeps the shipped one", async () => {
+      seedRefusingPlatform();
+      pageReplies.set(FINDER_URL, [{ status: 409, body: "Server Action unavailable." }]);
+
+      await runJob();
+
+      expect(finderCalls().map((call) => call.headers["Next-Action"])).toEqual([CURRENT_ACTION, NEW_ACTION]);
+      expect(storedResult().donationPointFinder!.error).toContain("the one other action its page calls the way it calls the finder did not answer a list either");
+    });
+
+    it("does not go looking for a new ID when the finder fails some other way", async () => {
+      seedRefusingPlatform();
+      pageReplies.set(FINDER_URL, [{ status: 500, body: "Internal Server Error" }]);
+
+      await runJob();
+
+      expect(calls.filter((call) => call.url === CHUNK_B)).toHaveLength(0);
+      expect(finderCalls()).toHaveLength(1);
+      expect(storedResult().donationPointFinder!.error).toBe(
+        "The foodbank.org.uk donation point finder answered 500 (Internal Server Error) instead of a list, so found donation points are missing from this check.",
+      );
+    });
   });
 
   it("treats a 200 with no result list as a failure, not as no donation points", async () => {

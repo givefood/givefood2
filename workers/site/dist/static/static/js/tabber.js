@@ -1,12 +1,19 @@
 function changetab(section) {
-    document.querySelectorAll(".tabs li").forEach(item => {
-        item.classList.remove("is-active")
-    })
-    const panel = document.querySelector("." + section)
+    // An empty hash (going Back to the page's bare URL fires hashchange with
+    // location.hash "") or one that isn't a valid class name ("#1", "#a b")
+    // would make querySelector throw, so escape it and bail out early.
+    if (!section) {
+        return false
+    }
+    const selector = "." + CSS.escape(section)
+    const panel = document.querySelector(selector)
     if (!panel) {
         // A hash that isn't one of this page's tabs
         return false
     }
+    document.querySelectorAll(".tabs li").forEach(item => {
+        item.classList.remove("is-active")
+    })
     panel.parentNode.classList.add("is-active")
 
     // Update aria-selected for all tabs
@@ -17,13 +24,13 @@ function changetab(section) {
     document.querySelectorAll(".sections .tabcontent").forEach(item => {
         item.classList.add("is-hidden")
     })
-    document.querySelectorAll("." + section).forEach(item => {
+    document.querySelectorAll(selector).forEach(item => {
         item.classList.remove("is-hidden")
         // Panels loaded on demand listen for this with hx-trigger="showtab once"
         item.dispatchEvent(new CustomEvent("showtab"))
     })
 
-    const activeTab = document.querySelector("a[data-tab='" + section + "']")
+    const activeTab = document.querySelector("a[data-tab='" + CSS.escape(section) + "']")
     if (activeTab) {
         activeTab.parentNode.classList.add("is-active")
         activeTab.setAttribute("aria-selected", "true")
@@ -35,14 +42,12 @@ function changetab(section) {
 
 document.querySelectorAll(".tabs a").forEach(item => {
     item.addEventListener("click", event => {
-        section = item.dataset.tab
-        changetab(section)
+        changetab(item.dataset.tab)
     })
 })
 
 addEventListener("hashchange", (event) => {
-    section = window.location.hash.replace("#", "")
-    changetab(section)
+    changetab(window.location.hash.replace("#", ""))
 })
 
 function opendeeplinkedtab() {

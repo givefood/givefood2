@@ -903,3 +903,54 @@ describe("pageCacheControl: which content types it fills in for", () => {
     expect(await via("/api/2/foodbanks/", (c) => c.json({ ok: true }))).toBeNull();
   });
 });
+
+// The edge half. Workers Caching reads CDN-Cache-Control ahead of
+// Cache-Control, and s-maxage would switch stale-while-revalidate off there,
+// so the edge directive uses max-age and its own TTL.
+async function cdnCacheControl(path: string, handler: (c: Context<AppEnv>) => Response | Promise<Response> = html): Promise<string | null> {
+  const res = await appWith(handler).request(`https://www.givefood.org.uk${path}`, {}, env);
+  return res.headers.get("CDN-Cache-Control");
+}
+
+describe("pageCacheControl: the edge directive", () => {
+  it("never carries s-maxage, which would disable stale-while-revalidate at Cloudflare", async () => {
+    for (const path of ["/", "/needs/at/salisbury/", "/privacy/", "/dashboard/"]) {
+      const cdn = await cdnCacheControl(path);
+      expect(cdn, path).toMatch(/^public, max-age=\d+, stale-while-revalidate=\d+$/);
+      expect(cdn, path).not.toContain("s-maxage");
+    }
+  });
+
+  // Purged by tag on every save that changes them, so the edge holds them a
+  // week where Cache-Control keeps Django's day.
+  it.each([
+    "/needs/at/salisbury/",
+    "/cy/needs/at/salisbury/",
+    "/needs/at/salisbury/locations/",
+    "/needs/at/salisbury/news/",
+    "/md/needs/at/salisbury/",
+    "/needs/in/constituency/salisbury/",
+  ])("gives %s a week at the edge", async (path) => {
+    expect(await cdnCacheControl(path)).toBe(`public, max-age=${WEEK}, stale-while-revalidate=${WEEK}`);
+    expect(await sharedTtl(path)).toBe(DAY);
+  });
+
+  // Nothing purges these early, so they keep their family's TTL.
+  it.each([
+    ["/", HOUR],
+    ["/needs/", HOUR],
+    ["/news/", HOUR],
+    ["/dashboard/", DAY],
+    ["/about-us/", WEEK],
+    ["/privacy/", WEEK],
+  ])("keeps %s at its family's TTL (%i)", async (path, ttl) => {
+    expect(await cdnCacheControl(path)).toBe(`public, max-age=${ttl}, stale-while-revalidate=${ttl}`);
+  });
+
+  it("is not set where Cache-Control is not", async () => {
+    expect(await cdnCacheControl("/needs/at/salisbury/", raw("x", { headers: { "Content-Type": "application/json" } }))).toBeNull();
+    expect(
+      await cdnCacheControl("/needs/at/salisbury/", raw("<p>x</p>", { headers: { "Content-Type": "text/html", "Cache-Control": "private, no-store" } })),
+    ).toBeNull();
+  });
+});

@@ -107,3 +107,28 @@ export async function replaceCharityYears(session: Session, foodbankId: number, 
     ),
   ]);
 }
+
+export interface CharityYearRow {
+  date: string;
+  income: number;
+  expenditure: number;
+}
+
+// gfwfbn `foodbank_charity`/`md_foodbank_charity`'s Income & Expenditure
+// table: every financial year the regulator crawl stored for this food
+// bank, newest first (served by charityyear_foodbank_date_idx). Keyed by
+// slug rather than id so the handlers can run it alongside
+// getFoodbankBySlug instead of after it -- one D1 round trip, not two.
+// `date` is TEXT in two shapes -- "YYYY-MM-DD" from the crawler and
+// "YYYY-MM-DD 00:00:00.000000" from the original Postgres import -- which
+// sort identically on the date part and both go through `|date("Y")`.
+export async function getCharityYearsByFoodbankSlug(session: Session, slug: string): Promise<CharityYearRow[]> {
+  const result = await session
+    .prepare(
+      "SELECT date, income, expenditure FROM charityyear " +
+        "WHERE foodbank_id = (SELECT id FROM foodbank WHERE slug = ?1) ORDER BY date DESC",
+    )
+    .bind(slug)
+    .all<CharityYearRow>();
+  return result.results;
+}

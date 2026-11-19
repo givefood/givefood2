@@ -148,10 +148,9 @@
         "dead_letter_queue": "needcheck-render-dlq"
       },
       { "queue": "needcheck-render-dlq", "max_batch_size": 10, "max_retries": 1 },
-      {
-        "queue": "cache-purge", "max_batch_size": 100, "max_batch_timeout": 30,
-        "max_retries": 3, "dead_letter_queue": "cache-purge-dlq"
-      },
+      // cache-purge itself is consumed by workers/site, not here: Workers
+      // Caching can only be purged from inside the Worker that owns the
+      // cache. See workers/site/src/queues/cachePurge.ts.
       // Was a dead-letter target with no consumer at all, so a purge that
       // failed three times sat here until the retention period expired and
       // nobody heard about it. See queues/jobsDlq.ts.

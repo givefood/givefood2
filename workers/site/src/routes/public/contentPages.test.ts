@@ -343,8 +343,9 @@ describe("publicAboutUs -- GET /about-us/", () => {
     const res = await get("/about-us/");
 
     expect(res.headers.get("Cache-Control")).toBe("public, max-age=300, s-maxage=604800");
-    // Not one of middleware/noStore.ts's mounts, so none of its headers.
-    expect(res.headers.get("CDN-Cache-Control")).toBeNull();
+    // Not one of middleware/noStore.ts's mounts: the edge gets
+    // pageCacheControl's directive, not no-store.
+    expect(res.headers.get("CDN-Cache-Control")).toBe("public, max-age=604800, stale-while-revalidate=604800");
   });
 
   // Content-Language is resolveLanguage's post-response contract, and the only

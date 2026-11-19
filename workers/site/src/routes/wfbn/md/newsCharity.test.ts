@@ -167,6 +167,9 @@ const LATEST_NEED_SQL = "SELECT * FROM foodbankchange_full WHERE id = (SELECT la
 const ARTICLES_SQL =
   "SELECT a.id, a.foodbank_id, f.name AS foodbank_name, f.slug AS foodbank_slug, a.published_date, a.title, a.url, a.featured " +
   "FROM foodbankarticle a JOIN foodbank f ON f.id = a.foodbank_id WHERE a.foodbank_id = ? ORDER BY a.published_date DESC LIMIT ?";
+// packages/db/src/charity.ts's getCharityYearsByFoodbankSlug, verbatim.
+const CHARITY_YEARS_SQL =
+  "SELECT date, income, expenditure FROM charityyear " + "WHERE foodbank_id = (SELECT id FROM foodbank WHERE slug = ?1) ORDER BY date DESC";
 
 // ---------------------------------------------------------------------------
 // Seeds. Only the columns these two pages read are parameterised; every other
@@ -230,6 +233,16 @@ function seedFoodbank(s: FoodbankSeed): void {
 // ETL copied out of Postgres, what migrations/0022_normalise_timestamps.sql
 // rewrote the port's own ISO-shaped rows INTO, and what the LEXICOGRAPHIC
 // ORDER BY in getArticlesByFoodbankId is written against.
+function seedCharityYear(id: number, foodbankId: number, date: string, income: number, expenditure: number): void {
+  db.prepare("INSERT INTO charityyear (id, foodbank_id, created, date, income, expenditure) VALUES (?, ?, '2026-11-18 05:31:35.412000', ?, ?, ?)").run(
+    id,
+    foodbankId,
+    date,
+    income,
+    expenditure,
+  );
+}
+
 function seedArticle(a: { id: number; foodbankId: number | null; publishedDate: string; title: string; url: string; featured?: 0 | 1 }): void {
   db.prepare("INSERT INTO foodbankarticle (id, foodbank_id, published_date, title, url, featured) VALUES (?, ?, ?, ?, ?, ?)").run(
     a.id,
@@ -324,6 +337,14 @@ function seed(): void {
     charityPurpose: "Atal tlodi",
   });
   seedArticle({ id: 41, foodbankId: 4, publishedDate: "2026-09-06 08:00:00.000000", title: "Newyddion Caerdydd", url: "https://caerdydd.invalid/news/1" });
+  // Caerdydd's financial history: inserted out of date order, in BOTH stored
+  // date shapes (the crawler's bare date and the Postgres import's midnight
+  // timestamp), so the page's newest-first order and |date("Y") are both
+  // proven. Beul Feirste's one year must never leak onto Caerdydd's page.
+  seedCharityYear(401, 4, "2023-03-31", 387982, 351407);
+  seedCharityYear(402, 4, "2025-03-31", 1499660, 533257);
+  seedCharityYear(403, 4, "2021-03-31 00:00:00.000000", 533486, 309627);
+  seedCharityYear(601, 6, "2024-12-31", 77777, 66666);
 
   seedFoodbank({
     id: 5,
@@ -386,7 +407,7 @@ beforeEach(async () => {
   // migration 0019, `foodbanklocation` is here only for the route-ordering
   // trap below, and `slugredirect` is read by the slugRedirect middleware on
   // every /needs/at/ URL whether these routes want it or not.
-  db.exec(schemaFor("foodbank", "foodbankchange", "foodbankchange_full", "foodbankarticle", "foodbanklocation", "foodbanklocation_full", "slugredirect"));
+  db.exec(schemaFor("foodbank", "charityyear", "foodbankchange", "foodbankchange_full", "foodbankarticle", "foodbanklocation", "foodbanklocation_full", "slugredirect"));
   seed();
   prepared = [];
   sessions = 0;
@@ -1063,10 +1084,10 @@ describe("mdFoodbankCharity -- the response envelope", () => {
     expect(res.headers.get("Cache-Tag")).toBe("fb-salisbury");
   });
 
-  // TWO STATEMENTS, NOT THREE. Every value this page shows is a column on the
-  // food bank row, so the batch is the whole of its database work -- and in
-  // particular it must NOT pay for the news page's article query. An
-  // accidentally shared helper that fetched articles for both would be
+  // THREE STATEMENTS: the batched food bank + need pair, and the charity
+  // years, which are keyed by slug so they go out alongside the batch rather
+  // than waiting on it. It must NOT pay for the news page's article query --
+  // an accidentally shared helper that fetched articles for both would be
   // invisible in the rendered page and would cost a round trip on every
   // charity view.
   it("reads the page from one session and asks for no articles at all", async () => {
@@ -1076,6 +1097,7 @@ describe("mdFoodbankCharity -- the response envelope", () => {
     expect(prepared.map((p) => [p.sql, p.params])).toEqual([
       [FOODBANK_SQL, ["salisbury"]],
       [LATEST_NEED_SQL, ["salisbury"]],
+      [CHARITY_YEARS_SQL, ["salisbury"]],
     ]);
   });
 
@@ -1249,16 +1271,24 @@ describe("mdFoodbankCharity -- the rendered page", () => {
     expect(md).not.toContain("Salvation Army Foodbank");
   });
 
-  // THE DELIBERATE GAP. `charity_years` is hardcoded `[]` because D1 has no
-  // charityyear table (packages/db/migrations/*.sql), so the Income &
-  // Expenditure table Django renders is permanently absent. Pinned so that the
-  // day a migration adds the table, THIS test fails and someone remembers the
-  // handler still passes an empty array -- exactly the kind of stub that
-  // otherwise survives forever. Note the template gates on `.length`, not on
-  // truthiness: an empty ARRAY is truthy in JS, so `{% if charity_years %}`
-  // (the literal translation of Django's `{% if charity_years %}`, where an
+  // The Income & Expenditure section: every year this food bank's regulator
+  // crawl stored, newest first, the year from |date("Y") whichever of the two
+  // stored date shapes it came in, and both amounts through |intcomma.
+  // Scoped by food bank: Beul Feirste's year is seeded and must be absent.
+  it("renders the income and expenditure section, newest year first", async () => {
+    const md = await body("/md/needs/at/caerdydd/charity/");
+
+    expect(md).toContain("## Income & Expenditure");
+    const rows = md.split("\n").filter((line) => /^\| \d{4} \|/.test(line));
+    expect(rows).toEqual(["| 2025 | £1,499,660 | £533,257 |", "| 2023 | £387,982 | £351,407 |", "| 2021 | £533,486 | £309,627 |"]);
+    expect(md).not.toContain("£77,777");
+  });
+
+  // A food bank with no stored years gets no section at all. The template
+  // gates on `.length`, not on truthiness: an empty ARRAY is truthy in JS, so
+  // `{% if charity_years %}` (the literal translation of Django's, where an
   // empty queryset is falsy) would print a headed, empty table.
-  it("renders no income and expenditure section, because D1 has no charityyear table", async () => {
+  it("renders no income and expenditure section when the food bank has no years", async () => {
     const md = await body("/md/needs/at/salisbury/charity/");
 
     expect(md).not.toContain("Income & Expenditure");

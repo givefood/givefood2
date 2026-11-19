@@ -40,7 +40,7 @@ Anything that needs a givefood.org.uk path — a template, a route handler, a si
 
 ## Local development
 
-Requires Node 24 (see `.nvmrc`) and pnpm, plus `wrangler login` done once on your machine (D1/R2 access uses your own Cloudflare OAuth token, not a stored API key).
+Requires Node 26 (see `.nvmrc`) and pnpm, plus `wrangler login` done once on your machine (D1/R2 access uses your own Cloudflare OAuth token, not a stored API key).
 
 ```bash
 pnpm install

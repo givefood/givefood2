@@ -276,6 +276,23 @@ describe("render404 -- the page behind app.notFound()", () => {
     expect(html).toContain("<footer class=\"footer\">");
   });
 
+  it("tells fivebar the page is a 404, since Safari won't", async () => {
+    // Chrome, Edge and Firefox hand tally.js the page's HTTP status; Safari
+    // does not, so without data-status a Safari visitor's 404 is counted as
+    // an ordinary pageview (https://fiveb.ar/docs/error-pages). 404.njk sets
+    // error_status and page.njk's tally block writes it out.
+    const html = await (await get("/no-such-page/")).text();
+    expect(html).toContain(
+      '<script async data-domain="givefood.org.uk" data-property-language="en" data-status="404" src="https://fiveb.ar/js/tally.js"></script>',
+    );
+
+    // And only error pages: a status on an ordinary page would move every
+    // load of it to fivebar's Errors page.
+    const ok = await (await get("/about-us/")).text();
+    expect(ok).toContain('src="https://fiveb.ar/js/tally.js"');
+    expect(ok).not.toContain("data-status=");
+  });
+
   it("offers the three links Django's 404.html offers, all of them unprefixed", async () => {
     // The hrefs are HARDCODED in the template ("/" and "/needs/"), not built
     // through url(), which is exactly what givefood/templates/404.html does --

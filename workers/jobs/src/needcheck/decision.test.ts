@@ -16,7 +16,7 @@ import { decideNeedChange, type NeedDecision, type PriorNeed } from "./decision"
 //   S7 -- nonpertinent suppression against the last 10 unpublished needs.
 //         "Queue flooding from re-extraction of the same content."
 //
-// The comparison itself is delegated to needItemsKey()/keysEqual() (tested in
+// The comparison itself is delegated to needWordsKey()/keysEqual() (tested in
 // packages/models/src/textClean.test.ts). What is tested HERE is the wiring:
 // which comparison is made against which record, and which of the four
 // outcomes wins when more than one condition holds.
@@ -114,11 +114,11 @@ describe("decideNeedChange -- S6, the empty-extraction guard", () => {
   it("protects a published record whose text has no alphanumerics in it at all", () => {
     // S6 tests the published side for raw truthiness (Django's
     // `last_published_need.change_text or ...`), NOT for a non-empty
-    // need_items_key -- and the two disagree, because needItemsKey("-") is
+    // need_items_key -- and the two disagree, because needWordsKey("-") is
     // the EMPTY set. A hand-entered placeholder row therefore still counts
     // as "something is published", and an empty extraction raises a
     // discrepancy rather than passing silently as a no-op. Rewriting the
-    // guard as `needItemsKey(lastPublished.changeText).size > 0` reads like
+    // guard as `needWordsKey(lastPublished.changeText).size > 0` reads like
     // a tidy-up and would quietly turn this into "no_change".
     expect(decide({ lastPublished: { changeText: "-", excessChangeText: null } })).toEqual({
       kind: "empty_extraction_skip",
@@ -128,7 +128,7 @@ describe("decideNeedChange -- S6, the empty-extraction guard", () => {
   it("is bypassed by an extraction that is punctuation only, because that is not falsy", () => {
     // Documented, not endorsed (see the suspected-bug note in this module's
     // test report). "-" is a truthy string, so S6 stands down; but
-    // needItemsKey("-") strips every non-alphanumeric character and yields
+    // needWordsKey("-") strips every non-alphanumeric character and yields
     // the EMPTY set, so the comparison below sees "the list is now empty"
     // and reports a change -- exactly the wipe S6 exists to prevent, via a
     // model that answered {needed: ["-"]} instead of {needed: []}.
@@ -210,6 +210,20 @@ describe("decideNeedChange -- comparison against the last published need", () =>
     });
   });
 
+  it("ignores lines being split or merged differently", () => {
+    // The commonest rejected AI need: the same items re-extracted as
+    // "Tinned Fish, Meat" one day and "Tinned Fish\nTinned Meat" the next.
+    const before: PriorNeed = { changeText: "Tinned Fish\nTinned Meat\nTea and Coffee", excessChangeText: null };
+    expect(decide({ needText: "Tinned Fish, Meat\nTea\nCoffee", lastPublished: before })).toEqual({
+      kind: "no_change",
+    });
+  });
+
+  it("ignores filler words such as 'and' and 'please'", () => {
+    const before: PriorNeed = { changeText: "Tea & Coffee\nRice", excessChangeText: null };
+    expect(decide({ needText: "Tea and Coffee please\nRice", lastPublished: before })).toEqual({ kind: "no_change" });
+  });
+
   it("reports a change when an item is added", () => {
     const decision = decide({
       needText: "Beans\nRice\nNappies\nUHT Milk",
@@ -220,7 +234,7 @@ describe("decideNeedChange -- comparison against the last published need", () =>
   });
 
   it("reports a change when an item is removed", () => {
-    // needItemsKey compares sets, and keysEqual short-circuits on size --
+    // needWordsKey compares sets, and keysEqual short-circuits on size --
     // a strict subset must not read as equal.
     expect(decide({ needText: "Beans\nRice", excessText: "Pasta", lastPublished: published })).toEqual({
       kind: "change",
@@ -240,7 +254,7 @@ describe("decideNeedChange -- comparison against the last published need", () =>
 
   it("treats a NULL published excess and an empty extracted excess as equal", () => {
     // Real production shape: most foodbankchange rows carry NULL excess.
-    // needItemsKey(null) is the empty set, same as needItemsKey("") -- if
+    // needWordsKey(null) is the empty set, same as needWordsKey("") -- if
     // NULL ever compared as "different from empty", every food bank without
     // an excess list would report a change on every single crawl.
     expect(decide({ needText: "Beans", excessText: "", lastPublished: { changeText: "Beans", excessChangeText: null } })).toEqual({
@@ -397,7 +411,7 @@ describe("decideNeedChange -- S7, nonpertinent suppression", () => {
 
   it("does not let a queued row's NULL excess stand in for an excess it never had", () => {
     // The negative half of the test above, and the one S7 mutant the
-    // positive half cannot see. needItemsKey(null) is the empty set, so a
+    // positive half cannot see. needWordsKey(null) is the empty set, so a
     // NULL excess is equal to "" -- and to NOTHING else. A "be forgiving
     // about the NULL excess" tidy-up in the loop (an added
     // `|| prev.excessChangeText === null`) reads as harmless and survives
@@ -488,7 +502,7 @@ describe("decideNeedChange -- S7, nonpertinent suppression", () => {
 });
 
 describe("decideNeedChange -- text the ASCII comparison key was not designed for", () => {
-  // needItemsKey lowercases and then deletes everything outside [a-z0-9]
+  // needWordsKey lowercases and then splits on everything outside [a-z0-9]
   // (text.py:72-88). That is fine for "Tinned Tomatoes (400g)" and strange
   // for anything else; the cases below are the strange ones, pinned because
   // they are exactly what someone would change while "improving" the key,

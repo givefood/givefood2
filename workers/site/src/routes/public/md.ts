@@ -1,4 +1,5 @@
 import type { Context } from "hono";
+import { SITEMAP_CACHE_CONTROL } from "./sitemaps";
 import {
   getAllConstituencySlugs,
   getAllConstituencySlugsWithNames,
@@ -92,7 +93,10 @@ export async function mdSitemapXml(c: Context<AppEnv>): Promise<Response> {
   for (const slug of constituencySlugs) urls.push(`  <url><loc>${domain}${url("wfbn:constituency", slug)}</loc></url>`);
 
   const body = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.join("\n")}\n</urlset>\n`;
-  return new Response(body, { headers: { "Content-Type": "application/xml" } });
+  // Same day-long TTL as /sitemap.xml (routes/public/sitemaps.ts), for the
+  // same reason: it is a large, crawler-only response with no Cache-Control
+  // of its own. Tagged fb-all by middleware/cacheTag.ts, so a save purges it.
+  return new Response(body, { headers: { "Content-Type": "application/xml", "Cache-Control": SITEMAP_CACHE_CONTROL } });
 }
 
 // md_sitemap_md() -- same query shape as mdSitemapXml above, fetched

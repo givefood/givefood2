@@ -128,7 +128,7 @@ function stubClock(readings: [number, ...number[]]) {
 // Written out in full rather than imported, so a change to it has to be made
 // twice, deliberately: this is the last thing a visitor sees before the
 // platform's own error page, and it is not covered by any template test.
-const FALLBACK = "<!doctype html><title>500 - Internal Server Error</title><h1>500 - Internal Server Error</h1>";
+const FALLBACK = '<!doctype html><title>500 - Internal Server Error</title><script async data-domain="givefood.org.uk" data-status="500" src="https://fiveb.ar/js/tally.js"></script><h1>500 - Internal Server Error</h1>';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -181,6 +181,18 @@ describe("render500 through index.ts's app.onError, its only caller", () => {
     // Both sibling templates carry their own paragraph; 500's is the only one
     // that mentions the error having been logged.
     expect(page.body).not.toContain("Sorry, we can&#39;t find that page.");
+  });
+
+  it("tells fivebar the page is a 500, since Safari won't", async () => {
+    // Same reason as render404.test.ts's: Safari doesn't give tally.js the
+    // page's status, so data-status is the only way its 500s reach fivebar's
+    // Errors page rather than being counted as ordinary pageviews.
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const page = await errorPage("/write/to/sid-valley/");
+
+    expect(page.body).toContain('data-status="500" src="https://fiveb.ar/js/tally.js"');
+    expect(page.body).not.toContain('data-status="404"');
   });
 
   it("apologises in the visitor's own language, from the real .po catalogues", async () => {

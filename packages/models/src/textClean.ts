@@ -169,6 +169,22 @@ export function needItemsKey(text: string | null): Set<string> {
   return items;
 }
 
+// Looser key for needcheck's change detection: the set of words across all
+// lines, with filler words dropped. needItemsKey treats "Tinned Fish, Meat"
+// and "Tinned Fish\nTinned Meat" -- or the same items with "and" between
+// them -- as different lists, and those split/merge re-extractions were the
+// largest single cause of rejected AI needs (Jul-Oct 2026 review history).
+const NEED_WORDS_STOP = new Set(["and", "or", "etc", "eg", "e", "g", "of", "the", "a", "please", "in", "for", "with"]);
+
+export function needWordsKey(text: string | null): Set<string> {
+  const words = new Set<string>();
+  if (!text) return words;
+  for (const word of text.toLowerCase().split(/[^a-z0-9]+/)) {
+    if (word && !NEED_WORDS_STOP.has(word)) words.add(word);
+  }
+  return words;
+}
+
 export function keysEqual(a: Set<string>, b: Set<string>): boolean {
   if (a.size !== b.size) return false;
   for (const x of a) if (!b.has(x)) return false;

@@ -78,7 +78,8 @@ describe("noStore mounts: what issue #40 removed", () => {
         // explicitly to add NO SHARED_TTL rule for this path. A
         // SECONDS_IN_WEEK entry would silently diverge from Django's number.
         cacheControl: "public, max-age=300, s-maxage=86400",
-        cdn: null,
+        // pageCacheControl's edge directive, not noStore's no-store.
+        cdn: "public, max-age=86400, stale-while-revalidate=86400",
         vary: null,
       });
     }
@@ -147,7 +148,7 @@ describe("noStore mounts: what issue #40 removed", () => {
     expect(await headers("/about-us/")).toEqual({
       status: 200,
       cacheControl: "public, max-age=300, s-maxage=604800",
-      cdn: null,
+      cdn: "public, max-age=604800, stale-while-revalidate=604800",
       vary: null,
     });
   });

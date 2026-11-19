@@ -12,7 +12,14 @@ import { dbSession } from "../../lib/session";
 import { changefreq } from "@givefood/models";
 import { COUNTRY_MAPPING } from "../../lib/countries";
 
-const XML_HEADERS = { "Content-Type": "text/xml" };
+// A day, at the edge and in the crawler. Without any Cache-Control this
+// 1.2 MB response came back cf-cache-status BYPASS on every fetch (checked
+// against production 2026-10-31), so each crawler request re-ran the four
+// queries below. It carries the fb-all Cache-Tag (middleware/cacheTag.ts),
+// so a food bank save still purges it straight away.
+export const SITEMAP_CACHE_CONTROL = "public, max-age=86400";
+
+const XML_HEADERS = { "Content-Type": "text/xml", "Cache-Control": SITEMAP_CACHE_CONTROL };
 
 // givefood/views.py:644-696 sitemap() -- givefood/urls.py:53, inside
 // i18n_patterns, so <loc> URLs are locale-prefixed per the requesting

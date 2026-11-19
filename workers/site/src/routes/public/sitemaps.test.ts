@@ -272,6 +272,8 @@ describe("sitemapXml -- /sitemap.xml", () => {
 
     expect(res.status).toBe(200);
     expect(res.headers.get("Content-Type")).toBe("text/xml");
+    // A day at the edge: with no Cache-Control it was BYPASS on every fetch.
+    expect(res.headers.get("Cache-Control")).toBe("public, max-age=86400");
     expect(await res.text()).toBe(EXPECTED_EN);
   });
 

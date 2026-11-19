@@ -23,25 +23,26 @@ import { timedKv } from "../../lib/timings";
 // already use exactly this call for exactly this operation (PLAN.md:11436
 // "Purge everything", and again in the rollback script at PLAN.md:11567).
 //
-// purge_everything, not Cache-Tag: PLAN.md §3.6's tag design is for the
-// AUTOMATIC per-foodbank path, and nothing in workers/site emits a Cache-Tag
-// header yet except routes/media.ts, so there is no tag set to enumerate. This
-// button is semantically "clear everything" -- the Django view's own comment
-// (views.py:3118-3119) contrasts it with decache() for precisely that reason.
+// WHAT IT PURGES: this Worker's own Workers Cache, through
+// c.executionCtx.cache.purge({ purgeEverything: true }). It used to POST
+// purge_everything to the zone's purge_cache API, which Cloudflare documents
+// as having NO effect on Workers Caching ("no zone-level purge -- via the
+// dashboard, API, or Terraform -- affects Workers Caching content"; see
+// developers.cloudflare.com/workers/cache/purge/). wrangler.jsonc turns
+// Workers Caching on, so every HTML page, API response and map this site
+// serves lives in that cache, and the button was purging a cache nothing was
+// in. ctx.cache.purge() is scoped to the Worker and to the entrypoint that
+// calls it; this handler runs in the default entrypoint, which is the one
+// every eyeball request is cached under.
 //
-// NOT routed through PURGE_Q on purpose: workers/jobs/src/index.ts's cache-purge
-// consumer is still a message.retry() stub, so enqueueing would show the admin a
-// green banner for a purge that never happened. A manual button's entire value is
-// a synchronous yes/no answer. Do not "improve" this into a queue send until that
-// consumer exists.
+// purgeEverything, not Cache-Tag: this button is semantically "clear
+// everything" -- the Django view's own comment (views.py:3118-3119) contrasts
+// it with decache() for precisely that reason. The per-food-bank tag purge is
+// queues/cachePurge.ts.
 //
-// WHAT IT PURGES TODAY: the zone route is commented out in wrangler.jsonc, so
-// this Worker serves from *.workers.dev and has no zone cache of its own.
-// Purging the givefood.org.uk zone therefore purges the cache in front of the
-// LIVE DJANGO APP -- during the strangler period exactly right, and the same
-// zone Django's decache() targets. Post-cutover the same call purges this
-// Worker's responses instead, including anything written via caches.default.put
-// (routes/wfbn/favicon.ts). One behaviour, correct on both sides of the flip.
+// NOT routed through PURGE_Q on purpose: a manual button's entire value is a
+// synchronous yes/no answer, and the result object says whether Cloudflare
+// accepted the purge.
 //
 // POST + CSRF, not Django's <a href> GET -- PLAN.md:10049 lists this as one of
 // the GET-mutation holes the port closes ("clears both caches on GET" ->
@@ -53,37 +54,18 @@ const COOLDOWN_MS = 60_000;
 
 type Outcome = "purged" | "purged-kv-only" | "cooldown" | "failed";
 
-// givefood/utils/cache.py:166's endpoint and Bearer-token shape, with
-// {"purge_everything": true} as the body instead of files/prefixes.
-async function purgeEverything(zoneId: string, apiKey: string): Promise<boolean> {
-  let res: Response;
+async function purgeEverything(cache: CacheContext): Promise<boolean> {
   try {
-    res = await fetch(`https://api.cloudflare.com/client/v4/zones/${zoneId}/purge_cache`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ purge_everything: true }),
-      signal: AbortSignal.timeout(15_000),
-    });
+    const result = await cache.purge({ purgeEverything: true });
+    // A rate-limited purge resolves with success:false rather than throwing.
+    // Strict equality so a truthy non-boolean is not read as success.
+    if (result?.success === true) return true;
+    console.error("clearcache: Workers Cache purge failed", result?.errors);
+    return false;
   } catch (err) {
-    console.error("clearcache: Cloudflare purge_cache could not be reached", err);
+    console.error("clearcache: Workers Cache purge threw", err);
     return false;
   }
-
-  // The v4 API answers 200 with {"success": false, "errors": [...]} for a token
-  // that lacks Zone.Cache Purge, so res.ok on its own would report a lie. Both
-  // are checked. (Django checks neither -- cache.py:172/196 throws the
-  // requests.post response away entirely.)
-  let payload: { success?: boolean; errors?: unknown } | null = null;
-  try {
-    payload = (await res.json()) as { success?: boolean; errors?: unknown };
-  } catch {
-    payload = null;
-  }
-  if (!res.ok || payload?.success !== true) {
-    console.error(`clearcache: Cloudflare purge_cache failed (HTTP ${res.status})`, payload?.errors);
-    return false;
-  }
-  return true;
 }
 
 export async function adminClearCache(c: Context<AppEnv>): Promise<Response> {
@@ -129,17 +111,18 @@ export async function adminClearCache(c: Context<AppEnv>): Promise<Response> {
     const kv = timedKv(c, c.env.DATA);
     await Promise.allSettled([kv.delete(FRAG_KV_KEY_LAST_UPDATED), kv.delete(FRAG_KV_KEY_NEED_HITS)]);
 
-    // CF_API_KEY / CF_ZONE_ID are declared in the Env interface but are not yet
-    // set on this Worker (they are live production credentials -- wrangler.jsonc
-    // forbids self-serving them out of the Django database). Degrade to a
-    // KV-only clear with an explicit warning banner rather than 500ing, so the
-    // endpoint can ship and be reviewed before the secrets exist. Do not tidy
-    // this branch away.
-    if (!c.env.CF_API_KEY || !c.env.CF_ZONE_ID) {
-      console.log("clearcache: CF_API_KEY/CF_ZONE_ID unset -- KV cleared, CDN not purged");
+    // ctx.cache only exists where Workers Caching does: not under every
+    // local runner, and not if "cache" is ever switched off in wrangler.jsonc.
+    // Degrade to a KV-only clear with an explicit warning banner rather than
+    // 500ing.
+    // Hono types executionCtx with its own minimal interface; the runtime
+    // object is the Workers ExecutionContext, which carries `cache`.
+    const cache = (c.executionCtx as unknown as ExecutionContext).cache;
+    if (!cache) {
+      console.log("clearcache: no Workers Cache on this invocation -- KV cleared, cache not purged");
       outcome = "purged-kv-only";
     } else {
-      outcome = (await purgeEverything(c.env.CF_ZONE_ID, c.env.CF_API_KEY)) ? "purged" : "failed";
+      outcome = (await purgeEverything(cache)) ? "purged" : "failed";
     }
 
     // Only a real purge starts the cooldown: a failed one has to be retryable

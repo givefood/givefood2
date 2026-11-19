@@ -86,7 +86,7 @@ const AGGREGATE_PATHS = new RegExp(
     `)`,
 );
 
-function tagsFor(path: string): string[] {
+export function tagsFor(path: string): string[] {
   const tags: string[] = [];
 
   const fb = FOODBANK_PATH.exec(path) ?? FOODBANK_API.exec(path);
@@ -98,6 +98,15 @@ function tagsFor(path: string): string[] {
   if (AGGREGATE_PATHS.test(path)) tags.push(AGGREGATE_TAG);
 
   return tags;
+}
+
+// True when a path's responses carry a per-food-bank or per-constituency tag,
+// i.e. every admin save that changes them purges them by name. The aggregate
+// tag alone does not count: fb-all is purged on every save, but the pages
+// that carry only it (the homepage, the site-wide feeds) also show panels no
+// save purges, such as "most viewed".
+export function isPurgedByEntity(path: string): boolean {
+  return tagsFor(path).some((tag) => tag !== AGGREGATE_TAG);
 }
 
 export const cacheTag: MiddlewareHandler<AppEnv> = async (c, next) => {

@@ -28,7 +28,9 @@ export async function render500(c: Context<AppEnv>): Promise<string> {
   try {
     return await renderErrorPage(c, "500.njk");
   } catch (err) {
+    // Keeps the fivebar tag (with data-status, as page.njk's error pages have)
+    // so a double failure still shows on fivebar's Errors page.
     console.error("render500: rendering the real 500 page itself failed", err);
-    return "<!doctype html><title>500 - Internal Server Error</title><h1>500 - Internal Server Error</h1>";
+    return '<!doctype html><title>500 - Internal Server Error</title><script async data-domain="givefood.org.uk" data-status="500" src="https://fiveb.ar/js/tally.js"></script><h1>500 - Internal Server Error</h1>';
   }
 }

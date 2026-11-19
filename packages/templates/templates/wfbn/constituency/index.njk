@@ -86,15 +86,23 @@ document.addEventListener('DOMContentLoaded', function() {
     const mapElement = document.querySelector("#map");
     if (!mapElement) return;
 
-    const map = new maplibregl.Map({
-        container: 'map',
-        style: 'https://maptiles.opencommons.uk/styles/bright',
-        center: [-4, 55],
-        zoom: 5,
-        attributionControl: false,
-        cooperativeGestures: true,
-        generateId: true,
-    });
+    // MapLibre throws when the browser can't create a WebGL context: hide
+    // the map instead of leaving an empty box and an uncaught error.
+    let map;
+    try {
+        map = new maplibregl.Map({
+            container: 'map',
+            style: 'https://maptiles.opencommons.uk/styles/bright',
+            center: [-4, 55],
+            zoom: 5,
+            attributionControl: false,
+            cooperativeGestures: true,
+            generateId: true,
+        });
+    } catch (err) {
+        mapElement.style.display = 'none';
+        return;
+    }
 
     map.addControl(new maplibregl.AttributionControl({
         compact: true,

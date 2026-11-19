@@ -318,8 +318,10 @@ beforeEach(() => {
     return new Response(reply.body, { status: reply.status });
   });
 
+  purgeSends = [];
   env = {
     GCP_TRANSLATE_KEY: API_KEY,
+    PURGE_Q: { send: async (body: unknown) => void purgeSends.push(body) },
     DB: {
       withSession: (mode: string) => {
         sessionModes.push(mode);
@@ -334,6 +336,8 @@ afterEach(() => {
   vi.restoreAllMocks();
   db.close();
 });
+
+let purgeSends: unknown[] = [];
 
 // ===========================================================================
 // THE HAPPY PATH -- the row is the entire product of this module
@@ -350,6 +354,24 @@ describe("a need with change text only", () => {
   // five columns is asserted, because a wrong `language` or `need_id` produces
   // a row that is simply never read -- the page falls back to English and
   // nothing anywhere reports a problem.
+  // The publish purged the food bank's pages before this translation
+  // existed, so a Welsh page fetched in between was cached in English. The
+  // second purge, sent after the row is written, is what clears it.
+  it("purges the food bank's pages once the translation is saved", async () => {
+    await handleTranslateNeed(message(), env);
+
+    expect(translations()).toHaveLength(1);
+    expect(purgeSends).toEqual([{ tags: ["fb-salisbury"] }]);
+  });
+
+  it("still saves the translation when the purge cannot be enqueued", async () => {
+    env = { ...env, PURGE_Q: { send: async () => { throw new Error("queue down"); } } } as unknown as Env;
+    await handleTranslateNeed(message(), env);
+
+    expect(translations()).toHaveLength(1);
+    expect(errors.some(([line]) => line === "translate-need: purge enqueue failed")).toBe(true);
+  });
+
   it("writes exactly one translation row with the text Google returned", async () => {
     await handleTranslateNeed(message(), env);
 

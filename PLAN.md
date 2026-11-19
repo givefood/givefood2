@@ -2780,7 +2780,7 @@ foodcharity/
 ├─ package.json                     # pnpm workspaces, "packageManager": "pnpm@10.11.1"
 ├─ pnpm-workspace.yaml
 ├─ tsconfig.base.json               # strict: true
-├─ .nvmrc                           # pin to the Workers Builds image (Node 24)
+├─ .nvmrc                           # pin the Workers Builds Node version (Node 26)
 │
 ├─ workers/
 │  ├─ site/
